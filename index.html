@@ -23,6 +23,8 @@
     window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   }
 </script>
+<!-- Used as a fallback to read scanned/image-only PDF statements, where there's no text to extract directly -->
+<script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
   html, body { margin: 0; padding: 0; overflow-x: hidden; width: 100%; max-width: 100%; }
   *, *::before, *::after { box-sizing: border-box; }
@@ -376,6 +378,23 @@ function seedLoanTabs() {
 }
 
 const EXPENSE_CATEGORIES = ['Food', 'Transport', 'Rent', 'Utilities', 'Health', 'Business', 'Airtime/Data', 'Other'];
+// Used only for expenses paid in a currency other than your default (settings.currencySymbol).
+// There's no live exchange-rate lookup here (this app has no server/network calls of its
+// own) — the person enters the equivalent amount in their own currency by hand, and that
+// equivalent is what everything else in the app (budgets, stats, totals) actually uses.
+// The original amount/currency is kept only for display, so nothing else needs to know
+// multi-currency exists.
+const FOREIGN_CURRENCIES = [
+  { code: 'USD', label: 'US Dollar (USD)', symbol: '$' },
+  { code: 'GBP', label: 'British Pound (GBP)', symbol: '£' },
+  { code: 'EUR', label: 'Euro (EUR)', symbol: '€' },
+  { code: 'GHS', label: 'Ghanaian Cedi (GHS)', symbol: 'GH₵' },
+  { code: 'KES', label: 'Kenyan Shilling (KES)', symbol: 'KSh' },
+  { code: 'ZAR', label: 'South African Rand (ZAR)', symbol: 'R' },
+  { code: 'XOF', label: 'West African CFA (XOF)', symbol: 'CFA' },
+  { code: 'CAD', label: 'Canadian Dollar (CAD)', symbol: 'CA$' },
+];
+const foreignCurrencyByCode = (code) => FOREIGN_CURRENCIES.find((c) => c.code === code);
 function seedExpenses() {
   return [
     { id: 'ex1', category: 'Food', amount: 4500, date: '2026-07-20', note: 'Market run' },
@@ -616,24 +635,10 @@ function parseBankStatementRows(rows) {
   return { rows: out, errors };
 }
 
-// Accepts CSV/TSV/semicolon-delimited text exported from any bank and normalises it into
-// { date, description, amount } rows, where amount is signed (+ credit / − debit). Handles
-// three common statement layouts: separate Debit & Credit columns, a single signed/typed
-// Amount column, or an Amount column paired with a Dr/Cr Type column.
-function parseBankStatementText(text) {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  if (lines.length < 2) return { rows: [], errors: ['File looks empty or has no data rows.'] };
-  const firstLine = lines[0];
-  const delim = (firstLine.match(/;/g) || []).length > (firstLine.match(/,/g) || []).length
-    ? ';' : (firstLine.includes('\t') ? '\t' : ',');
-  const rows = lines.map((l) => splitDelimitedLine(l, delim));
-  return parseBankStatementRows(rows);
-}
-
 // Some downloaded statement exports (Excel especially) have a few banner/title rows —
 // bank name, account holder, statement period — above the real header row. Scan the first
 // handful of rows for one that actually yields a usable header + data, trying each in turn
-// as row.
+// as row 0.
 function parseBankStatementRowsWithHeaderScan(rows, maxScan) {
   const limit = Math.min(maxScan || 15, Math.max(rows.length - 1, 0));
   let lastResult = { rows: [], errors: ['Could not find a Date and Description/Narration column.'] };
@@ -645,77 +650,159 @@ function parseBankStatementRowsWithHeaderScan(rows, maxScan) {
   return lastResult;
 }
 
-// Reads an Excel workbook (.xlsx/.xls) and finds the first sheet that yields a readable
-// statement table.
-function parseBankStatementWorkbook(workbook) {
-  let lastResult = { rows: [], errors: ['Could not find a Date and Description/Narration column in this workbook. Make sure one of the sheets has a header row.'] };
+// Splits raw CSV/TSV/semicolon-delimited text into an array-of-arrays (one array per line),
+// auto-detecting the delimiter from the first line.
+function toRowsFromText(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return [];
+  const firstLine = lines[0];
+  const delim = (firstLine.match(/;/g) || []).length > (firstLine.match(/,/g) || []).length
+    ? ';' : (firstLine.includes('\t') ? '\t' : ',');
+  return lines.map((l) => splitDelimitedLine(l, delim));
+}
+
+// Reads an Excel workbook (.xlsx/.xls). Tries every sheet for one that auto-parses cleanly;
+// if none do, hands back the largest sheet's raw rows so the person can map columns by hand.
+function excelRowsForImport(workbook) {
+  let autoResult = null;
+  let rawRows = [];
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
     if (!sheet) continue;
     const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' });
-    const result = parseBankStatementRowsWithHeaderScan(aoa, 15);
-    if (result.rows.length > 0) return result;
-    lastResult = result;
+    if (aoa.length > rawRows.length) rawRows = aoa;
+    if (!autoResult) {
+      const result = parseBankStatementRowsWithHeaderScan(aoa, 15);
+      if (result.rows.length > 0) autoResult = { result, rawRows: aoa };
+    }
   }
-  return lastResult;
+  return { autoResult: autoResult ? autoResult.result : null, rawRows: autoResult ? autoResult.rawRows : rawRows };
 }
 
-// Reads a PDF bank statement by extracting each page's text, reconstructing rows from the
-// text items' on-page positions (grouping items into lines by y-coordinate, then ordering
-// left-to-right and inserting a column break wherever there's a wide horizontal gap), then
-// running the same header-aware row parser used for CSV/Excel. Best-effort only — scanned
-// (image-only) PDFs have no extractable text and won't produce any rows.
-async function parsePdfStatement(arrayBuffer) {
-  if (!window.pdfjsLib) {
-    return { rows: [], errors: ['PDF reading isn\u2019t available right now — try a CSV or Excel export instead.'] };
+// Extracts each page's text from a PDF and reconstructs rows from the text items' on-page
+// positions — grouping items into lines by y-coordinate, ordering left-to-right, and
+// inserting a column break wherever there's a wide horizontal gap. Best-effort only: scanned
+// (image-only) PDFs have no extractable text and will come back empty.
+async function pdfRowsFromArrayBuffer(arrayBuffer) {
+  const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const lines = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    const items = content.items
+      .filter((it) => (it.str || '').trim().length > 0)
+      .slice()
+      .sort((a, b) => (b.transform[5] - a.transform[5]) || (a.transform[4] - b.transform[4]));
+    let lineItems = [];
+    let lineY = null;
+    const flushLine = () => {
+      if (!lineItems.length) return;
+      lineItems.sort((a, b) => a.transform[4] - b.transform[4]);
+      let line = '';
+      let lastEnd = null;
+      lineItems.forEach((it) => {
+        const x = it.transform[4];
+        if (lastEnd !== null && x - lastEnd > 8) line += '\t';
+        else if (line && !line.endsWith(' ')) line += ' ';
+        line += it.str;
+        lastEnd = x + (it.width || it.str.length * 4);
+      });
+      if (line.trim()) lines.push(line);
+      lineItems = [];
+    };
+    items.forEach((it) => {
+      const y = it.transform[5];
+      if (lineY === null || Math.abs(y - lineY) > 3) { flushLine(); lineY = y; }
+      lineItems.push(it);
+    });
+    flushLine();
   }
+  return lines.map((l) => splitDelimitedLine(l, '\t'));
+}
+
+// Fallback for scanned/image-only PDFs, where pdf.js finds no extractable text at all.
+// Renders each page to a canvas and runs it through OCR, then reconstructs rows from the
+// recognised words' bounding boxes the same way pdfRowsFromArrayBuffer does from real text
+// positions. Slow (real OCR, page by page) so this only runs when the person asks for it.
+async function ocrPdfRows(arrayBuffer, onPageProgress) {
+  const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const lines = [];
+  const worker = await Tesseract.createWorker('eng');
   try {
-    const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    const lines = [];
-    for (let p = 1; p <= pdf.numPages; p++) {
+    const pageCount = Math.min(pdf.numPages, 15); // cap pages so this can't run indefinitely
+    for (let p = 1; p <= pageCount; p++) {
+      if (onPageProgress) onPageProgress(p, pageCount);
       const page = await pdf.getPage(p);
-      const content = await page.getTextContent();
-      const items = content.items
-        .filter((it) => (it.str || '').trim().length > 0)
-        .slice()
-        .sort((a, b) => (b.transform[5] - a.transform[5]) || (a.transform[4] - b.transform[4]));
-      let lineItems = [];
+      const viewport = page.getViewport({ scale: 2 });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+      const { data } = await worker.recognize(canvas);
+      const words = (data.words || []).filter((w) => (w.text || '').trim().length > 0);
+      words.sort((a, b) => a.bbox.y0 - b.bbox.y0 || a.bbox.x0 - b.bbox.x0);
+      let lineWords = [];
       let lineY = null;
       const flushLine = () => {
-        if (!lineItems.length) return;
-        lineItems.sort((a, b) => a.transform[4] - b.transform[4]);
+        if (!lineWords.length) return;
+        lineWords.sort((a, b) => a.bbox.x0 - b.bbox.x0);
         let line = '';
         let lastEnd = null;
-        lineItems.forEach((it) => {
-          const x = it.transform[4];
-          if (lastEnd !== null && x - lastEnd > 8) line += '\t';
-          else if (line && !line.endsWith(' ')) line += ' ';
-          line += it.str;
-          lastEnd = x + (it.width || it.str.length * 4);
+        lineWords.forEach((w) => {
+          if (lastEnd !== null && w.bbox.x0 - lastEnd > 20) line += '\t';
+          else if (line) line += ' ';
+          line += w.text;
+          lastEnd = w.bbox.x1;
         });
         if (line.trim()) lines.push(line);
-        lineItems = [];
+        lineWords = [];
       };
-      items.forEach((it) => {
-        const y = it.transform[5];
-        if (lineY === null || Math.abs(y - lineY) > 3) {
-          flushLine();
-          lineY = y;
-        }
-        lineItems.push(it);
+      words.forEach((w) => {
+        const yCenter = (w.bbox.y0 + w.bbox.y1) / 2;
+        if (lineY === null || Math.abs(yCenter - lineY) > 12) { flushLine(); lineY = yCenter; }
+        lineWords.push(w);
       });
       flushLine();
     }
-    const rows = lines.map((l) => splitDelimitedLine(l, '\t'));
-    const result = parseBankStatementRowsWithHeaderScan(rows, 20);
-    if (result.rows.length === 0 && result.errors.length) {
-      return { rows: [], errors: ['Could not find a Date and Description/Narration column in this PDF. Scanned/image-only PDFs can\u2019t be read this way — try a CSV or Excel export instead.'] };
-    }
-    return result;
-  } catch (err) {
-    console.warn('PocketLedger: PDF statement read failed.', err);
-    return { rows: [], errors: ['Could not read this PDF — it may be scanned, password-protected, or corrupted. Try a CSV or Excel export instead.'] };
+  } finally {
+    await worker.terminate();
   }
+  const rawRows = lines.map((l) => splitDelimitedLine(l, '\t'));
+  const autoResult = parseBankStatementRowsWithHeaderScan(rawRows, 20);
+  return { rawRows, autoResult };
+}
+
+// Builds rows using columns the person picked by hand — the fallback for statements the
+// auto-detector couldn't read (unfamiliar headers, or a PDF whose header row didn't survive
+// extraction cleanly). dataRows excludes whichever row was treated as the header.
+function buildRowsFromManualMap(dataRows, colMap) {
+  const out = [];
+  const errors = [];
+  for (let i = 0; i < dataRows.length; i++) {
+    const cells = (dataRows[i] || []).map((c) => (c === undefined || c === null) ? '' : String(c));
+    if (cells.every((c) => !c.trim())) continue;
+    const date = parseStatementDate(cells[colMap.date]);
+    const description = (cells[colMap.description] || '').trim();
+    let amount = NaN;
+    if (colMap.mode === 'debitCredit') {
+      const debit = parseMoneyString(cells[colMap.debit]);
+      const credit = parseMoneyString(cells[colMap.credit]);
+      if (!isNaN(credit) && credit !== 0) amount = Math.abs(credit);
+      else if (!isNaN(debit) && debit !== 0) amount = -Math.abs(debit);
+      else amount = 0;
+    } else {
+      const raw = parseMoneyString(cells[colMap.amount]);
+      if (colMap.type !== undefined && !isNaN(colMap.type)) {
+        const t = (cells[colMap.type] || '').toLowerCase();
+        amount = /dr|debit|out/.test(t) ? -Math.abs(raw) : Math.abs(raw);
+      } else {
+        amount = raw;
+      }
+    }
+    if (!date || !description || isNaN(amount)) { errors.push(`Row ${i + 1}: couldn't read this line, skipped.`); continue; }
+    out.push({ date, description, amount });
+  }
+  return { rows: out, errors };
 }
 
 /* ============================== app configuration ============================== */
@@ -1822,7 +1909,7 @@ function WelcomeScreen({ settings, onStart }) {
   );
 }
 
-function HomeScreen({ user, stats, onPick }) {
+function HomeScreen({ user, stats, onPick, alerts, onViewAlerts }) {
   const cards = [
     { id: 'thrift', title: 'Thrift', desc: 'Run daily, weekly, monthly, rotating cycle or target savings circles and track every contribution.', icon: PiggyBank, tone: 'green', stat: `${stats.plans} active plan(s)` },
     { id: 'loans', title: 'Loan Tracking', desc: 'Track money you’ve lent out and personal loans you’ve received, with reminders.', icon: HandCoins, tone: 'steel', stat: `${stats.loans} loan(s) on file` },
@@ -1830,9 +1917,26 @@ function HomeScreen({ user, stats, onPick }) {
     { id: 'spending', title: 'Expense & Budgeting', desc: 'Log personal or business expenses by category, set monthly budgets, and stay on top of both.', icon: CreditCard, tone: 'brick', stat: `${stats.expenses} expense(s) logged` },
     { id: 'tax', title: 'Tax', desc: 'Import bank statements (CSV, Excel or PDF) from any bank, bring in your logged expenses, consolidate everything into one ledger, then calculate and file personal or company tax returns.', icon: Landmark, tone: 'navy', stat: `${stats.taxReturns} return(s) on file` },
   ];
+  const topAlerts = (alerts || []).slice().sort((a, b) => (a.severity === 'high' ? -1 : 1) - (b.severity === 'high' ? -1 : 1)).slice(0, 3);
   return (
     <>
       <SectionHeader eyebrow={`Welcome back${user?.name ? ', ' + user.name.split(' ')[0] : ''}`} title="What would you like to open?" />
+      {topAlerts.length > 0 && (
+        <div className="panel" style={{ marginBottom: 16 }}>
+          <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Needs your attention</span>
+            <button className="link-btn" onClick={onViewAlerts}>View all ({alerts.length}) <ChevronRight size={14} /></button>
+          </div>
+          <ul className="alert-list">
+            {topAlerts.map((a) => (
+              <li key={a.id} className={`alert-row sev-${a.severity}`}>
+                <AlertTriangle size={15} />
+                <span>{a.text}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="home-card-grid">
         {cards.map((c) => (
           <div key={c.id} className={`home-card tone-${c.tone}`} data-tour={`home-card-${c.id}`} onClick={() => onPick(c.id)}>
@@ -1933,7 +2037,7 @@ function App() {
   const [taxYearFilter, setTaxYearFilter] = useState(new Date().getFullYear());
   const [taxSourceFilter, setTaxSourceFilter] = useState('All');
   const [taxImportSourceName, setTaxImportSourceName] = useState('');
-  const [taxImportPreview, setTaxImportPreview] = useState(null);
+  const [taxImportBatch, setTaxImportBatch] = useState([]);
   const [taxReturnDoc, setTaxReturnDoc] = useState(null);
   const taxFileInputRef = useRef(null);
   const importInputRef = useRef(null);
@@ -1962,6 +2066,35 @@ function App() {
       console.warn('PocketLedger: could not save data to this device.', err);
     }
   }, [users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs, expenses, budgets, clients, invoices, receipts, settings, taxTransactions, taxImports, taxReturns]);
+
+  // ---------- auto-log recurring expenses (rent, subscriptions, etc.) for the current month ----------
+  useEffect(() => {
+    if (!currentUser || isReadOnly) return;
+    const thisMonth = todayISO().slice(0, 7);
+    setExpenses((prev) => {
+      const groups = {};
+      prev.forEach((e) => {
+        if (!e.recurring) return;
+        const key = e.recurringId || e.id;
+        (groups[key] = groups[key] || []).push(e);
+      });
+      const additions = [];
+      Object.values(groups).forEach((entries) => {
+        const latest = entries.slice().sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+        if (latest.date.slice(0, 7) === thisMonth) return; // already logged this month
+        const originalDay = new Date(latest.date).getDate();
+        const [yy, mm] = thisMonth.split('-').map(Number);
+        const daysInMonth = new Date(yy, mm, 0).getDate();
+        const day = Math.min(originalDay, daysInMonth);
+        additions.push({
+          id: uid(), category: latest.category, amount: latest.amount, date: `${thisMonth}-${String(day).padStart(2, '0')}`,
+          note: latest.note, recurring: true, recurringId: latest.recurringId || latest.id,
+          foreignCurrency: latest.foreignCurrency || null, foreignAmount: latest.foreignAmount || null,
+        });
+      });
+      return additions.length ? [...additions, ...prev] : prev;
+    });
+  }, [currentUser]);
 
   const fmt = (n) => settings.currencySymbol + Math.round(Number(n || 0)).toLocaleString('en-NG');
   const toastTimerRef = useRef(null);
@@ -2129,8 +2262,18 @@ function App() {
       if (status === 'overdue') list.push({ id: 'inv-' + inv.id, severity: 'high', group: 'Payments', text: `Invoice ${inv.number} to ${name} is overdue by ${Math.abs(daysFromToday(inv.dueDate))} day(s) — ${fmt(invoiceTotal(inv))} outstanding.` });
       else if (status === 'sent' && daysFromToday(inv.dueDate) <= 3) list.push({ id: 'invs-' + inv.id, severity: 'medium', group: 'Payments', text: `Invoice ${inv.number} to ${name} is due in ${daysFromToday(inv.dueDate)} day(s).` });
     });
+    const thisMonth = todayISO().slice(0, 7);
+    const spentByCat = {};
+    expenses.filter((e) => e.date.slice(0, 7) === thisMonth).forEach((e) => { spentByCat[e.category] = (spentByCat[e.category] || 0) + Number(e.amount || 0); });
+    budgets.forEach((b) => {
+      const spent = spentByCat[b.category] || 0;
+      if (b.monthlyLimit <= 0) return;
+      const pct = spent / b.monthlyLimit;
+      if (pct >= 1) list.push({ id: 'bud-' + b.id, severity: 'high', group: 'Expense & Budgeting', text: `${b.category} is over its monthly budget — ${fmt(spent)} spent of ${fmt(b.monthlyLimit)}.` });
+      else if (pct >= 0.9) list.push({ id: 'buds-' + b.id, severity: 'medium', group: 'Expense & Budgeting', text: `${b.category} is close to its monthly budget — ${fmt(spent)} of ${fmt(b.monthlyLimit)} spent.` });
+    });
     return list.filter((a) => !dismissed.includes(a.id));
-  }, [loansGiven, loansReceived, plans, contributions, dismissed, invoices, clients]);
+  }, [loansGiven, loansReceived, plans, contributions, dismissed, invoices, clients, expenses, budgets]);
 
   /* ---------- dashboard derived data ---------- */
   const totalCollected = contributions.reduce((s, c) => s + c.amount, 0);
@@ -2551,15 +2694,26 @@ function App() {
   const submitNewExpense = () => {
     if (guardWrite()) return;
     if (!form.amount || !form.category) { flash('Pick a category and enter an amount.'); return; }
-    const expense = { id: uid(), category: form.category, amount: Number(form.amount), date: form.date || todayISO(), note: form.note || '' };
+    if (form.foreignCurrency && !form.foreignAmount) { flash(`Enter the amount you actually paid in ${form.foreignCurrency}.`); return; }
+    const id = uid();
+    const expense = {
+      id, category: form.category, amount: Number(form.amount), date: form.date || todayISO(), note: form.note || '',
+      recurring: !!form.recurring, recurringId: form.recurring ? id : null,
+      foreignCurrency: form.foreignCurrency || null, foreignAmount: form.foreignCurrency ? Number(form.foreignAmount) : null,
+    };
     setExpenses((prev) => [expense, ...prev]);
     closeModalSilently();
-    flash('Expense logged.');
+    flash(form.recurring ? 'Expense logged — it will repeat automatically each month.' : 'Expense logged.');
   };
   const submitEditExpense = () => {
     if (guardWrite()) return;
     if (!form.amount || !form.category) { flash('Pick a category and enter an amount.'); return; }
-    setExpenses((prev) => prev.map((e) => e.id === form.id ? { ...e, category: form.category, amount: Number(form.amount), date: form.date, note: form.note || '' } : e));
+    if (form.foreignCurrency && !form.foreignAmount) { flash(`Enter the amount you actually paid in ${form.foreignCurrency}.`); return; }
+    setExpenses((prev) => prev.map((e) => e.id === form.id ? {
+      ...e, category: form.category, amount: Number(form.amount), date: form.date, note: form.note || '',
+      recurring: !!form.recurring, recurringId: form.recurring ? (e.recurringId || e.id) : null,
+      foreignCurrency: form.foreignCurrency || null, foreignAmount: form.foreignCurrency ? Number(form.foreignAmount) : null,
+    } : e));
     closeModalSilently();
     flash('Expense updated.');
   };
@@ -2588,47 +2742,140 @@ function App() {
 
   /* ---------- Tax: import, consolidate, edit, calculate, file ---------- */
   const triggerTaxImport = () => taxFileInputRef.current && taxFileInputRef.current.click();
-  const handleTaxFileSelected = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const name = file.name.toLowerCase();
-    const isExcel = /\.(xlsx|xls)$/.test(name);
-    const isPdf = name.endsWith('.pdf') || file.type === 'application/pdf';
-    const finishPreview = (rows, errors) => {
-      setTaxImportPreview({ fileName: file.name, rows, errors });
-      if (rows.length === 0) flash('Could not read any transactions from that file — see the notes below.');
-    };
-    if (isExcel) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          const workbook = XLSX.read(new Uint8Array(reader.result), { type: 'array' });
-          const { rows, errors } = parseBankStatementWorkbook(workbook);
-          finishPreview(rows, errors);
-        } catch (err) {
-          console.warn('PocketLedger: Excel statement read failed.', err);
-          finishPreview([], ['Could not read this Excel file — it may be corrupted or password-protected.']);
+  const emptyColMap = () => ({ date: '', description: '', mode: 'amount', amount: '', debit: '', credit: '', type: '' });
+  // Reads every selected file (CSV/TXT, Excel, or PDF), auto-detects its date/description/
+  // amount columns, and stages the result for review. Files the auto-detector can't read
+  // are kept with their raw rows so the person can map columns by hand instead of failing
+  // outright. Selecting several files at once (one per bank/month) all land in the same
+  // review list.
+  const handleTaxFileSelected = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    const entries = [];
+    for (const file of files) {
+      const name = file.name.toLowerCase();
+      const isExcel = /\.(xlsx|xls)$/.test(name);
+      const isPdf = name.endsWith('.pdf') || file.type === 'application/pdf';
+      let autoResult = { rows: [], errors: [] };
+      let rawRows = [];
+      try {
+        if (isExcel) {
+          const buf = await file.arrayBuffer();
+          const workbook = XLSX.read(new Uint8Array(buf), { type: 'array' });
+          const found = excelRowsForImport(workbook);
+          autoResult = found.autoResult || { rows: [], errors: ['Could not find a Date and Description/Narration column in this workbook.'] };
+          rawRows = found.rawRows;
+        } else if (isPdf) {
+          if (!window.pdfjsLib) {
+            autoResult = { rows: [], errors: ['PDF reading isn\u2019t available right now — try a CSV or Excel export instead.'] };
+          } else {
+            rawRows = await pdfRowsFromArrayBuffer(await file.arrayBuffer());
+            autoResult = parseBankStatementRowsWithHeaderScan(rawRows, 20);
+            if (autoResult.rows.length === 0) {
+              autoResult = { rows: [], errors: rawRows.length > 1 ? ['Could not find a Date and Description/Narration column in this PDF.'] : ['No text could be extracted — this looks like a scanned PDF. Try OCR below.'] };
+            }
+          }
+        } else {
+          const text = await file.text();
+          rawRows = toRowsFromText(text);
+          autoResult = parseBankStatementRowsWithHeaderScan(rawRows, 15);
         }
-      };
-      reader.readAsArrayBuffer(file);
-    } else if (isPdf) {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const { rows, errors } = await parsePdfStatement(reader.result);
-        finishPreview(rows, errors);
-      };
-      reader.readAsArrayBuffer(file);
-    } else {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const { rows, errors } = parseBankStatementText(String(reader.result || ''));
-        finishPreview(rows, errors);
-      };
-      reader.readAsText(file);
+      } catch (err) {
+        console.warn('PocketLedger: statement read failed.', err);
+        autoResult = { rows: [], errors: ['Could not read this file — it may be corrupted, scanned, or password-protected.'] };
+      }
+      entries.push({
+        id: uid(), fileName: file.name, rows: autoResult.rows, errors: autoResult.errors,
+        headerCells: rawRows[0] || [], dataRows: rawRows.slice(1),
+        needsMapping: autoResult.rows.length === 0 && rawRows.length > 1,
+        colMap: emptyColMap(),
+        isPdf, sourceFile: isPdf ? file : null,
+        looksScanned: isPdf && rawRows.length <= 1,
+        ocrRunning: false, ocrAttempted: false,
+      });
     }
+    setTaxImportBatch((prev) => [...prev, ...entries]);
+    if (entries.some((en) => en.rows.length === 0)) flash('One or more files couldn\u2019t be read automatically — see the notes below.');
     e.target.value = '';
   };
-  const cancelTaxImportPreview = () => setTaxImportPreview(null);
+  const removeTaxImportEntry = (id) => setTaxImportBatch((prev) => prev.filter((entry) => entry.id !== id));
+  // OCR is slow (real image recognition, page by page) so it only runs when the person
+  // explicitly asks for it on a specific file, rather than automatically for every PDF.
+  const runOcrOnEntry = async (id) => {
+    const entry = taxImportBatch.find((en) => en.id === id);
+    if (!entry || !entry.sourceFile) return;
+    if (!window.Tesseract) { flash('OCR isn\u2019t available right now.'); return; }
+    setTaxImportBatch((prev) => prev.map((en) => en.id === id ? { ...en, ocrRunning: true, ocrProgress: 'Starting…' } : en));
+    try {
+      const buf = await entry.sourceFile.arrayBuffer();
+      const { rawRows, autoResult } = await ocrPdfRows(buf, (page, total) => {
+        setTaxImportBatch((prev) => prev.map((en) => en.id === id ? { ...en, ocrProgress: `Reading page ${page} of ${total}…` } : en));
+      });
+      setTaxImportBatch((prev) => prev.map((en) => en.id === id ? {
+        ...en, rows: autoResult.rows,
+        errors: autoResult.rows.length > 0 ? [] : (autoResult.errors.length ? autoResult.errors : ['OCR could not find a readable table in this PDF.']),
+        headerCells: rawRows[0] || [], dataRows: rawRows.slice(1),
+        needsMapping: autoResult.rows.length === 0 && rawRows.length > 1,
+        ocrRunning: false, ocrAttempted: true, ocrProgress: '',
+      } : en));
+      flash(autoResult.rows.length > 0 ? `OCR found ${autoResult.rows.length} transaction(s) — review the preview below.` : 'OCR finished but couldn\u2019t find a readable table. Try manual column mapping.');
+    } catch (err) {
+      console.warn('PocketLedger: OCR failed.', err);
+      setTaxImportBatch((prev) => prev.map((en) => en.id === id ? { ...en, ocrRunning: false, ocrAttempted: true, ocrProgress: '' } : en));
+      flash('OCR failed on this file — it may be too large or low quality to read.');
+    }
+  };
+  const updateEntryColMap = (id, field, value) => {
+    setTaxImportBatch((prev) => prev.map((entry) => entry.id === id ? { ...entry, colMap: { ...entry.colMap, [field]: value } } : entry));
+  };
+  // Recomputes an entry's rows using the columns the person picked by hand, for files the
+  // auto-detector couldn't read.
+  const applyManualMapping = (id) => {
+    setTaxImportBatch((prev) => prev.map((entry) => {
+      if (entry.id !== id) return entry;
+      const cm = entry.colMap;
+      if (cm.date === '' || cm.description === '') { flash('Pick at least a Date and Description column.'); return entry; }
+      if (cm.mode === 'amount' && cm.amount === '') { flash('Pick an Amount column.'); return entry; }
+      if (cm.mode === 'debitCredit' && (cm.debit === '' || cm.credit === '')) { flash('Pick both a Debit and Credit column.'); return entry; }
+      const numericColMap = {
+        date: Number(cm.date), description: Number(cm.description), mode: cm.mode,
+        amount: cm.amount !== '' ? Number(cm.amount) : undefined,
+        debit: cm.debit !== '' ? Number(cm.debit) : undefined,
+        credit: cm.credit !== '' ? Number(cm.credit) : undefined,
+        type: cm.type !== '' ? Number(cm.type) : undefined,
+      };
+      const { rows, errors } = buildRowsFromManualMap(entry.dataRows, numericColMap);
+      if (rows.length === 0) flash('Still couldn\u2019t read any rows with those columns — double check your picks.');
+      return { ...entry, rows, errors, needsMapping: rows.length === 0 };
+    }));
+  };
+  // Commits every entry in the review list that has readable rows into the ledger, each as
+  // its own import batch (so each file can still be removed individually afterwards).
+  // Entries still needing a column mapping, or with no readable rows, are left in the list.
+  const confirmTaxImportBatch = () => {
+    if (guardWrite()) return;
+    const ready = taxImportBatch.filter((entry) => entry.rows.length > 0);
+    if (ready.length === 0) { flash('No readable transactions to add yet.'); return; }
+    const sourceName = taxImportSourceName.trim() || 'Bank statement';
+    let allNewTxns = [];
+    const newImportRecords = [];
+    let totalAdded = 0;
+    ready.forEach((entry) => {
+      const batchId = uid();
+      const newTxns = entry.rows.map((r) => ({
+        id: uid(), batchId, date: r.date, description: r.description, amount: r.amount,
+        source: sourceName, category: guessTaxCategory(r.description, r.amount),
+      }));
+      allNewTxns = [...newTxns, ...allNewTxns];
+      newImportRecords.push({ id: batchId, source: sourceName, fileName: entry.fileName, count: newTxns.length, importedAt: new Date().toISOString() });
+      totalAdded += newTxns.length;
+    });
+    setTaxTransactions((prev) => [...allNewTxns, ...prev]);
+    setTaxImports((prev) => [...newImportRecords, ...prev]);
+    setTaxImportBatch((prev) => prev.filter((entry) => !ready.some((r) => r.id === entry.id)));
+    flash(`Imported ${totalAdded} transaction(s) from ${ready.length} file(s).`);
+    setTaxImportSourceName('');
+  };
   // Brings expenses already logged in the Expense & Budgeting tracker into the tax ledger,
   // so the two don't have to be kept in sync by hand. Re-running it only pulls in expenses
   // that haven't been brought over yet, so it's safe to press again after logging more.
@@ -2639,35 +2886,48 @@ function App() {
     const candidates = expenses.filter((ex) => !alreadyLinked.has(ex.id));
     if (candidates.length === 0) { flash('Every logged expense is already in the tax ledger.'); return; }
     const batchId = uid();
-    const newTxns = candidates.map((ex) => ({
-      id: uid(), batchId, date: ex.date, description: ex.note ? `${ex.category} — ${ex.note}` : ex.category,
-      amount: -Math.abs(Number(ex.amount || 0)), source: 'Expense Tracker', expenseRef: ex.id,
-      category: ex.category === 'Business' ? 'Business Expense (deductible)' : 'Personal (non-deductible)',
-    }));
+    const newTxns = candidates.map((ex) => {
+      const fx = ex.foreignCurrency ? ` (paid ${foreignCurrencyByCode(ex.foreignCurrency)?.symbol || ''}${ex.foreignAmount} ${ex.foreignCurrency})` : '';
+      return {
+        id: uid(), batchId, date: ex.date, description: (ex.note ? `${ex.category} — ${ex.note}` : ex.category) + fx,
+        amount: -Math.abs(Number(ex.amount || 0)), source: 'Expense Tracker', expenseRef: ex.id,
+        category: ex.category === 'Business' ? 'Business Expense (deductible)' : 'Personal (non-deductible)',
+      };
+    });
     setTaxTransactions((prev) => [...newTxns, ...prev]);
     setTaxImports((prev) => [{ id: batchId, source: 'Expense Tracker', fileName: `${candidates.length} logged expense(s)`, count: newTxns.length, importedAt: new Date().toISOString() }, ...prev]);
     flash(`Brought in ${newTxns.length} expense(s) from your Expense tracker.`);
   };
-  const confirmTaxImport = () => {
-    if (guardWrite()) return;
-    if (!taxImportPreview || taxImportPreview.rows.length === 0) return;
-    const sourceName = taxImportSourceName.trim() || 'Bank statement';
-    const batchId = uid();
-    const newTxns = taxImportPreview.rows.map((r) => ({
-      id: uid(), batchId, date: r.date, description: r.description, amount: r.amount,
-      source: sourceName, category: guessTaxCategory(r.description, r.amount),
-    }));
-    setTaxTransactions((prev) => [...newTxns, ...prev]);
-    setTaxImports((prev) => [{ id: batchId, source: sourceName, fileName: taxImportPreview.fileName, count: newTxns.length, importedAt: new Date().toISOString() }, ...prev]);
-    flash(`Imported ${newTxns.length} transaction(s) from ${sourceName}.`);
-    setTaxImportPreview(null);
-    setTaxImportSourceName('');
-  };
-  const removeTaxImportBatch = (batchId) => {
+  const removeTaxImportRecord = (batchId) => {
     if (guardWrite()) return;
     if (!window.confirm('Remove this import batch and every transaction it added? This cannot be undone.')) return;
     setTaxTransactions((prev) => prev.filter((t) => t.batchId !== batchId));
     setTaxImports((prev) => prev.filter((b) => b.id !== batchId));
+  };
+  // Downloadable copies of the consolidated ledger — handy for handing to an accountant
+  // or for your own records alongside the in-app filing tools.
+  const exportTaxLedgerCsv = (rows, year) => {
+    if (rows.length === 0) { flash('Nothing to export for this filter.'); return; }
+    const header = ['Date', 'Source', 'Description', 'Category', 'Amount'].join(',');
+    const csvRows = rows.map((t) => {
+      const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+      return [t.date, esc(t.source), esc(t.description), esc(t.category), t.amount].join(',');
+    });
+    const csv = [header, ...csvRows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `tax-ledger-${year}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+  const exportTaxLedgerExcel = (rows, year) => {
+    if (rows.length === 0) { flash('Nothing to export for this filter.'); return; }
+    if (!window.XLSX) { flash('Excel export isn\u2019t available right now.'); return; }
+    const data = rows.map((t) => ({ Date: t.date, Source: t.source, Description: t.description, Category: t.category, Amount: t.amount }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Ledger');
+    XLSX.writeFile(wb, `tax-ledger-${year}.xlsx`);
   };
   const updateTaxTxnCategory = (id, category) => {
     if (guardWrite()) return;
@@ -2802,9 +3062,12 @@ function App() {
   };
 
   /* ---------- import / export ---------- */
+  const backupPayload = () => ({
+    exportedAt: new Date().toISOString(), members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs,
+    expenses, budgets, clients, invoices, receipts, settings, taxTransactions, taxImports, taxReturns,
+  });
   const exportBackup = () => {
-    const payload = { exportedAt: new Date().toISOString(), members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs, expenses, budgets, clients, invoices, receipts, settings };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(backupPayload(), null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -2812,6 +3075,51 @@ function App() {
     a.click();
     URL.revokeObjectURL(url);
     flash('Backup downloaded.');
+  };
+  // ---------- backup folder (File System Access API) ----------
+  // Lets a person point PocketLedger at a folder on their machine that a cloud service
+  // (Google Drive for Desktop, Dropbox, OneDrive, etc.) keeps in sync — so backups land in
+  // the cloud automatically without any Anthropic/PocketLedger server or account in between.
+  // Only Chrome/Edge/Opera support this API today; the handle itself only lives for this
+  // browser tab, so it needs reconnecting after a refresh (the browser re-asks for
+  // permission rather than silently writing files on your disk).
+  const [backupDirHandle, setBackupDirHandle] = useState(null);
+  const [backupDirName, setBackupDirName] = useState('');
+  const backupFolderSupported = typeof window !== 'undefined' && !!window.showDirectoryPicker;
+  const connectBackupFolder = async () => {
+    if (!backupFolderSupported) { flash('Your browser doesn\u2019t support connecting a folder — try Chrome, Edge or Opera, or use the manual export instead.'); return; }
+    try {
+      const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      setBackupDirHandle(handle);
+      setBackupDirName(handle.name);
+      flash(`Connected to "${handle.name}". Backups will be written here too.`);
+    } catch (err) {
+      if (err && err.name !== 'AbortError') { console.warn('PocketLedger: could not connect backup folder.', err); flash('Could not connect that folder.'); }
+    }
+  };
+  const disconnectBackupFolder = () => { setBackupDirHandle(null); setBackupDirName(''); };
+  const writeBackupToFolder = async (fileName, payload) => {
+    if (!backupDirHandle) return false;
+    try {
+      const perm = await backupDirHandle.queryPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') {
+        const req = await backupDirHandle.requestPermission({ mode: 'readwrite' });
+        if (req !== 'granted') return false;
+      }
+      const fileHandle = await backupDirHandle.getFileHandle(fileName, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(JSON.stringify(payload, null, 2));
+      await writable.close();
+      return true;
+    } catch (err) {
+      console.warn('PocketLedger: could not write backup to connected folder.', err);
+      return false;
+    }
+  };
+  const backupNowToFolder = async () => {
+    if (!backupDirHandle) return;
+    const ok = await writeBackupToFolder(`pocketledger-backup-${todayISO()}.json`, backupPayload());
+    flash(ok ? `Backup saved to "${backupDirName}".` : 'Could not write to that folder — try reconnecting it.');
   };
   const autoBackupCheckedRef = useRef(false);
   useEffect(() => {
@@ -2822,16 +3130,22 @@ function App() {
     const last = settings.lastAutoBackupAt ? new Date(settings.lastAutoBackupAt) : null;
     const due = !last || (Date.now() - last.getTime()) >= dueDays * dayMs;
     if (!due) return;
-    const payload = { exportedAt: new Date().toISOString(), members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs, expenses, budgets, clients, invoices, receipts, settings };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `pocketledger-auto-backup-${todayISO()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    setSettingsRaw((s) => ({ ...s, lastAutoBackupAt: new Date().toISOString() }));
-    flash('Automatic backup downloaded (scheduled).');
+    const payload = backupPayload();
+    const fileName = `pocketledger-auto-backup-${todayISO()}.json`;
+    (async () => {
+      const wroteToFolder = await writeBackupToFolder(fileName, payload);
+      if (!wroteToFolder) {
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+      setSettingsRaw((s) => ({ ...s, lastAutoBackupAt: new Date().toISOString() }));
+      flash(wroteToFolder ? `Automatic backup saved to "${backupDirName}".` : 'Automatic backup downloaded (scheduled).');
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, settings.autoBackupEnabled]);
   const exportPlanCsv = (plan) => {
@@ -2874,6 +3188,9 @@ function App() {
         setClients(data.clients || []);
         setInvoices(data.invoices || []);
         setReceipts(data.receipts || []);
+        setTaxTransactions(data.taxTransactions || []);
+        setTaxImports(data.taxImports || []);
+        setTaxReturns(data.taxReturns || []);
         if (data.settings) setSettings((s) => ({ ...s, ...data.settings }));
         flash('Backup imported successfully.');
       } catch (err) {
@@ -3630,6 +3947,8 @@ function App() {
       user={currentUser}
       stats={{ plans: plans.length, loans: loansGiven.length + loansReceived.length + loanTabs.length, invoices: invoices.length, expenses: expenses.length, taxReturns: taxReturns.length }}
       onPick={openModule}
+      alerts={alerts}
+      onViewAlerts={() => setActiveTab('alerts')}
     />
   );
 
@@ -3843,9 +4162,14 @@ function App() {
                 {visible.map((e) => (
                   <tr key={e.id}>
                     <td className="kb-mono">{new Date(e.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
-                    <td>{e.category}</td>
+                    <td>{e.category}{e.recurring && <span title="Repeats monthly"><Repeat size={12} style={{ marginLeft: 6, verticalAlign: '-1px', opacity: 0.6 }} /></span>}</td>
                     <td className="panel-sub">{e.note || '—'}</td>
-                    <td className="kb-mono">{fmt(e.amount)}</td>
+                    <td className="kb-mono">
+                      {fmt(e.amount)}
+                      {e.foreignCurrency && (
+                        <div className="panel-sub" style={{ fontSize: 11 }}>{foreignCurrencyByCode(e.foreignCurrency)?.symbol || ''}{e.foreignAmount} {e.foreignCurrency}</div>
+                      )}
+                    </td>
                     <td>
                       <div className="tab-entry-actions">
                         <button className="icon-btn" onClick={() => openModal('editExpense', { ...e })} title="Edit" aria-label="Edit"><Edit3 size={13} /></button>
@@ -3968,45 +4292,128 @@ function App() {
         <div className="panel-title">Add a statement</div>
         <div className="panel-sub" style={{ marginBottom: 12 }}>
           Works with CSV, Excel (.xlsx/.xls) or PDF exports from any bank or fintech — GTBank, Access, Zenith, UBA, First Bank, Opay, Kuda, Moniepoint and more.
-          We auto-detect the date, description and amount columns, whatever the bank calls them. PDF statements are read from the text in the file, so a scanned/image-only PDF can't be read this way.
+          We auto-detect the date, description and amount columns, whatever the bank calls them. PDF statements are read from the text in the file; if a PDF turns out to be scanned/image-only, you'll get an option to try OCR instead (slower, but works page by page).
         </div>
         <div className="field"><label>Bank / account name</label>
           <input className="kb-input" value={taxImportSourceName} onChange={(e) => setTaxImportSourceName(e.target.value)} placeholder="e.g. GTBank — Current Account" />
         </div>
-        <input ref={taxFileInputRef} type="file" accept=".csv,.txt,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.pdf,application/pdf" style={{ display: 'none' }} onChange={handleTaxFileSelected} />
-        <button className="btn btn-primary" onClick={triggerTaxImport}><Upload size={15} /> Choose statement file (CSV, Excel or PDF)</button>
+        <input ref={taxFileInputRef} type="file" multiple accept=".csv,.txt,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.pdf,application/pdf" style={{ display: 'none' }} onChange={handleTaxFileSelected} />
+        <button className="btn btn-primary" onClick={triggerTaxImport}><Upload size={15} /> Choose statement file(s) (CSV, Excel or PDF)</button>
+        <div className="field-hint" style={{ marginTop: 6 }}>You can select several files at once — e.g. every month's statement, or several accounts together.</div>
 
-        {taxImportPreview && (
-          <div className="panel" style={{ marginTop: 16, background: 'var(--surface-2)' }}>
-            <div className="panel-title">{taxImportPreview.fileName}</div>
-            {taxImportPreview.rows.length > 0 ? (
-              <>
-                <div className="panel-sub" style={{ marginBottom: 10 }}>{taxImportPreview.rows.length} transaction(s) found. Preview of the first 8:</div>
-                <table className="history-table">
-                  <thead><tr><th>Date</th><th>Description</th><th>Amount</th></tr></thead>
-                  <tbody>
-                    {taxImportPreview.rows.slice(0, 8).map((r, i) => (
-                      <tr key={i}>
-                        <td className="kb-mono">{r.date}</td>
-                        <td>{r.description}</td>
-                        <td className="kb-mono" style={{ color: r.amount >= 0 ? 'var(--green)' : 'var(--brick)' }}>{r.amount >= 0 ? '+' : '−'}{fmt(Math.abs(r.amount))}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div className="settings-actions" style={{ marginTop: 14 }}>
-                  <button className="btn btn-primary" onClick={confirmTaxImport}><CheckCircle2 size={15} /> Add {taxImportPreview.rows.length} to ledger</button>
-                  <button className="btn btn-outline" onClick={cancelTaxImportPreview}>Cancel</button>
+        {taxImportBatch.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            {taxImportBatch.map((entry) => {
+              const colCount = Math.max(entry.headerCells.length, (entry.dataRows[0] || []).length, 1);
+              const colOptions = Array.from({ length: colCount }, (_, i) => ({
+                value: String(i), label: `Col ${i + 1}${entry.headerCells[i] ? `: ${entry.headerCells[i]}` : ''}`,
+              }));
+              return (
+                <div key={entry.id} className="panel" style={{ marginTop: 12, background: 'var(--surface-2)' }}>
+                  <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>{entry.fileName}</span>
+                    <button className="icon-btn" onClick={() => removeTaxImportEntry(entry.id)} title="Remove" aria-label="Remove"><Trash2 size={14} /></button>
+                  </div>
+                  {entry.rows.length > 0 ? (
+                    <>
+                      <div className="panel-sub" style={{ marginBottom: 10 }}>{entry.rows.length} transaction(s) found. Preview of the first 5:</div>
+                      <table className="history-table">
+                        <thead><tr><th>Date</th><th>Description</th><th>Amount</th></tr></thead>
+                        <tbody>
+                          {entry.rows.slice(0, 5).map((r, i) => (
+                            <tr key={i}>
+                              <td className="kb-mono">{r.date}</td>
+                              <td>{r.description}</td>
+                              <td className="kb-mono" style={{ color: r.amount >= 0 ? 'var(--green)' : 'var(--brick)' }}>{r.amount >= 0 ? '+' : '−'}{fmt(Math.abs(r.amount))}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </>
+                  ) : entry.isPdf && entry.looksScanned && !entry.ocrAttempted ? (
+                    <>
+                      <div className="field-hint" style={{ marginBottom: 10 }}>
+                        This looks like a scanned PDF — no text could be extracted directly. You can try reading it with OCR instead (slower, works through the file page by page).
+                      </div>
+                      <button className="btn btn-secondary btn-small" onClick={() => runOcrOnEntry(entry.id)} disabled={entry.ocrRunning}>
+                        <FileText size={14} /> {entry.ocrRunning ? (entry.ocrProgress || 'Reading with OCR…') : 'Try OCR'}
+                      </button>
+                    </>
+                  ) : entry.needsMapping ? (
+                    <>
+                      <div className="field-hint" style={{ marginBottom: 10 }}>Couldn't auto-detect the columns in this file. Pick them by hand below.</div>
+                      <div className="field"><label>Date column</label>
+                        <select className="kb-input" value={entry.colMap.date} onChange={(e) => updateEntryColMap(entry.id, 'date', e.target.value)}>
+                          <option value="">Choose column…</option>
+                          {colOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                      </div>
+                      <div className="field"><label>Description column</label>
+                        <select className="kb-input" value={entry.colMap.description} onChange={(e) => updateEntryColMap(entry.id, 'description', e.target.value)}>
+                          <option value="">Choose column…</option>
+                          {colOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                      </div>
+                      <div className="field"><label>Amount layout</label>
+                        <select className="kb-input" value={entry.colMap.mode} onChange={(e) => updateEntryColMap(entry.id, 'mode', e.target.value)}>
+                          <option value="amount">Single amount column</option>
+                          <option value="debitCredit">Separate Debit &amp; Credit columns</option>
+                        </select>
+                      </div>
+                      {entry.colMap.mode === 'amount' ? (
+                        <>
+                          <div className="field"><label>Amount column</label>
+                            <select className="kb-input" value={entry.colMap.amount} onChange={(e) => updateEntryColMap(entry.id, 'amount', e.target.value)}>
+                              <option value="">Choose column…</option>
+                              {colOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            </select>
+                          </div>
+                          <div className="field"><label>Dr/Cr type column (optional)</label>
+                            <select className="kb-input" value={entry.colMap.type} onChange={(e) => updateEntryColMap(entry.id, 'type', e.target.value)}>
+                              <option value="">None — amount is already signed</option>
+                              {colOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            </select>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="field"><label>Debit column</label>
+                            <select className="kb-input" value={entry.colMap.debit} onChange={(e) => updateEntryColMap(entry.id, 'debit', e.target.value)}>
+                              <option value="">Choose column…</option>
+                              {colOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            </select>
+                          </div>
+                          <div className="field"><label>Credit column</label>
+                            <select className="kb-input" value={entry.colMap.credit} onChange={(e) => updateEntryColMap(entry.id, 'credit', e.target.value)}>
+                              <option value="">Choose column…</option>
+                              {colOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            </select>
+                          </div>
+                        </>
+                      )}
+                      <button className="btn btn-secondary btn-small" onClick={() => applyManualMapping(entry.id)} style={{ marginTop: 8 }}>Apply mapping</button>
+                    </>
+                  ) : (
+                    <div className="field-hint">
+                      Couldn't read any transactions from this file.
+                      {entry.isPdf && !entry.ocrRunning && (
+                        <> <button className="btn btn-ghost btn-small" onClick={() => runOcrOnEntry(entry.id)} style={{ marginLeft: 6 }}>Try OCR</button></>
+                      )}
+                      {entry.ocrRunning && <span> {entry.ocrProgress || 'Reading with OCR…'}</span>}
+                    </div>
+                  )}
+                  {entry.errors.length > 0 && (
+                    <div className="field-hint" style={{ marginTop: 10 }}>
+                      {entry.errors.slice(0, 5).join(' ')}{entry.errors.length > 5 ? ` (+${entry.errors.length - 5} more)` : ''}
+                    </div>
+                  )}
                 </div>
-              </>
-            ) : (
-              <div className="field-hint">Couldn't read any transactions from this file.</div>
-            )}
-            {taxImportPreview.errors.length > 0 && (
-              <div className="field-hint" style={{ marginTop: 10 }}>
-                {taxImportPreview.errors.slice(0, 5).join(' ')}{taxImportPreview.errors.length > 5 ? ` (+${taxImportPreview.errors.length - 5} more)` : ''}
-              </div>
-            )}
+              );
+            })}
+            <div className="settings-actions" style={{ marginTop: 14 }}>
+              <button className="btn btn-primary" onClick={confirmTaxImportBatch}><CheckCircle2 size={15} /> Add all readable files to ledger</button>
+              <button className="btn btn-outline" onClick={() => setTaxImportBatch([])}>Clear all</button>
+            </div>
           </div>
         )}
       </div>
@@ -4032,7 +4439,7 @@ function App() {
                     <div className="loan-name kb-display">{b.source}</div>
                     <div className="panel-sub">{b.fileName} · {b.count} transaction(s) · imported {new Date(b.importedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
                   </div>
-                  <button className="icon-btn" onClick={() => removeTaxImportBatch(b.id)} title="Remove batch" aria-label="Remove batch"><Trash2 size={15} /></button>
+                  <button className="icon-btn" onClick={() => removeTaxImportRecord(b.id)} title="Remove batch" aria-label="Remove batch"><Trash2 size={15} /></button>
                 </div>
               </div>
             ))}
@@ -4053,7 +4460,7 @@ function App() {
       <>
         <SectionHeader eyebrow="Every bank, one ledger" title="Consolidated ledger"
           action={<button className="btn btn-primary" onClick={() => openModal('newTaxTxn', { date: todayISO(), direction: 'in', source: 'Manual entry' })}><Plus size={16} /> Add entry</button>} />
-        <div className="field-row" style={{ marginBottom: 14 }}>
+        <div className="field-row" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
           <select className="kb-input" value={taxYearFilter} onChange={(e) => setTaxYearFilter(Number(e.target.value))}>
             {taxYearsAvailable.map((y) => <option key={y} value={y}>{y}</option>)}
           </select>
@@ -4061,6 +4468,8 @@ function App() {
             <option value="All">All sources</option>
             {taxSourcesAvailable.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
+          <button className="btn btn-outline btn-small" onClick={() => exportTaxLedgerCsv(filtered, taxYearFilter)}><Download size={14} /> Export CSV</button>
+          <button className="btn btn-outline btn-small" onClick={() => exportTaxLedgerExcel(filtered, taxYearFilter)}><Download size={14} /> Export Excel</button>
         </div>
         <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(2,1fr)', marginBottom: 18 }}>
           <StatCard label="Income (this filter)" value={fmt(income)} icon={TrendingUp} tone="green" />
@@ -4124,7 +4533,7 @@ function App() {
   );
 
   const renderAlerts = () => {
-    const groups = ['Payments', 'Loans given', 'Loans received', 'Thrift contributions'];
+    const groups = ['Payments', 'Loans given', 'Loans received', 'Thrift contributions', 'Expense & Budgeting'];
     return (
       <>
         <SectionHeader eyebrow="Stay on top of it" title="Alerts & notifications" />
@@ -4297,6 +4706,23 @@ function App() {
           <button className="btn btn-secondary" onClick={triggerImport}><Upload size={15} /> Import backup</button>
           <input ref={importInputRef} type="file" accept="application/json" style={{ display: 'none' }} onChange={handleImportFile} />
         </div>
+        <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--paper-line)' }}>
+          <label>Back up to a synced folder</label>
+          <div className="panel-sub" style={{ marginBottom: 10 }}>
+            Point this at a folder your computer already keeps in the cloud — a Google Drive, Dropbox or OneDrive sync folder — and backups write straight there instead of your Downloads folder. There's no PocketLedger account or server involved; the file only ever moves between this browser and the folder you pick.
+            {!backupFolderSupported && ' Your current browser doesn\u2019t support this — it works in Chrome, Edge and Opera.'}
+          </div>
+          {backupDirHandle ? (
+            <div className="settings-actions">
+              <span className="panel-sub" style={{ display: 'flex', alignItems: 'center', gap: 6 }}><CheckCircle2 size={14} style={{ color: 'var(--green)' }} /> Connected: <strong>{backupDirName}</strong></span>
+              <button className="btn btn-outline btn-small" onClick={backupNowToFolder}><Download size={13} /> Back up now</button>
+              <button className="btn btn-ghost btn-small" onClick={disconnectBackupFolder}>Disconnect</button>
+            </div>
+          ) : (
+            <button className="btn btn-outline" onClick={connectBackupFolder} disabled={!backupFolderSupported}><Link2 size={15} /> Connect a folder</button>
+          )}
+          <div className="field-hint" style={{ marginTop: 8 }}>The connection only lasts for this browser tab — reconnect after a refresh or a new session. Automatic backups below will use this folder whenever it's connected, and fall back to a normal download otherwise.</div>
+        </div>
         <div className="settings-actions" style={{ marginTop: 18 }}>
           <button className="btn btn-outline" onClick={resetSampleData}><RotateCcw size={15} /> Restore sample data</button>
           <button className="btn btn-danger" onClick={clearAllData}><Trash2 size={15} /> Clear all data</button>
@@ -4400,7 +4826,7 @@ function App() {
   const openModule = (mod) => { setActiveModule(mod); setActiveTab(MODULE_NAV[mod][0].id); };
   const goHome = () => { setActiveModule('home'); setActiveTab('home'); };
   const MODULE_ALERT_GROUPS = {
-    thrift: ['Thrift contributions'], loans: ['Loans given', 'Loans received'], payments: ['Payments'], spending: [], tax: [],
+    thrift: ['Thrift contributions'], loans: ['Loans given', 'Loans received'], payments: ['Payments'], spending: ['Expense & Budgeting'], tax: [],
   };
 
   // Drives the guided tour into each individual section instead of only pointing
@@ -5117,8 +5543,19 @@ function App() {
               {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
+          <div className="field"><label>Paid in a different currency?</label>
+            <select className="kb-input" value={form.foreignCurrency || ''} onChange={(e) => setField('foreignCurrency', e.target.value)}>
+              <option value="">No — paid in {settings.currencySymbol}</option>
+              {FOREIGN_CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+            </select>
+          </div>
+          {form.foreignCurrency && (
+            <div className="field"><label>Amount paid (in {form.foreignCurrency})</label>
+              <input type="number" min="0" inputMode="decimal" className="kb-input" value={form.foreignAmount || ''} onChange={(e) => setField('foreignAmount', e.target.value)} placeholder={`e.g. 40.00 ${form.foreignCurrency}`} />
+            </div>
+          )}
           <div className="field-row">
-            <div className="field"><label>Amount</label>
+            <div className="field"><label>{form.foreignCurrency ? `Equivalent in ${settings.currencySymbol} (counts toward your budget)` : 'Amount'}</label>
               <input type="number" min="0" inputMode="decimal" className="kb-input" value={form.amount || ''} onChange={(e) => setField('amount', e.target.value)} placeholder="5000" />
             </div>
             <div className="field"><label>Date</label>
@@ -5128,6 +5565,10 @@ function App() {
           <div className="field"><label>Note (optional)</label>
             <input className="kb-input" value={form.note || ''} onChange={(e) => setField('note', e.target.value)} placeholder="What was this for?" />
           </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+            <input type="checkbox" checked={!!form.recurring} onChange={(e) => setField('recurring', e.target.checked)} />
+            Repeats every month (e.g. rent, subscriptions)
+          </label>
           <button className="btn btn-primary" onClick={submitNewExpense}>Save expense</button>
         </Modal>
       )}
@@ -5138,8 +5579,19 @@ function App() {
               {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
+          <div className="field"><label>Paid in a different currency?</label>
+            <select className="kb-input" value={form.foreignCurrency || ''} onChange={(e) => setField('foreignCurrency', e.target.value)}>
+              <option value="">No — paid in {settings.currencySymbol}</option>
+              {FOREIGN_CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+            </select>
+          </div>
+          {form.foreignCurrency && (
+            <div className="field"><label>Amount paid (in {form.foreignCurrency})</label>
+              <input type="number" min="0" inputMode="decimal" className="kb-input" value={form.foreignAmount || ''} onChange={(e) => setField('foreignAmount', e.target.value)} placeholder={`e.g. 40.00 ${form.foreignCurrency}`} />
+            </div>
+          )}
           <div className="field-row">
-            <div className="field"><label>Amount</label>
+            <div className="field"><label>{form.foreignCurrency ? `Equivalent in ${settings.currencySymbol} (counts toward your budget)` : 'Amount'}</label>
               <input type="number" min="0" inputMode="decimal" className="kb-input" value={form.amount || ''} onChange={(e) => setField('amount', e.target.value)} />
             </div>
             <div className="field"><label>Date</label>
@@ -5149,6 +5601,10 @@ function App() {
           <div className="field"><label>Note (optional)</label>
             <input className="kb-input" value={form.note || ''} onChange={(e) => setField('note', e.target.value)} placeholder="What was this for?" />
           </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+            <input type="checkbox" checked={!!form.recurring} onChange={(e) => setField('recurring', e.target.checked)} />
+            Repeats every month (e.g. rent, subscriptions)
+          </label>
           <button className="btn btn-primary" onClick={submitEditExpense}>Save changes</button>
         </Modal>
       )}
