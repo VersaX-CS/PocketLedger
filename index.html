@@ -528,6 +528,8 @@ const NIGERIA_BANKS_GROUPED = {
 };
 const NIGERIA_BANK_NAMES = Object.values(NIGERIA_BANKS_GROUPED).flat();
 const NIGERIA_BANK_NAMES_SORTED = [...NIGERIA_BANK_NAMES].sort((a, b) => a.localeCompare(b));
+// Common account types, used for the optional "account label" on a tax statement import.
+const ACCOUNT_LABEL_OPTIONS = ['Current Account', 'Savings Account', 'Domiciliary Account', 'Fixed Deposit Account', 'Wallet'];
 
 /* ============================== tax: rules, categories, parsing ============================== */
 // Nigeria Tax Act 2025 bands/rates — estimate only, not tax advice.
@@ -2230,6 +2232,7 @@ function App() {
   const [taxImportSourceName, setTaxImportSourceName] = useState('');
   const [taxImportBankOtherMode, setTaxImportBankOtherMode] = useState(false);
   const [taxImportAccountLabel, setTaxImportAccountLabel] = useState('');
+  const [taxImportAccountLabelOtherMode, setTaxImportAccountLabelOtherMode] = useState(false);
   const [taxImportBatch, setTaxImportBatch] = useState([]);
   const [taxReturnDoc, setTaxReturnDoc] = useState(null);
   const taxFileInputRef = useRef(null);
@@ -4582,12 +4585,28 @@ function App() {
           )}
         </div>
         <div className="field"><label>Account label (optional)</label>
-          <input className="kb-input" value={taxImportAccountLabel} onChange={(e) => setTaxImportAccountLabel(e.target.value)} placeholder="e.g. Current Account" />
+          <select className="kb-input" value={taxImportAccountLabelOtherMode ? '__other__' : (taxImportAccountLabel || '')} onChange={(e) => {
+            const v = e.target.value;
+            if (v === '__other__') {
+              setTaxImportAccountLabelOtherMode(true);
+              setTaxImportAccountLabel((s) => ACCOUNT_LABEL_OPTIONS.includes(s) ? '' : s);
+            } else {
+              setTaxImportAccountLabelOtherMode(false);
+              setTaxImportAccountLabel(v);
+            }
+          }}>
+            <option value="">None</option>
+            {ACCOUNT_LABEL_OPTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
+            <option value="__other__">Other / not listed…</option>
+          </select>
+          {taxImportAccountLabelOtherMode && (
+            <input className="kb-input" style={{ marginTop: 8 }} value={taxImportAccountLabel} onChange={(e) => setTaxImportAccountLabel(e.target.value)} placeholder="Enter the account label" />
+          )}
           <div className="field-hint">Helps tell accounts at the same bank apart, e.g. "GTBank — Current Account".</div>
         </div>
         <input ref={taxFileInputRef} type="file" multiple accept=".csv,.txt,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.pdf,application/pdf" style={{ display: 'none' }} onChange={handleTaxFileSelected} />
-        <button className="btn btn-primary" onClick={triggerTaxImport}><Upload size={15} /> Choose statement file(s) (CSV, Excel or PDF)</button>
-        <div className="field-hint" style={{ marginTop: 6 }}>You can select several files at once — e.g. every month's statement, or several accounts together.</div>
+        <button className="btn btn-primary" onClick={triggerTaxImport}><Upload size={15} /> Choose statement file(s)</button>
+        <div className="field-hint" style={{ marginTop: 6 }}>CSV, Excel or PDF. You can select several files at once — e.g. every month's statement, or several accounts together.</div>
 
         {taxImportBatch.length > 0 && (
           <div style={{ marginTop: 16 }}>
