@@ -50,7 +50,7 @@ const {
   Upload, Send, Receipt, Image: ImageIcon, Printer, MessageCircle,
   RotateCcw, Home, LogOut, Mail, MapPin, Building2, FileText, CreditCard,
   UserPlus, Palette, Eye, EyeOff, LogIn, Wallet, ArrowRight, Edit3, Copy,
-  Fingerprint, Moon, Compass
+  Fingerprint, Moon, Compass, FileMinus, Ban
 } = LucideReact;
 const {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
@@ -479,6 +479,9 @@ function seedReceipts() {
   return [
     { id: 'r1', receiptNo: 'RCT-2001', invoiceId: 'inv2', clientId: 'c2', clientName: '', amount: 25000, date: '2026-06-27', note: 'Payment for invoice INV-1002' },
   ];
+}
+function seedCreditNotes() {
+  return [];
 }
 function invoiceStatusOf(inv) {
   if (inv.status === 'paid') return 'paid';
@@ -1356,14 +1359,17 @@ function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, s
   );
 }
 
-function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, shareToWhatsApp, shareImageToWhatsApp, message, receipts }) {
+function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, shareToWhatsApp, shareImageToWhatsApp, message, receipts, creditNotes, onIssueCreditNote, onOpenCreditNote }) {
   useEscClose(onClose);
   const status = invoiceStatusOf(invoice);
   const total = invoiceTotal(invoice);
   const issuedOn = new Date(invoice.issueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   const dueOn = new Date(invoice.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-  const paid = status === 'paid' ? total : (receipts || []).filter((r) => r.invoiceId === invoice.id).reduce((s, r) => s + r.amount, 0);
-  const balance = Math.max(0, total - paid);
+  const invoiceCreditNotes = (creditNotes || []).filter((cn) => cn.invoiceId === invoice.id);
+  const credited = invoiceCreditNotes.reduce((s, cn) => s + Number(cn.amount || 0), 0);
+  const netTotal = Math.max(0, total - credited);
+  const paid = status === 'paid' ? netTotal : (receipts || []).filter((r) => r.invoiceId === invoice.id && !r.voided).reduce((s, r) => s + r.amount, 0);
+  const balance = Math.max(0, netTotal - paid);
 
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
@@ -1401,8 +1407,16 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
                 <div key={it.id} className="doc-line"><span>{it.desc || 'Item'} ({it.qty} &times; {fmt(it.price)})</span><span className="kb-mono">{fmt(it.qty * it.price)}</span></div>
               ))}
             </div>
+            {invoiceCreditNotes.length > 0 && (
+              <div className="doc-items">
+                {invoiceCreditNotes.map((cn) => (
+                  <div key={cn.id} className="doc-line"><span>Credit note {cn.number}{cn.reason ? ` — ${cn.reason}` : ''}</span><span className="kb-mono">−{fmt(cn.amount)}</span></div>
+                ))}
+              </div>
+            )}
             <div className="doc-totals">
-              <div className="doc-total-row"><span>Total</span><span className="kb-mono">{fmt(total)}</span></div>
+              <div className="doc-total-row"><span>Subtotal</span><span className="kb-mono">{fmt(total)}</span></div>
+              {credited > 0 && <div className="doc-total-row"><span>Credited</span><span className="kb-mono">−{fmt(credited)}</span></div>}
               <div className="doc-total-row"><span>Paid</span><span className="kb-mono">{fmt(paid)}</span></div>
               <div className="doc-total-row balance"><span>Balance</span><span className="kb-mono">{fmt(balance)}</span></div>
             </div>
@@ -1413,8 +1427,21 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
             <div className="doc-thanks">Thank you for your patronage!</div>
             <DocFooter settings={settings} />
           </div>
+          {invoiceCreditNotes.length > 0 && (
+            <div className="doc-credit-note-list">
+              <div className="client-card-section-label">Credit notes issued</div>
+              {invoiceCreditNotes.map((cn) => (
+                <div key={cn.id} className="doc-credit-note-row" onClick={() => onOpenCreditNote(cn)}>
+                  <span>{cn.number}</span>
+                  <span className="kb-mono">−{fmt(cn.amount)}</span>
+                  <ChevronRight size={14} className="chev" />
+                </div>
+              ))}
+            </div>
+          )}
           <div className="receipt-actions">
             {status !== 'paid' && <button className="btn btn-secondary btn-small" onClick={() => onMarkPaid(invoice.id)}><CheckCircle2 size={14} /> Mark as paid</button>}
+            <button className="btn btn-outline btn-small" onClick={() => onIssueCreditNote(invoice)}><FileMinus size={14} /> Issue credit note</button>
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
             <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(client?.phone, message, `${invoice.number}.png`)}><MessageCircle size={14} /> Share image on WhatsApp</button>
@@ -1430,15 +1457,17 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
   const payerName = client ? client.name : (receiptDoc.clientName || 'Walk-in customer');
   const payerPhone = client ? client.phone : '';
   const issuedOn = new Date(receiptDoc.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const voided = !!receiptDoc.voided;
 
   const message = [
     `*${settings.businessName}*${settings.rcNumber ? ` (RC ${settings.rcNumber})` : ''}`, '',
-    `RECEIPT ${receiptDoc.receiptNo}`,
+    `${voided ? 'VOIDED RECEIPT' : 'RECEIPT'} ${receiptDoc.receiptNo}`,
     `Received from: ${payerName}`,
     `Amount: ${fmt(receiptDoc.amount)}`,
     `Date: ${issuedOn}`,
     ...(invoice ? [`For invoice: ${invoice.number}`] : []),
     ...(receiptDoc.note ? [receiptDoc.note] : []),
+    ...(voided ? ['This receipt has been voided and is no longer valid.'] : []),
   ].join('\n');
 
   const downloadImage = () => {
@@ -1459,7 +1488,8 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
           <button className="icon-btn" onClick={onClose} title="Close" aria-label="Close"><X size={18} /></button>
         </div>
         <div className="modal-body">
-          <div id="receipt-print-area" className="receipt-sheet">
+          <div id="receipt-print-area" className="receipt-sheet" style={voided ? { position: 'relative' } : undefined}>
+            {voided && <div className="doc-void-watermark">VOIDED</div>}
             <DocHeader settings={settings} />
             <div className="doc-title-row">
               <div>
@@ -1471,6 +1501,12 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
                 <div className="doc-billed-name">{payerName}</div>
               </div>
             </div>
+            {voided && (
+              <div className="doc-line" style={{ marginBottom: 4 }}>
+                <span><Stamp status="overdue" label="Voided" /></span>
+                <span className="kb-mono">{receiptDoc.voidedAt ? new Date(receiptDoc.voidedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}</span>
+              </div>
+            )}
             <div>
               {invoice && <div className="doc-line"><span>For invoice</span><span className="kb-mono">{invoice.number}</span></div>}
               {receiptDoc.note && <div className="doc-line"><span>Note</span><span className="kb-mono">{receiptDoc.note}</span></div>}
@@ -1486,13 +1522,79 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
               <div className="doc-total-row balance"><span>Amount received</span><span className="kb-mono">{fmt(receiptDoc.amount)}</span></div>
             </div>
             <DocSignature settings={settings} />
-            <div className="doc-thanks">Thank you for your patronage!</div>
+            <div className="doc-thanks">{voided ? 'This receipt has been voided and is no longer valid.' : 'Thank you for your patronage!'}</div>
             <DocFooter settings={settings} />
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
             <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(payerPhone, message, `${receiptDoc.receiptNo}.png`)}><MessageCircle size={14} /> Share image on WhatsApp</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CreditNoteDocModal({ creditNoteDoc, client, invoice, settings, fmt, onClose, shareImageToWhatsApp }) {
+  useEscClose(onClose);
+  const issuedOn = new Date(creditNoteDoc.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+
+  const message = [
+    `*${settings.businessName}*${settings.rcNumber ? ` (RC ${settings.rcNumber})` : ''}`, '',
+    `CREDIT NOTE ${creditNoteDoc.number}`,
+    `Issued to: ${client ? client.name : 'Client'}`,
+    `Amount credited: ${fmt(creditNoteDoc.amount)}`,
+    `Date: ${issuedOn}`,
+    ...(invoice ? [`Against invoice: ${invoice.number}`] : []),
+    ...(creditNoteDoc.reason ? [`Reason: ${creditNoteDoc.reason}`] : []),
+  ].join('\n');
+
+  const downloadImage = () => {
+    const node = document.getElementById('receipt-print-area');
+    if (!node || !window.html2canvas) return;
+    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+      const url = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = url; a.download = `${creditNoteDoc.number}.png`; a.click();
+    });
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card receipt-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3 className="kb-display">Credit note {creditNoteDoc.number}</h3>
+          <button className="icon-btn" onClick={onClose} title="Close" aria-label="Close"><X size={18} /></button>
+        </div>
+        <div className="modal-body">
+          <div id="receipt-print-area" className="receipt-sheet">
+            <DocHeader settings={settings} />
+            <div className="doc-title-row">
+              <div>
+                <div className="doc-title">Credit Note</div>
+                <div className="doc-title-meta">{creditNoteDoc.number} · {issuedOn}</div>
+              </div>
+              <div>
+                <div className="doc-billed-label">Issued to</div>
+                <div className="doc-billed-name">{client ? client.name : 'Client'}</div>
+              </div>
+            </div>
+            <div>
+              {invoice && <div className="doc-line"><span>Against invoice</span><span className="kb-mono">{invoice.number}</span></div>}
+              {creditNoteDoc.reason && <div className="doc-line"><span>Reason</span><span className="kb-mono">{creditNoteDoc.reason}</span></div>}
+            </div>
+            <div className="doc-totals">
+              <div className="doc-total-row balance"><span>Amount credited</span><span className="kb-mono">−{fmt(creditNoteDoc.amount)}</span></div>
+            </div>
+            <div className="receipt-footer">This credit note adjusts the balance owed on {invoice ? invoice.number : 'the invoice above'}. The original invoice remains unchanged.</div>
+            <DocSignature settings={settings} />
+            <DocFooter settings={settings} />
+          </div>
+          <div className="receipt-actions">
+            <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
+            <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
+            <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(client?.phone, message, `${creditNoteDoc.number}.png`)}><MessageCircle size={14} /> Share image on WhatsApp</button>
           </div>
         </div>
       </div>
@@ -2361,6 +2463,7 @@ function App() {
   const [clients, setClientsRaw] = useState(() => (PERSISTED && PERSISTED.clients) || seedClients());
   const [invoices, setInvoicesRaw] = useState(() => (PERSISTED && PERSISTED.invoices) || seedInvoices());
   const [receipts, setReceiptsRaw] = useState(() => (PERSISTED && PERSISTED.receipts) || seedReceipts());
+  const [creditNotes, setCreditNotesRaw] = useState(() => (PERSISTED && PERSISTED.creditNotes) || seedCreditNotes());
   const [taxTransactions, setTaxTransactionsRaw] = useState(() => (PERSISTED && PERSISTED.taxTransactions) || []);
   const [taxImports, setTaxImportsRaw] = useState(() => (PERSISTED && PERSISTED.taxImports) || []);
   const [taxReturns, setTaxReturnsRaw] = useState(() => (PERSISTED && PERSISTED.taxReturns) || []);
@@ -2379,6 +2482,7 @@ function App() {
   const setClients = (updater) => { if (guardWrite()) return; setClientsRaw(updater); };
   const setInvoices = (updater) => { if (guardWrite()) return; setInvoicesRaw(updater); };
   const setReceipts = (updater) => { if (guardWrite()) return; setReceiptsRaw(updater); };
+  const setCreditNotes = (updater) => { if (guardWrite()) return; setCreditNotesRaw(updater); };
   const setTaxTransactions = (updater) => { if (guardWrite()) return; setTaxTransactionsRaw(updater); };
   const setTaxImports = (updater) => { if (guardWrite()) return; setTaxImportsRaw(updater); };
   const setTaxReturns = (updater) => { if (guardWrite()) return; setTaxReturnsRaw(updater); };
@@ -2387,6 +2491,7 @@ function App() {
   const [receiptSearch, setReceiptSearch] = useState('');
   const [invoiceDoc, setInvoiceDoc] = useState(null);
   const [paymentReceiptDoc, setPaymentReceiptDoc] = useState(null);
+  const [creditNoteDoc, setCreditNoteDoc] = useState(null);
 
   const [activeTab, setActiveTab] = useState('home');
   const [selectedPlanId, setSelectedPlanId] = useState('tp1');
@@ -2457,14 +2562,14 @@ function App() {
     const payload = {
       savedAt: new Date().toISOString(),
       users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs, expenses, budgets,
-      clients, invoices, receipts, settings, taxTransactions, taxImports, taxReturns,
+      clients, invoices, receipts, creditNotes, settings, taxTransactions, taxImports, taxReturns,
     };
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch (err) {
       console.warn('PocketLedger: could not save data to this device.', err);
     }
-  }, [users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs, expenses, budgets, clients, invoices, receipts, settings, taxTransactions, taxImports, taxReturns]);
+  }, [users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs, expenses, budgets, clients, invoices, receipts, creditNotes, settings, taxTransactions, taxImports, taxReturns]);
 
   // ---------- auto-log recurring expenses for the current month ----------
   useEffect(() => {
@@ -2538,7 +2643,7 @@ function App() {
   const setField = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   /* ---------- back button / swipe-back navigation ---------- */
-  const closeAllOverlays = () => { closeModal(); setInvoiceDoc(null); setReceipt(null); setPaymentReceiptDoc(null); setReminderDoc(null); };
+  const closeAllOverlays = () => { closeModal(); setInvoiceDoc(null); setReceipt(null); setPaymentReceiptDoc(null); setReminderDoc(null); setCreditNoteDoc(null); };
   const historyInitedRef = useRef(false);
   const isRestoringRef = useRef(false);
   const exitArmedRef = useRef(false);
@@ -2601,6 +2706,10 @@ function App() {
   const planById = (id) => plans.find((p) => p.id === id);
   const clientById = (id) => clients.find((c) => c.id === id);
   const invoiceById = (id) => invoices.find((i) => i.id === id);
+  // Credit notes reduce what's actually owed on an invoice without ever editing the
+  // original billed amount — the invoice stays a fixed record, the adjustment is separate.
+  const invoiceCreditTotal = (invoiceId) => creditNotes.filter((cn) => cn.invoiceId === invoiceId).reduce((s, cn) => s + Number(cn.amount || 0), 0);
+  const invoiceNetTotal = (inv) => Math.max(0, invoiceTotal(inv) - invoiceCreditTotal(inv.id));
   const findContribution = (planId, memberId, period) =>
     contributions.find((c) => c.planId === planId && c.memberId === memberId && c.period === period);
   const cycleCurrentPeriod = (plan) => { const periods = periodsForPlan(plan); return periods[periods.length - 1]; };
@@ -2659,8 +2768,9 @@ function App() {
       const status = invoiceStatusOf(inv);
       const client = clientById(inv.clientId);
       const name = client ? client.name : 'Client';
-      if (status === 'overdue') list.push({ id: 'inv-' + inv.id, severity: 'high', group: 'Payments', text: `Invoice ${inv.number} to ${name} is overdue by ${Math.abs(daysFromToday(inv.dueDate))} day(s) — ${fmt(invoiceTotal(inv))} outstanding.` });
-      else if (status === 'sent' && daysFromToday(inv.dueDate) <= 3) list.push({ id: 'invs-' + inv.id, severity: 'medium', group: 'Payments', text: `Invoice ${inv.number} to ${name} is due in ${daysFromToday(inv.dueDate)} day(s).` });
+      const net = invoiceNetTotal(inv);
+      if (status === 'overdue' && net > 0) list.push({ id: 'inv-' + inv.id, severity: 'high', group: 'Payments', text: `Invoice ${inv.number} to ${name} is overdue by ${Math.abs(daysFromToday(inv.dueDate))} day(s) — ${fmt(net)} outstanding.` });
+      else if (status === 'sent' && net > 0 && daysFromToday(inv.dueDate) <= 3) list.push({ id: 'invs-' + inv.id, severity: 'medium', group: 'Payments', text: `Invoice ${inv.number} to ${name} is due in ${daysFromToday(inv.dueDate)} day(s).` });
     });
     const thisMonth = todayISO().slice(0, 7);
     const spentByCat = {};
@@ -2682,8 +2792,8 @@ function App() {
   const activePlansCount = plans.length;
   const cyclePlansCount = plans.filter((p) => p.category === 'Cycle' && !cycleComplete(p)).length;
   const totalInvoiced = invoices.reduce((s, i) => s + invoiceTotal(i), 0);
-  const totalReceived = receipts.reduce((s, r) => s + r.amount, 0);
-  const totalOutstanding = invoices.filter((i) => i.status !== 'paid').reduce((s, i) => s + invoiceTotal(i), 0);
+  const totalReceived = receipts.filter((r) => !r.voided).reduce((s, r) => s + r.amount, 0);
+  const totalOutstanding = invoices.filter((i) => i.status !== 'paid').reduce((s, i) => s + invoiceNetTotal(i), 0);
   const totalSpent = expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
   const spentThisMonth = expenses.filter((e) => e.date.slice(0, 7) === todayISO().slice(0, 7)).reduce((s, e) => s + Number(e.amount || 0), 0);
   const spendByCategory = useMemo(() => {
@@ -2798,7 +2908,7 @@ function App() {
     setUsersRaw([user]);
     setMembersRaw([]); setPlansRaw([]); setContributionsRaw([]);
     setLoansGivenRaw([]); setLoansReceivedRaw([]); setLoanContactsRaw([]); setLoanTabsRaw([]);
-    setExpensesRaw([]); setBudgetsRaw([]); setClientsRaw([]); setInvoicesRaw([]); setReceiptsRaw([]);
+    setExpensesRaw([]); setBudgetsRaw([]); setClientsRaw([]); setInvoicesRaw([]); setReceiptsRaw([]); setCreditNotesRaw([]);
     setSettingsRaw((s) => ({ ...s, businessName: user.businessName, ownerName: user.name }));
     setCurrentUser(user);
     setActiveModule('home'); setActiveTab('home');
@@ -2822,6 +2932,7 @@ function App() {
     setClientsRaw(data.clients || []);
     setInvoicesRaw(data.invoices || []);
     setReceiptsRaw(data.receipts || []);
+    setCreditNotesRaw(data.creditNotes || []);
     setTaxTransactionsRaw(data.taxTransactions || []);
     setTaxImportsRaw(data.taxImports || []);
     setTaxReturnsRaw(data.taxReturns || []);
@@ -2977,7 +3088,7 @@ function App() {
     if (invoice) {
       const rcpt = {
         id: uid(), receiptNo: nextReceiptNumber(), invoiceId: invoice.id, clientId: invoice.clientId,
-        clientName: '', amount: invoiceTotal(invoice),
+        clientName: '', amount: invoiceNetTotal(invoice),
         items: (invoice.items || []).map((it) => ({ id: uid(), desc: it.desc, qty: it.qty, price: it.price })),
         date: todayISO(), note: `Payment for invoice ${invoice.number}`,
       };
@@ -3024,6 +3135,57 @@ function App() {
     if (guardWrite()) return;
     askConfirm('Delete this receipt? This cannot be undone.', () => {
       setReceipts((prev) => prev.filter((r) => r.id !== receiptId));
+    });
+  };
+  // Voiding keeps the receipt on record (nothing is edited or erased) but marks it
+  // cancelled, so the original figures stay intact for audit purposes.
+  const voidReceipt = (receiptId) => {
+    if (guardWrite()) return;
+    askConfirm('Void this receipt? It stays on record as cancelled — nothing is deleted, and you can restore it later.', () => {
+      setReceipts((prev) => prev.map((r) => r.id === receiptId ? { ...r, voided: true, voidedAt: todayISO() } : r));
+      flash('Receipt voided.');
+    }, { confirmLabel: 'Void receipt', danger: true });
+  };
+  const restoreReceipt = (receiptId) => {
+    if (guardWrite()) return;
+    setReceipts((prev) => prev.map((r) => r.id === receiptId ? { ...r, voided: false, voidedAt: null } : r));
+    flash('Receipt restored.');
+  };
+  const nextCreditNoteNumber = () => {
+    const fromData = creditNotes.map((cn) => Number((cn.number || '').replace(/\D/g, '')) || 0);
+    const base = Math.max(settings.creditNoteCounter || 3000, fromData.length ? Math.max(...fromData) : 3000);
+    return `CN-${base + 1}`;
+  };
+  // Issuing a credit note adjusts what's owed on an invoice via a separate, linked
+  // document — the invoice itself is never edited, so the original record stays intact.
+  const submitCreditNote = () => {
+    if (guardWrite()) return;
+    const inv = invoiceById(form.invoiceId);
+    if (!inv) { flash('Could not find that invoice.'); return; }
+    const amount = Number(form.amount || 0);
+    if (!amount) { flash('Enter the amount to credit.'); return; }
+    const remaining = invoiceNetTotal(inv);
+    const finish = () => {
+      const cn = {
+        id: uid(), number: form.number || nextCreditNoteNumber(), invoiceId: inv.id, clientId: inv.clientId,
+        amount, reason: form.reason || '', date: form.date || todayISO(),
+      };
+      setCreditNotes((c) => [cn, ...c]);
+      setSettings((s) => ({ ...s, creditNoteCounter: Math.max(s.creditNoteCounter || 3000, Number((cn.number || '').replace(/\D/g, '')) || 0) }));
+      closeModalSilently();
+      flash('Credit note issued.');
+      setCreditNoteDoc(cn);
+    };
+    if (amount > remaining) {
+      askConfirm(`This credits more than the ${fmt(remaining)} currently outstanding on ${inv.number}. Issue it anyway?`, finish, { confirmLabel: 'Issue anyway', danger: false });
+      return;
+    }
+    finish();
+  };
+  const deleteCreditNote = (creditNoteId) => {
+    if (guardWrite()) return;
+    askConfirm('Delete this credit note? The invoice balance will go back up. This cannot be undone.', () => {
+      setCreditNotes((prev) => prev.filter((cn) => cn.id !== creditNoteId));
     });
   };
   const deleteInvoice = (invoiceId) => {
@@ -3587,7 +3749,7 @@ function App() {
   /* ---------- import / export ---------- */
   const backupPayload = () => ({
     exportedAt: new Date().toISOString(), users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs,
-    expenses, budgets, clients, invoices, receipts, settings, taxTransactions, taxImports, taxReturns,
+    expenses, budgets, clients, invoices, receipts, creditNotes, settings, taxTransactions, taxImports, taxReturns,
   });
   const exportBackup = () => {
     const blob = new Blob([JSON.stringify(backupPayload(), null, 2)], { type: 'application/json' });
@@ -3744,6 +3906,7 @@ function App() {
           setClients(data.clients || []);
           setInvoices(data.invoices || []);
           setReceipts(data.receipts || []);
+          setCreditNotes(data.creditNotes || []);
           setTaxTransactions(data.taxTransactions || []);
           setTaxImports(data.taxImports || []);
           setTaxReturns(data.taxReturns || []);
@@ -3773,14 +3936,15 @@ function App() {
       setClients(seedClients());
       setInvoices(seedInvoices());
       setReceipts(seedReceipts());
-      setSettings((s) => { const { invoiceCounter, receiptCounter, ...rest } = s; return rest; });
+      setCreditNotes(seedCreditNotes());
+      setSettings((s) => { const { invoiceCounter, receiptCounter, creditNoteCounter, ...rest } = s; return rest; });
       flash('Sample data restored.');
     }, { confirmLabel: 'Reset', danger: false });
   };
   const clearAllData = () => {
     if (guardWrite()) return;
     askConfirm('This deletes every plan, contributor, loan, client, invoice and receipt. This cannot be undone. Continue?', () => {
-      setMembers([]); setPlans([]); setContributions([]); setLoansGiven([]); setLoansReceived([]); setLoanContacts([]); setLoanTabs([]); setExpenses([]); setBudgets([]); setClients([]); setInvoices([]); setReceipts([]);
+      setMembers([]); setPlans([]); setContributions([]); setLoansGiven([]); setLoansReceived([]); setLoanContacts([]); setLoanTabs([]); setExpenses([]); setBudgets([]); setClients([]); setInvoices([]); setReceipts([]); setCreditNotes([]);
       flash('All data cleared.');
     }, { confirmLabel: 'Clear everything' });
   };
@@ -4527,7 +4691,7 @@ function App() {
             {filtered.map((c) => {
               const clientInvoices = invoices.filter((i) => i.clientId === c.id).sort((a, b) => new Date(b.issueDate) - new Date(a.issueDate));
               const clientReceipts = receipts.filter((r) => r.clientId === c.id).sort((a, b) => new Date(b.date) - new Date(a.date));
-              const owed = clientInvoices.filter((i) => i.status !== 'paid').reduce((s, i) => s + invoiceTotal(i), 0);
+              const owed = clientInvoices.filter((i) => i.status !== 'paid').reduce((s, i) => s + invoiceNetTotal(i), 0);
               const isOpen = expandedClient === c.id;
               return (
                 <div key={c.id} className="plan-card client-card" onClick={() => setExpandedClient(isOpen ? null : c.id)}>
@@ -4558,7 +4722,7 @@ function App() {
                                   <span className="loan-name">{inv.number}</span>
                                   <div className="loan-card-right">
                                     <Stamp status={status === 'sent' ? 'active' : status === 'overdue' ? 'overdue' : status === 'paid' ? 'completed' : 'due-soon'} />
-                                    <div className="outstanding kb-mono">{fmt(invoiceTotal(inv))}</div>
+                                    <div className="outstanding kb-mono">{fmt(invoiceNetTotal(inv))}</div>
                                     <ChevronRight size={15} className="chev" />
                                   </div>
                                 </div>
@@ -4623,6 +4787,8 @@ function App() {
               const client = clientById(inv.clientId);
               const status = invoiceStatusOf(inv);
               const total = invoiceTotal(inv);
+              const net = invoiceNetTotal(inv);
+              const credited = total - net;
               return (
                 <div key={inv.id} className="loan-card">
                   <div className="loan-card-top" onClick={() => setInvoiceDoc(inv)}>
@@ -4632,7 +4798,7 @@ function App() {
                     </div>
                     <div className="loan-card-right">
                       <Stamp status={status === 'sent' ? 'active' : status === 'overdue' ? 'overdue' : status === 'paid' ? 'completed' : 'due-soon'} />
-                      <div className="outstanding kb-mono">{fmt(total)}<span>total</span></div>
+                      <div className="outstanding kb-mono">{fmt(net)}<span>{credited > 0 ? 'net of credit' : 'total'}</span></div>
                       <ChevronRight size={15} className="chev" />
                     </div>
                   </div>
@@ -4644,9 +4810,10 @@ function App() {
                         title: 'Invoice Reminder',
                         personName: client.name, personPhone: client.phone,
                         message: invoiceReminderMessage(inv),
-                        amountDue: total, dueDate: inv.dueDate,
+                        amountDue: net, dueDate: inv.dueDate,
                         filename: `reminder-${inv.number}.png`,
                       })}><Bell size={13} /> Send reminder</button>}
+                      <button className="btn btn-outline btn-small" onClick={() => openModal('newCreditNote', { invoiceId: inv.id, date: todayISO() })}><FileMinus size={13} /> Issue credit note</button>
                       <button className="btn btn-danger btn-small" onClick={() => deleteInvoice(inv.id)}><Trash2 size={13} /> Delete</button>
                     </div>
                   </div>
@@ -4675,15 +4842,16 @@ function App() {
             {filtered.map((r) => {
               const client = clientById(r.clientId);
               const invoice = r.invoiceId ? invoiceById(r.invoiceId) : null;
+              const voided = !!r.voided;
               return (
-                <div key={r.id} className="loan-card">
+                <div key={r.id} className={`loan-card${voided ? ' receipt-voided' : ''}`}>
                   <div className="loan-card-top" onClick={() => setPaymentReceiptDoc(r)}>
                     <div>
                       <span className="loan-name">{r.receiptNo} &middot; {client ? client.name : (r.clientName || 'Walk-in customer')}</span>
                       <div className="plan-card-meta">{new Date(r.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}{invoice ? ` · for ${invoice.number}` : ''}</div>
                     </div>
                     <div className="loan-card-right">
-                      <Stamp status="completed" label="Paid" />
+                      {voided ? <Stamp status="overdue" label="Voided" /> : <Stamp status="completed" label="Paid" />}
                       <div className="outstanding kb-mono">{fmt(r.amount)}<span>received</span></div>
                       <ChevronRight size={15} className="chev" />
                     </div>
@@ -4691,6 +4859,11 @@ function App() {
                   <div className="loan-card-body">
                     <div className="loan-actions" style={{ marginTop: 12, flexWrap: 'wrap' }}>
                       <button className="btn btn-outline btn-small" onClick={() => setPaymentReceiptDoc(r)}><Receipt size={13} /> View / share</button>
+                      {voided ? (
+                        <button className="btn btn-secondary btn-small" onClick={() => restoreReceipt(r.id)}><RotateCcw size={13} /> Restore</button>
+                      ) : (
+                        <button className="btn btn-outline btn-small" onClick={() => voidReceipt(r.id)}><Ban size={13} /> Void</button>
+                      )}
                       <button className="btn btn-danger btn-small" onClick={() => deleteReceipt(r.id)}><Trash2 size={13} /> Delete</button>
                     </div>
                   </div>
@@ -5801,6 +5974,8 @@ function App() {
         .field-hint{font-size:11px;color:var(--ink-soft);margin-top:5px;line-height:1.4;}
         .loan-list{display:flex;flex-direction:column;gap:10px;}
         .loan-card{background:var(--surface);border:1px solid var(--paper-line);border-radius:12px;overflow:hidden;}
+        .receipt-voided{opacity:.6;}
+        .receipt-voided .loan-name{text-decoration:line-through;}
         .loan-card-top{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;cursor:pointer;}
         .loan-name{font-size:16px;font-weight:600;}
         .linked-tag{display:inline-flex;align-items:center;gap:3px;margin-left:8px;color:var(--steel);font-weight:600;}
@@ -5929,6 +6104,11 @@ function App() {
         .doc-line{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--paper-line);font-size:11px;}
         .doc-line span:first-child{color:var(--ink);}
         .doc-totals{border-top:1.5px solid var(--ink);margin-top:3px;padding-top:7px;}
+        .doc-void-watermark{position:absolute;top:38%;left:50%;transform:translate(-50%,-50%) rotate(-18deg);font-family:'IBM Plex Mono',monospace;font-size:54px;font-weight:800;letter-spacing:.08em;color:var(--brick);opacity:.16;pointer-events:none;z-index:1;white-space:nowrap;}
+        .doc-credit-note-list{margin-top:14px;}
+        .doc-credit-note-row{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--paper-line);border-radius:8px;margin-bottom:6px;cursor:pointer;font-size:13px;background:var(--surface);}
+        .doc-credit-note-row:hover{border-color:var(--ink-soft);}
+        .doc-credit-note-row span:first-child{flex:1;}
         .reminder-message{padding-top:6px;}
         .reminder-message p{margin:0 0 10px;font-size:13.5px;line-height:1.55;color:var(--ink);}
         .reminder-message p:last-child{margin-bottom:0;}
@@ -6795,6 +6975,36 @@ function App() {
         </Modal>
       )}
 
+      {modal === 'newCreditNote' && (() => {
+        const inv = invoiceById(form.invoiceId);
+        const c = inv ? clientById(inv.clientId) : null;
+        const remaining = inv ? invoiceNetTotal(inv) : 0;
+        return (
+          <Modal title="Issue credit note" onClose={closeModal}>
+            {inv ? (
+              <div className="field-hint" style={{ marginBottom: 14 }}>
+                Against invoice <strong>{inv.number}</strong>{c ? ` — ${c.name}` : ''}. Currently {fmt(remaining)} outstanding.
+                This creates a separate document that reduces the balance owed — the invoice itself stays unchanged.
+              </div>
+            ) : (
+              <div className="field-hint" style={{ marginBottom: 14 }}>Could not find that invoice.</div>
+            )}
+            <div className="field-row">
+              <div className="field"><label>Amount to credit</label>
+                <input type="number" min="0" inputMode="decimal" className="kb-input" value={form.amount || ''} onChange={(e) => setField('amount', e.target.value)} placeholder="5000" />
+              </div>
+              <div className="field"><label>Date</label>
+                <input type="date" className="kb-input" value={form.date || todayISO()} onChange={(e) => setField('date', e.target.value)} />
+              </div>
+            </div>
+            <div className="field"><label>Reason</label>
+              <input className="kb-input" value={form.reason || ''} onChange={(e) => setField('reason', e.target.value)} placeholder="e.g. Returned item, billing error, goodwill discount" />
+            </div>
+            <button className="btn btn-primary" onClick={submitCreditNote} disabled={!inv}>Issue credit note</button>
+          </Modal>
+        );
+      })()}
+
       {receipt && <ReceiptModal receipt={receipt} onClose={() => setReceipt(null)} fmt={fmt} settings={settings} memberById={memberById} planById={planById} shareToWhatsApp={shareToWhatsApp} shareImageToWhatsApp={shareImageToWhatsApp} />}
       {tabStatementDoc && (
         <TabStatementModal
@@ -6818,6 +7028,9 @@ function App() {
           shareImageToWhatsApp={shareImageToWhatsApp}
           message={invoiceMessage(invoiceDoc)}
           receipts={receipts}
+          creditNotes={creditNotes}
+          onIssueCreditNote={(inv) => openModal('newCreditNote', { invoiceId: inv.id, date: todayISO() })}
+          onOpenCreditNote={(cn) => setCreditNoteDoc(cn)}
         />
       )}
       {paymentReceiptDoc && (
@@ -6829,6 +7042,17 @@ function App() {
           fmt={fmt}
           onClose={() => setPaymentReceiptDoc(null)}
           shareToWhatsApp={shareToWhatsApp}
+          shareImageToWhatsApp={shareImageToWhatsApp}
+        />
+      )}
+      {creditNoteDoc && (
+        <CreditNoteDocModal
+          creditNoteDoc={creditNoteDoc}
+          client={clientById(creditNoteDoc.clientId)}
+          invoice={creditNoteDoc.invoiceId ? invoiceById(creditNoteDoc.invoiceId) : null}
+          settings={settings}
+          fmt={fmt}
+          onClose={() => setCreditNoteDoc(null)}
           shareImageToWhatsApp={shareImageToWhatsApp}
         />
       )}
