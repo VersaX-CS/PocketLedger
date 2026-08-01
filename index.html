@@ -1794,6 +1794,30 @@ function Carousel({ slides }) {
   );
 }
 
+function SplashScreen({ onFinish }) {
+  // Auto-advances after 7 minutes; tapping/clicking skips straight to the welcome screen.
+  useEffect(() => {
+    const timer = setTimeout(onFinish, 7 * 60 * 1000);
+    return () => clearTimeout(timer);
+  }, [onFinish]);
+  return (
+    <div className="splash-screen" onClick={onFinish} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onFinish(); }}>
+      <style>{`
+        .splash-screen{position:fixed;inset:0;background:#FFFFFF;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;cursor:pointer;overflow:hidden;}
+        .splash-bg-logo{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-6deg);opacity:0.05;pointer-events:none;}
+        .splash-logo-mark{position:relative;animation:splashPulse 1.8s ease-in-out infinite;}
+        @keyframes splashPulse{0%,100%{transform:scale(1);opacity:1;}50%{transform:scale(1.08);opacity:0.72;}}
+        .splash-name{position:relative;margin-top:20px;font-family:'Fraunces',serif;font-size:24px;font-weight:600;color:#1B2A4A;letter-spacing:.01em;}
+        .splash-desc{position:relative;margin-top:8px;font-size:11px;color:#8B8578;letter-spacing:.02em;text-align:center;padding:0 24px;}
+      `}</style>
+      <div className="splash-bg-logo"><AppLogo size={420} iconOnly /></div>
+      <div className="splash-logo-mark"><AppLogo size={88} /></div>
+      <div className="splash-name">PocketLedger</div>
+      <div className="splash-desc">Thrift &middot; Loans &middot; Payments &middot; Expenses &middot; Tax</div>
+    </div>
+  );
+}
+
 function WelcomeScreen({ settings, onStart }) {
   const slides = [
     { title: 'Thrift', icon: PiggyBank, tone: 'green', desc: 'Daily, weekly and monthly ajo, target savings, and rotating cycle thrift where one member is paid out each round until everyone has had a turn.' },
@@ -1936,6 +1960,7 @@ function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [activeModule, setActiveModule] = useState('home');
   const [preAuthWelcomeSeen, setPreAuthWelcomeSeen] = useState(false);
+  const [showSplash, setShowSplash] = useState(true);
 
   // Demo account is view-only; guardWrite blocks every write path below.
   const isReadOnly = currentUser?.isDemo === true;
@@ -4855,6 +4880,10 @@ function App() {
     setActiveTab(info.tab || (mod === 'home' ? 'home' : MODULE_NAV[mod][0].id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tourStep]);
+
+  if (showSplash) {
+    return <SplashScreen onFinish={() => setShowSplash(false)} />;
+  }
 
   if (!preAuthWelcomeSeen) {
     return (
