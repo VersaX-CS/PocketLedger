@@ -494,6 +494,39 @@ const THEME_PRESETS = [
   { id: 'teal', label: 'Teal', color: '#0F5C63' },
 ];
 
+/* ============================== Nigerian banks & fintechs (for the bank-name dropdown) ============================== */
+const NIGERIA_BANKS_GROUPED = {
+  'Commercial Banks': [
+    'Access Bank', 'Citibank Nigeria', 'Ecobank Nigeria', 'Fidelity Bank', 'First Bank of Nigeria',
+    'First City Monument Bank (FCMB)', 'Globus Bank', 'Guaranty Trust Bank (GTBank)', 'Heritage Bank',
+    'Keystone Bank', 'Optimus Bank', 'Parallex Bank', 'Polaris Bank', 'Premium Trust Bank', 'Providus Bank',
+    'Signature Bank', 'Stanbic IBTC Bank', 'Standard Chartered Bank', 'Sterling Bank', 'SunTrust Bank',
+    'Titan Trust Bank', 'Union Bank of Nigeria', 'United Bank for Africa (UBA)', 'Unity Bank', 'Wema Bank',
+    'Zenith Bank',
+  ],
+  'Non-Interest Banks': ['Alternative Bank', 'Jaiz Bank', 'Lotus Bank', 'TAJBank'],
+  'Merchant Banks': [
+    'Coronation Merchant Bank', 'FBNQuest Merchant Bank', 'FSDH Merchant Bank', 'Greenwich Merchant Bank',
+    'Nova Merchant Bank', 'Rand Merchant Bank Nigeria',
+  ],
+  'Digital Banks & Fintechs': [
+    '9PSB (9mobile 9Payment Service Bank)', 'ALAT by Wema', 'Bankly', 'Branch', 'Carbon', 'ChipperCash',
+    'Cowrywise', 'Eyowo', 'FairMoney', 'Fintech (FCMB)', 'GoMoney', 'Kredi', 'Kuda Bank', 'Mint (MintFinance)',
+    'Moniepoint', 'OPay', 'Paga', 'PalmPay', 'Palmcredit', 'Payday', 'PiggyVest', 'PocketApp', 'Renmoney',
+    'Rubies Bank', 'Sparkle', 'VBank (VFD Microfinance Bank)',
+  ],
+  'Microfinance Banks': [
+    'AB Microfinance Bank', 'Accion Microfinance Bank', 'Baobab Microfinance Bank', 'FairMoney Microfinance Bank',
+    'Fina Trust Microfinance Bank', 'LAPO Microfinance Bank', 'Mainstreet Microfinance Bank',
+    'NPF Microfinance Bank', 'Page Financials', 'Sparkle Microfinance Bank', 'Uhuru Microfinance Bank',
+  ],
+  'Other Institutions': [
+    'Bank of Agriculture (BOA)', 'Bank of Industry (BOI)', 'Development Bank of Nigeria (DBN)',
+    'Federal Mortgage Bank of Nigeria (FMBN)', 'Nigeria Export-Import Bank (NEXIM)',
+  ],
+};
+const NIGERIA_BANK_NAMES = Object.values(NIGERIA_BANKS_GROUPED).flat();
+
 /* ============================== tax: rules, categories, parsing ============================== */
 // Nigeria Tax Act 2025 bands/rates — estimate only, not tax advice.
 const PIT_BANDS = [
@@ -2159,6 +2192,7 @@ function App() {
   const [fpSetupBusy, setFpSetupBusy] = useState(false);
   const [newAccountKeyModal, setNewAccountKeyModal] = useState(null); // account key to show once, right after signup
   const [showAccountKey, setShowAccountKey] = useState(false);
+  const [bankOtherMode, setBankOtherMode] = useState(() => !!settings.bankName && !NIGERIA_BANK_NAMES.includes(settings.bankName));
   const [tourStep, setTourStep] = useState(null);
   const [tabStatementDoc, setTabStatementDoc] = useState(null);
   const [receipt, setReceipt] = useState(null);
@@ -4869,7 +4903,27 @@ function App() {
           </div>
           <div>
             <div className="field"><label>Bank name</label>
-              <input className="kb-input" value={settings.bankName} onChange={(e) => setSettings((s) => ({ ...s, bankName: e.target.value }))} placeholder="e.g. GTBank" />
+              <select className="kb-input" value={bankOtherMode ? '__other__' : (settings.bankName || '')} onChange={(e) => {
+                const v = e.target.value;
+                if (v === '__other__') {
+                  setBankOtherMode(true);
+                  setSettings((s) => ({ ...s, bankName: NIGERIA_BANK_NAMES.includes(s.bankName) ? '' : s.bankName }));
+                } else {
+                  setBankOtherMode(false);
+                  setSettings((s) => ({ ...s, bankName: v }));
+                }
+              }}>
+                <option value="">Select your bank…</option>
+                {Object.entries(NIGERIA_BANKS_GROUPED).map(([group, banks]) => (
+                  <optgroup key={group} label={group}>
+                    {banks.map((b) => <option key={b} value={b}>{b}</option>)}
+                  </optgroup>
+                ))}
+                <option value="__other__">Other / not listed…</option>
+              </select>
+              {bankOtherMode && (
+                <input className="kb-input" style={{ marginTop: 8 }} value={settings.bankName} onChange={(e) => setSettings((s) => ({ ...s, bankName: e.target.value }))} placeholder="Enter your bank's name" />
+              )}
             </div>
             <div className="field"><label>Account number</label>
               <input className="kb-input" value={settings.accountNumber} onChange={(e) => setSettings((s) => ({ ...s, accountNumber: e.target.value.replace(/\D/g, '') }))} placeholder="0123456789" />
@@ -5619,9 +5673,19 @@ function App() {
       {modal === 'newLoanGiven' && (
         <Modal title="Record a new loan given" onClose={closeModal}>
           <div className="field"><label>Borrower's name</label>
-            <input className="kb-input" list="borrower-names" value={form.borrower || ''} onChange={(e) => setField('borrower', e.target.value)} placeholder="Who is receiving this loan?" />
-            <datalist id="borrower-names">{borrowerNames.map((n) => <option key={n} value={n} />)}</datalist>
-            <div className="field-hint">Type an existing name to add another loan for that person — it'll group with their other loans.</div>
+            <select className="kb-input" value={(form.borrowerMode === 'new' || (form.borrowerMode == null && borrowerNames.length === 0)) ? '__new__' : (form.borrower || '')} onChange={(e) => {
+              const v = e.target.value;
+              if (v === '__new__') { setField('borrowerMode', 'new'); setField('borrower', ''); }
+              else { setField('borrowerMode', 'existing'); setField('borrower', v); }
+            }}>
+              {borrowerNames.length > 0 && <option value="" disabled>Select an existing borrower…</option>}
+              {borrowerNames.map((n) => <option key={n} value={n}>{n}</option>)}
+              <option value="__new__">+ Add new person…</option>
+            </select>
+            {(form.borrowerMode === 'new' || (form.borrowerMode == null && borrowerNames.length === 0)) && (
+              <input className="kb-input" style={{ marginTop: 8 }} value={form.borrower || ''} onChange={(e) => setField('borrower', e.target.value)} placeholder="Who is receiving this loan?" autoFocus={borrowerNames.length > 0} />
+            )}
+            <div className="field-hint">Pick an existing name to add another loan for that person — it'll group with their other loans.</div>
           </div>
           <div className="field-row">
             <div className="field"><label>Principal amount</label>
@@ -5658,9 +5722,19 @@ function App() {
       {modal === 'newLoanReceived' && (
         <Modal title="Record a personal loan received" onClose={closeModal}>
           <div className="field"><label>Lender's name</label>
-            <input className="kb-input" list="lender-names" value={form.lender || ''} onChange={(e) => setField('lender', e.target.value)} placeholder="Who gave you this loan?" />
-            <datalist id="lender-names">{lenderNames.map((n) => <option key={n} value={n} />)}</datalist>
-            <div className="field-hint">Type an existing name to add another loan from that lender — it'll group with the others.</div>
+            <select className="kb-input" value={(form.lenderMode === 'new' || (form.lenderMode == null && lenderNames.length === 0)) ? '__new__' : (form.lender || '')} onChange={(e) => {
+              const v = e.target.value;
+              if (v === '__new__') { setField('lenderMode', 'new'); setField('lender', ''); }
+              else { setField('lenderMode', 'existing'); setField('lender', v); }
+            }}>
+              {lenderNames.length > 0 && <option value="" disabled>Select an existing lender…</option>}
+              {lenderNames.map((n) => <option key={n} value={n}>{n}</option>)}
+              <option value="__new__">+ Add new person…</option>
+            </select>
+            {(form.lenderMode === 'new' || (form.lenderMode == null && lenderNames.length === 0)) && (
+              <input className="kb-input" style={{ marginTop: 8 }} value={form.lender || ''} onChange={(e) => setField('lender', e.target.value)} placeholder="Who gave you this loan?" autoFocus={lenderNames.length > 0} />
+            )}
+            <div className="field-hint">Pick an existing name to add another loan from that lender — it'll group with the others.</div>
           </div>
           <div className="field-row">
             <div className="field"><label>Principal amount</label>
