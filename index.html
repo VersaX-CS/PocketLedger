@@ -3030,6 +3030,12 @@ function App() {
         isPdf, sourceFile: isPdf ? file : null,
         looksScanned: isPdf && rawRows.length <= 1,
         ocrRunning: false, ocrAttempted: false,
+        // Each file gets its own bank/account label — defaults to whatever's picked above,
+        // but can be changed per file so a multi-bank batch doesn't get one name for all of them.
+        bankName: taxImportBankOtherMode ? '' : taxImportSourceName,
+        bankOtherMode: false,
+        accountLabel: taxImportAccountLabelOtherMode ? '' : taxImportAccountLabel,
+        accountLabelOtherMode: false,
       });
     }
     setTaxImportBatch((prev) => [...prev, ...entries]);
@@ -3037,6 +3043,16 @@ function App() {
     e.target.value = '';
   };
   const removeTaxImportEntry = (id) => setTaxImportBatch((prev) => prev.filter((entry) => entry.id !== id));
+  const updateEntryBank = (id, value) => setTaxImportBatch((prev) => prev.map((entry) => {
+    if (entry.id !== id) return entry;
+    if (value === '__other__') return { ...entry, bankOtherMode: true, bankName: NIGERIA_BANK_NAMES.includes(entry.bankName) ? '' : entry.bankName };
+    return { ...entry, bankOtherMode: false, bankName: value };
+  }));
+  const updateEntryAccountLabel = (id, value) => setTaxImportBatch((prev) => prev.map((entry) => {
+    if (entry.id !== id) return entry;
+    if (value === '__other__') return { ...entry, accountLabelOtherMode: true, accountLabel: ACCOUNT_LABEL_OPTIONS.includes(entry.accountLabel) ? '' : entry.accountLabel };
+    return { ...entry, accountLabelOtherMode: false, accountLabel: value };
+  }));
   // OCR is slow, so it only runs when explicitly requested per file.
   const runOcrOnEntry = async (id) => {
     const entry = taxImportBatch.find((en) => en.id === id);
@@ -3090,11 +3106,11 @@ function App() {
     if (guardWrite()) return;
     const ready = taxImportBatch.filter((entry) => entry.rows.length > 0);
     if (ready.length === 0) { flash('No readable transactions to add yet.'); return; }
-    const sourceName = (taxImportSourceName.trim() || 'Bank statement') + (taxImportAccountLabel.trim() ? ` — ${taxImportAccountLabel.trim()}` : '');
     let allNewTxns = [];
     const newImportRecords = [];
     let totalAdded = 0;
     ready.forEach((entry) => {
+      const sourceName = ((entry.bankName || '').trim() || 'Bank statement') + ((entry.accountLabel || '').trim() ? ` — ${entry.accountLabel.trim()}` : '');
       const batchId = uid();
       const newTxns = entry.rows.map((r) => ({
         id: uid(), batchId, date: r.date, description: r.description, amount: r.amount,
@@ -4565,7 +4581,8 @@ function App() {
         <div className="panel-sub" style={{ marginBottom: 12 }}>
           Works with CSV, Excel or PDF exports from any bank. Columns are auto-detected; scanned PDFs can use OCR instead.
         </div>
-        <div className="field"><label>Bank</label>
+        <div className="field-hint" style={{ marginBottom: 4 }}>Set a default bank/account below for files you're about to add — each file can still be changed individually afterwards, so a mixed batch from different banks works fine.</div>
+        <div className="field"><label>Bank (default for new files)</label>
           <select className="kb-input" value={taxImportBankOtherMode ? '__other__' : (taxImportSourceName || '')} onChange={(e) => {
             const v = e.target.value;
             if (v === '__other__') {
@@ -4584,7 +4601,7 @@ function App() {
             <input className="kb-input" style={{ marginTop: 8 }} value={taxImportSourceName} onChange={(e) => setTaxImportSourceName(e.target.value)} placeholder="Enter the bank's name" />
           )}
         </div>
-        <div className="field"><label>Account label (optional)</label>
+        <div className="field"><label>Account label (optional, default for new files)</label>
           <select className="kb-input" value={taxImportAccountLabelOtherMode ? '__other__' : (taxImportAccountLabel || '')} onChange={(e) => {
             const v = e.target.value;
             if (v === '__other__') {
@@ -4620,6 +4637,28 @@ function App() {
                   <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title={entry.fileName}>{entry.fileName}</span>
                     <button className="icon-btn" style={{ flex: '0 0 auto' }} onClick={() => removeTaxImportEntry(entry.id)} title="Remove" aria-label="Remove"><Trash2 size={14} /></button>
+                  </div>
+                  <div className="field-row" style={{ marginBottom: 12 }}>
+                    <div className="field"><label>Bank</label>
+                      <select className="kb-input" value={entry.bankOtherMode ? '__other__' : (entry.bankName || '')} onChange={(e) => updateEntryBank(entry.id, e.target.value)}>
+                        <option value="">Select the bank…</option>
+                        {NIGERIA_BANK_NAMES_SORTED.map((b) => <option key={b} value={b}>{b}</option>)}
+                        <option value="__other__">Other / not listed…</option>
+                      </select>
+                      {entry.bankOtherMode && (
+                        <input className="kb-input" style={{ marginTop: 8 }} value={entry.bankName} onChange={(e) => updateEntryBank(entry.id, e.target.value)} placeholder="Enter the bank's name" />
+                      )}
+                    </div>
+                    <div className="field"><label>Account label (optional)</label>
+                      <select className="kb-input" value={entry.accountLabelOtherMode ? '__other__' : (entry.accountLabel || '')} onChange={(e) => updateEntryAccountLabel(entry.id, e.target.value)}>
+                        <option value="">None</option>
+                        {ACCOUNT_LABEL_OPTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
+                        <option value="__other__">Other / not listed…</option>
+                      </select>
+                      {entry.accountLabelOtherMode && (
+                        <input className="kb-input" style={{ marginTop: 8 }} value={entry.accountLabel} onChange={(e) => updateEntryAccountLabel(entry.id, e.target.value)} placeholder="Enter the account label" />
+                      )}
+                    </div>
                   </div>
                   {entry.rows.length > 0 ? (
                     <>
