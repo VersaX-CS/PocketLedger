@@ -1601,8 +1601,9 @@ function AuthScreen({ users, onLogin, onSignup, flash }) {
   const [showContact, setShowContact] = useState(false);
   const [fields, setFields] = useState({ name: '', businessName: '', email: '', password: '', accessKey: '' });
   const [fpBusy, setFpBusy] = useState(false);
+  const [authError, setAuthError] = useState('');
   const autoFpTried = useRef(false);
-  const set = (k, v) => setFields((f) => ({ ...f, [k]: v }));
+  const set = (k, v) => { setAuthError(''); setFields((f) => ({ ...f, [k]: v })); };
   const demoAvailable = users.some((u) => u.isDemo);
   const fingerprintAvailable = webauthnSupported() && users.some((u) => u.webauthnCredentialId);
 
@@ -1651,7 +1652,7 @@ function AuthScreen({ users, onLogin, onSignup, flash }) {
       onSignup({ id: uid(), name: fields.name, businessName: fields.businessName || '', email: fields.email, password: fields.password });
     } else {
       const match = users.find((u) => u.email.toLowerCase() === fields.email.toLowerCase() && u.password === fields.password);
-      if (!match) { flash('No account matches that email and password.'); return; }
+      if (!match) { setAuthError('No account matches that email and password.'); return; }
       onLogin(match);
     }
   };
@@ -1685,6 +1686,7 @@ function AuthScreen({ users, onLogin, onSignup, flash }) {
         .auth-demo-box{margin-top:16px;background:#EFEAE0;border-radius:9px;padding:10px 12px;font-size:12px;color:#5B6478;text-align:center;}
         .auth-demo-fill{display:block;margin:6px auto 0;background:none;border:none;color:#B78A2E;font-weight:600;font-size:12px;cursor:pointer;padding:0;}
         .auth-field-hint{font-size:11px;color:#8B8578;margin-top:5px;line-height:1.4;}
+        .auth-error{font-size:12.5px;color:#A6432D;background:#F7E7E2;border-radius:8px;padding:9px 12px;margin-top:2px;margin-bottom:14px;line-height:1.4;}
         .auth-contact-link{display:block;text-align:center;background:none;border:none;color:#2F4B7C;font-weight:600;font-size:12.5px;cursor:pointer;margin:14px auto 0;padding:0;}
         .auth-contact-backdrop{position:fixed;inset:0;background:rgba(27,42,74,0.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:20px;}
         .auth-contact-wrap{position:relative;width:100%;max-width:360px;}
@@ -1697,8 +1699,8 @@ function AuthScreen({ users, onLogin, onSignup, flash }) {
         </div>
         <div className="auth-sub">Thrift, loans and business payments — all in one ledger.</div>
         <div className="auth-tabs">
-          <div className={`auth-tab ${mode === 'login' ? 'auth-tab-active' : ''}`} onClick={() => setMode('login')}>Log in</div>
-          <div className={`auth-tab ${mode === 'signup' ? 'auth-tab-active' : ''}`} onClick={() => setMode('signup')}>Sign up</div>
+          <div className={`auth-tab ${mode === 'login' ? 'auth-tab-active' : ''}`} onClick={() => { setMode('login'); setAuthError(''); }}>Log in</div>
+          <div className={`auth-tab ${mode === 'signup' ? 'auth-tab-active' : ''}`} onClick={() => { setMode('signup'); setAuthError(''); }}>Sign up</div>
         </div>
 
         {mode === 'signup' && (
@@ -1724,6 +1726,7 @@ function AuthScreen({ users, onLogin, onSignup, flash }) {
             <button className="auth-eye" onClick={() => setShowPw((s) => !s)}>{showPw ? <EyeOff size={15} /> : <Eye size={15} />}</button>
           </div>
         </div>
+        {authError && <div className="auth-error">{authError}</div>}
         <button className="auth-submit" onClick={submit}>
           {mode === 'signup' ? <><UserPlus size={16} /> Create account</> : <><LogIn size={16} /> Log in</>}
         </button>
@@ -1734,9 +1737,9 @@ function AuthScreen({ users, onLogin, onSignup, flash }) {
         )}
         <div className="auth-switch">
           {mode === 'signup' ? (
-            <>Already have an account? <button onClick={() => setMode('login')}>Log in</button></>
+            <>Already have an account? <button onClick={() => { setMode('login'); setAuthError(''); }}>Log in</button></>
           ) : (
-            <>New here? <button onClick={() => setMode('signup')}>Create an account</button></>
+            <>New here? <button onClick={() => { setMode('signup'); setAuthError(''); }}>Create an account</button></>
           )}
         </div>
         {mode === 'login' && demoAvailable && (
@@ -1802,8 +1805,8 @@ function Toast({ message, onDismiss }) {
   return (
     <>
       <style>{`
-        .app-toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#1B2A4A;color:#fff;padding:11px 14px 11px 20px;border-radius:10px;font-size:13px;font-family:'IBM Plex Sans',sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.25);z-index:9998;display:flex;align-items:center;gap:10px;max-width:min(92vw,420px);}
-        .app-toast-close{background:none;border:none;color:rgba(255,255,255,0.7);cursor:pointer;padding:4px;display:flex;align-items:center;flex-shrink:0;border-radius:50%;}
+        .app-toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:#1B2A4A;color:#fff;padding:16px 20px 16px 26px;border-radius:12px;font-size:14.5px;font-family:'IBM Plex Sans',sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.25);z-index:9998;display:flex;align-items:center;gap:18px;width:min(92vw,480px);line-height:1.45;}
+        .app-toast-close{background:none;border:none;color:rgba(255,255,255,0.7);cursor:pointer;padding:6px;display:flex;align-items:center;flex-shrink:0;border-radius:50%;}
         .app-toast-close:hover{color:#fff;}
       `}</style>
       <div className="app-toast" role="status" aria-live="polite">
@@ -5188,8 +5191,8 @@ function App() {
         .add-tab-entry-fields{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
         .receipt-link{margin-left:auto;font-size:11.5px;}
         .settings-actions{display:flex;gap:10px;flex-wrap:wrap;}
-        .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:11px 14px 11px 20px;border-radius:10px;font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,0.25);z-index:100;display:flex;align-items:center;gap:10px;max-width:min(92vw,420px);}
-        .toast-close{background:none;border:none;color:rgba(255,255,255,0.7);cursor:pointer;padding:4px;display:flex;align-items:center;flex-shrink:0;border-radius:50%;}
+        .toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:16px 20px 16px 26px;border-radius:12px;font-size:14.5px;box-shadow:0 10px 30px rgba(0,0,0,0.25);z-index:100;display:flex;align-items:center;gap:18px;width:min(92vw,480px);line-height:1.45;}
+        .toast-close{background:none;border:none;color:rgba(255,255,255,0.7);cursor:pointer;padding:6px;display:flex;align-items:center;flex-shrink:0;border-radius:50%;}
         .toast-close:hover{color:#fff;background:rgba(255,255,255,0.15);}
         .receipt-card{max-width:420px;}
         .receipt-sheet{background:#fff;border:1.5px dashed var(--paper-line);border-radius:10px;padding:20px;}
