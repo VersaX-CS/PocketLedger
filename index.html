@@ -317,7 +317,7 @@ function cycleCurrentRecipientId(plan) {
 function shareNodeImageToWhatsApp(elementId, filename, waHref) {
   const node = document.getElementById(elementId);
   if (!node || !window.html2canvas) { window.open(waHref, '_blank'); return; }
-  window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 2 }).then((canvas) => {
+  window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 4 }).then((canvas) => {
     canvas.toBlob((blob) => {
       if (!blob) { window.open(waHref, '_blank'); return; }
       const file = new File([blob], filename, { type: 'image/png' });
@@ -449,6 +449,7 @@ function seedSettings() {
     logoDataUrl: '', rcNumber: '', businessPhone: '', businessEmail: '', businessAddress: '',
     bankName: '', accountNumber: '', accountName: '', themeColor: '#1B2A4A', darkMode: false,
     autoBackupEnabled: false, autoBackupFrequency: 'weekly', lastAutoBackupAt: '',
+    signatureMode: 'type', signatureText: '', signatureImageDataUrl: '',
   };
 }
 function seedClients() {
@@ -1147,14 +1148,75 @@ function DocPayBox({ settings }) {
     </div>
   );
 }
-// Script-style signature block, right-aligned.
+// Signature block, right-aligned — script text, an uploaded picture, or a hand-drawn signature.
 function DocSignature({ settings }) {
-  const name = settings.ownerName || settings.businessName;
+  const mode = settings.signatureMode || 'type';
+  const hasImage = (mode === 'upload' || mode === 'draw') && settings.signatureImageDataUrl;
+  const text = settings.signatureText || settings.ownerName || settings.businessName;
   return (
     <div className="doc-sign">
-      <div className="doc-sign-name">{name}</div>
+      {hasImage
+        ? <img src={settings.signatureImageDataUrl} alt="Signature" className="doc-sign-img" />
+        : <div className="doc-sign-name">{text}</div>}
       <div className="doc-sign-line" />
       <div className="doc-sign-caption">Authorized signature</div>
+    </div>
+  );
+}
+// Canvas signature pad — draw with mouse or finger; each completed stroke is saved as a PNG data URL.
+function SignaturePad({ value, onChange }) {
+  const canvasRef = useRef(null);
+  const drawingRef = useRef(false);
+  const lastRef = useRef(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !value) return;
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+    img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    img.src = value;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const posFromEvent = (e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const t = e.touches && e.touches[0];
+    const clientX = t ? t.clientX : e.clientX;
+    const clientY = t ? t.clientY : e.clientY;
+    return { x: (clientX - rect.left) * (canvas.width / rect.width), y: (clientY - rect.top) * (canvas.height / rect.height) };
+  };
+  const start = (e) => { e.preventDefault(); drawingRef.current = true; lastRef.current = posFromEvent(e); };
+  const move = (e) => {
+    if (!drawingRef.current) return;
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const pos = posFromEvent(e);
+    ctx.strokeStyle = '#1B2A4A'; ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(lastRef.current.x, lastRef.current.y); ctx.lineTo(pos.x, pos.y); ctx.stroke();
+    lastRef.current = pos;
+  };
+  const end = () => {
+    if (!drawingRef.current) return;
+    drawingRef.current = false;
+    onChange(canvasRef.current.toDataURL('image/png'));
+  };
+  const clear = () => {
+    const canvas = canvasRef.current;
+    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    onChange('');
+  };
+
+  return (
+    <div>
+      <canvas
+        ref={canvasRef} width={340} height={120} className="signature-canvas"
+        onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end}
+        onTouchStart={start} onTouchMove={move} onTouchEnd={end}
+      />
+      <button type="button" className="btn btn-ghost btn-small" style={{ marginTop: 6 }} onClick={clear}>Clear</button>
     </div>
   );
 }
@@ -1244,7 +1306,7 @@ function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, s
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 2 }).then((canvas) => {
+    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 4 }).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = `receipt-${receiptNo}.png`; a.click();
@@ -1277,8 +1339,8 @@ function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, s
                 : <div key={i} className="doc-line"><span>{label}</span><span className="kb-mono">{value}</span></div>)}
             </div>
             <DocPayBox settings={settings} />
-            <div className="doc-thanks">Thank you for your patronage!</div>
             <DocSignature settings={settings} />
+            <div className="doc-thanks">Thank you for your patronage!</div>
             <DocFooter settings={settings} />
           </div>
           <div className="receipt-actions">
@@ -1304,7 +1366,7 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 2 }).then((canvas) => {
+    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 4 }).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = `${invoice.number}.png`; a.click();
@@ -1345,8 +1407,8 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
             <div className="doc-due">Due date: {dueOn}</div>
             <DocPayBox settings={settings} />
             {invoice.notes && <div className="receipt-footer">{invoice.notes}</div>}
-            <div className="doc-thanks">Thank you for your patronage!</div>
             <DocSignature settings={settings} />
+            <div className="doc-thanks">Thank you for your patronage!</div>
             <DocFooter settings={settings} />
           </div>
           <div className="receipt-actions">
@@ -1380,7 +1442,7 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 2 }).then((canvas) => {
+    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 4 }).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = `${receiptDoc.receiptNo}.png`; a.click();
@@ -1414,8 +1476,8 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
             <div className="doc-totals">
               <div className="doc-total-row balance"><span>Amount received</span><span className="kb-mono">{fmt(receiptDoc.amount)}</span></div>
             </div>
-            <div className="doc-thanks">Thank you for your patronage!</div>
             <DocSignature settings={settings} />
+            <div className="doc-thanks">Thank you for your patronage!</div>
             <DocFooter settings={settings} />
           </div>
           <div className="receipt-actions">
@@ -1458,7 +1520,7 @@ function TabStatementModal({ tab, contact, settings, fmt, onClose, shareImageToW
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 2 }).then((canvas) => {
+    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 4 }).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = `statement-${statementNo}.png`; a.click();
@@ -1520,7 +1582,7 @@ function TaxReturnDocModal({ taxReturn, settings, fmt, onClose, onMarkFiled }) {
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 2 }).then((canvas) => {
+    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 4 }).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = `tax-return-${taxReturn.year}-${taxReturn.taxpayerName.replace(/\s+/g, '-')}.png`; a.click();
@@ -2308,6 +2370,17 @@ function App() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => setSettings((s) => ({ ...s, logoDataUrl: reader.result }));
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+  const signatureInputRef = useRef(null);
+  const triggerSignatureUpload = () => signatureInputRef.current && signatureInputRef.current.click();
+  const handleSignatureFile = (e) => {
+    if (guardWrite()) return;
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setSettings((s) => ({ ...s, signatureImageDataUrl: reader.result }));
     reader.readAsDataURL(file);
     e.target.value = '';
   };
@@ -5060,6 +5133,58 @@ function App() {
       </div>
 
       <div className="panel" style={{ marginTop: 16 }}>
+        <div className="panel-title">Signature</div>
+        <div className="panel-sub" style={{ marginBottom: 12 }}>Shown on the bottom-right of every receipt and invoice.</div>
+        <div className="signature-mode-toggle">
+          {[['type', 'Type'], ['upload', 'Upload picture'], ['draw', 'Draw']].map(([m, label]) => (
+            <button
+              key={m}
+              type="button"
+              className={`sig-mode-btn ${(settings.signatureMode || 'type') === m ? 'sig-mode-active' : ''}`}
+              onClick={() => setSettings((s) => ({ ...s, signatureMode: m }))}
+            >{label}</button>
+          ))}
+        </div>
+
+        {(settings.signatureMode || 'type') === 'type' && (
+          <div className="field" style={{ marginTop: 12 }}>
+            <label>Signature text</label>
+            <input
+              className="kb-input"
+              value={settings.signatureText || ''}
+              onChange={(e) => setSettings((s) => ({ ...s, signatureText: e.target.value }))}
+              placeholder={settings.ownerName || settings.businessName || 'Your name'}
+            />
+            <div className="field-hint">Rendered in a script font. Leave blank to use your name above.</div>
+            <div className="signature-preview">
+              <span className="doc-sign-name">{settings.signatureText || settings.ownerName || settings.businessName || 'Your signature'}</span>
+            </div>
+          </div>
+        )}
+
+        {settings.signatureMode === 'upload' && (
+          <div style={{ marginTop: 12 }}>
+            <div className="logo-upload-row">
+              <div className="logo-preview">{settings.signatureImageDataUrl ? <img src={settings.signatureImageDataUrl} alt="Signature" /> : <Edit3 size={22} />}</div>
+              <div>
+                <button className="btn btn-outline btn-small" onClick={triggerSignatureUpload}><Upload size={13} /> Upload signature picture</button>
+                {settings.signatureImageDataUrl && <button className="btn btn-ghost btn-small" style={{ marginLeft: 8 }} onClick={() => setSettings((s) => ({ ...s, signatureImageDataUrl: '' }))}>Remove</button>}
+                <input ref={signatureInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleSignatureFile} />
+              </div>
+            </div>
+            <div className="field-hint" style={{ marginTop: 8 }}>A cropped photo of your signature on plain paper works well.</div>
+          </div>
+        )}
+
+        {settings.signatureMode === 'draw' && (
+          <div style={{ marginTop: 12 }}>
+            <SignaturePad value={settings.signatureImageDataUrl} onChange={(dataUrl) => setSettings((s) => ({ ...s, signatureImageDataUrl: dataUrl }))} />
+            <div className="field-hint" style={{ marginTop: 8 }}>Draw with your mouse or finger — it's saved automatically.</div>
+          </div>
+        )}
+      </div>
+
+      <div className="panel" style={{ marginTop: 16 }}>
         <div className="panel-title">Payment portal profile</div>
         <div className="panel-sub" style={{ marginBottom: 14 }}>Shown on invoices and receipts sent to your clients.</div>
         <div className="two-col">
@@ -5578,7 +5703,7 @@ function App() {
         .toast-close{background:none;border:none;color:rgba(255,255,255,0.7);cursor:pointer;padding:6px;display:flex;align-items:center;flex-shrink:0;border-radius:50%;}
         .toast-close:hover{color:#fff;background:rgba(255,255,255,0.15);}
         .receipt-card{max-width:420px;}
-        .receipt-sheet{background:#fff;border:1px solid var(--paper-line);border-radius:12px;padding:24px 22px;}
+        .receipt-sheet{background:#fff;border:1px solid var(--paper-line);border-radius:12px;padding:18px 16px;}
         .receipt-brand{font-size:19px;font-weight:600;}
         .receipt-sub{font-size:11.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-soft);margin-bottom:14px;}
         .receipt-lines{display:flex;flex-direction:column;gap:9px;}
@@ -5587,36 +5712,37 @@ function App() {
         .receipt-divider{border-top:1px dashed var(--paper-line);margin:2px 0;}
         .receipt-footer{margin-top:16px;padding-top:10px;border-top:1px solid var(--paper-line);font-size:11px;color:var(--ink-soft);font-style:italic;}
         .receipt-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;}
-        .doc-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}
-        .doc-head-left{display:flex;align-items:center;gap:12px;}
-        .doc-logo{width:48px;height:48px;border-radius:10px;object-fit:cover;flex-shrink:0;}
-        .doc-logo-fallback{width:48px;height:48px;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Fraunces',serif;font-weight:600;font-size:19px;flex-shrink:0;}
-        .doc-brand{font-family:'Fraunces',serif;font-weight:700;font-size:15.5px;letter-spacing:.02em;text-transform:uppercase;line-height:1.3;}
-        .doc-brand-meta{font-size:11px;color:var(--ink-soft);line-height:1.5;margin-top:2px;}
-        .doc-rc{font-size:10.5px;color:var(--ink-soft);white-space:nowrap;padding-top:2px;text-align:right;}
-        .doc-gold-rule{height:2px;background:var(--gold);margin:16px 0 18px;border:none;}
-        .doc-title-row{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:14px;}
-        .doc-title{font-family:'Fraunces',serif;font-weight:700;font-size:21px;color:var(--ink);}
-        .doc-title-meta{font-size:11.5px;color:var(--ink-soft);margin-top:2px;}
-        .doc-billed-label{font-size:10.5px;color:var(--ink-soft);text-align:right;text-transform:uppercase;letter-spacing:.04em;}
-        .doc-billed-name{font-family:'Fraunces',serif;font-weight:700;font-size:14.5px;text-align:right;margin-top:3px;}
-        .doc-category{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px;}
-        .doc-line{display:flex;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px solid var(--paper-line);font-size:13.5px;}
+        .doc-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
+        .doc-head-left{display:flex;align-items:center;gap:10px;}
+        .doc-logo{width:38px;height:38px;border-radius:8px;object-fit:cover;flex-shrink:0;}
+        .doc-logo-fallback{width:38px;height:38px;border-radius:8px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Fraunces',serif;font-weight:600;font-size:15px;flex-shrink:0;}
+        .doc-brand{font-family:'Fraunces',serif;font-weight:700;font-size:13px;letter-spacing:.02em;text-transform:uppercase;line-height:1.3;}
+        .doc-brand-meta{font-size:9px;color:var(--ink-soft);line-height:1.45;margin-top:1px;}
+        .doc-rc{font-size:8.5px;color:var(--ink-soft);white-space:nowrap;padding-top:2px;text-align:right;}
+        .doc-gold-rule{height:1.5px;background:var(--gold);margin:11px 0 12px;border:none;}
+        .doc-title-row{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px;}
+        .doc-title{font-family:'Fraunces',serif;font-weight:700;font-size:16.5px;color:var(--ink);}
+        .doc-title-meta{font-size:9.5px;color:var(--ink-soft);margin-top:2px;}
+        .doc-billed-label{font-size:8.5px;color:var(--ink-soft);text-align:right;text-transform:uppercase;letter-spacing:.04em;}
+        .doc-billed-name{font-family:'Fraunces',serif;font-weight:700;font-size:11.5px;text-align:right;margin-top:2px;}
+        .doc-category{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:7px;}
+        .doc-line{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--paper-line);font-size:11px;}
         .doc-line span:first-child{color:var(--ink);}
-        .doc-totals{border-top:2px solid var(--ink);margin-top:4px;padding-top:10px;}
-        .doc-total-row{display:flex;justify-content:space-between;font-size:13.5px;padding:3px 0;color:var(--ink-soft);}
+        .doc-totals{border-top:1.5px solid var(--ink);margin-top:3px;padding-top:7px;}
+        .doc-total-row{display:flex;justify-content:space-between;font-size:11px;padding:2px 0;color:var(--ink-soft);}
         .doc-total-row .kb-mono{color:var(--ink);}
-        .doc-total-row.balance{font-weight:700;color:var(--brick);font-size:16px;padding-top:6px;}
+        .doc-total-row.balance{font-weight:700;color:var(--brick);font-size:13px;padding-top:5px;}
         .doc-total-row.balance .kb-mono{color:var(--brick);}
-        .doc-due{font-size:11.5px;color:var(--ink-soft);margin-top:4px;}
-        .doc-pay-box{border:1px solid var(--paper-line);background:var(--surface-2);border-radius:10px;padding:12px 14px;margin-top:18px;font-size:12.5px;}
-        .doc-pay-label{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:4px;}
-        .doc-thanks{text-align:center;font-style:italic;color:var(--ink-soft);font-size:13px;margin-top:22px;}
-        .doc-sign{display:flex;flex-direction:column;align-items:flex-end;margin-top:22px;}
-        .doc-sign-name{font-family:'Mrs Saint Delafield',cursive;font-size:30px;color:var(--ink);line-height:1;}
-        .doc-sign-line{width:170px;border-top:1px solid var(--paper-line);margin-top:4px;padding-top:4px;}
-        .doc-sign-caption{font-size:10.5px;color:var(--ink-soft);text-align:right;}
-        .doc-footer{text-align:center;border-top:1px solid var(--paper-line);margin-top:20px;padding-top:10px;font-size:10.5px;color:var(--ink-soft);}
+        .doc-due{font-size:9.5px;color:var(--ink-soft);margin-top:3px;}
+        .doc-pay-box{border:1px solid var(--paper-line);background:var(--surface-2);border-radius:8px;padding:9px 11px;margin-top:13px;font-size:10px;}
+        .doc-pay-label{font-size:8.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:3px;}
+        .doc-thanks{text-align:center;font-style:italic;color:var(--ink-soft);font-size:10.5px;margin-top:14px;}
+        .doc-sign{display:flex;flex-direction:column;align-items:flex-end;margin-top:16px;}
+        .doc-sign-name{font-family:'Mrs Saint Delafield',cursive;font-size:24px;color:var(--ink);line-height:1;}
+        .doc-sign-img{max-width:150px;max-height:52px;object-fit:contain;object-position:right center;}
+        .doc-sign-line{width:135px;border-top:1px solid var(--paper-line);margin-top:4px;padding-top:3px;}
+        .doc-sign-caption{font-size:8.5px;color:var(--ink-soft);text-align:right;}
+        .doc-footer{text-align:center;border-top:1px solid var(--paper-line);margin-top:13px;padding-top:8px;font-size:8.5px;color:var(--ink-soft);}
         .doc-footer strong{color:var(--ink);}
         @media print{
           body *{visibility:hidden;}
@@ -5658,6 +5784,11 @@ function App() {
         .logo-upload-row{display:flex;align-items:center;gap:14px;}
         .logo-preview{width:52px;height:52px;border-radius:10px;background:var(--surface-2);border:1px solid var(--paper-line);display:flex;align-items:center;justify-content:center;overflow:hidden;color:var(--ink-soft);flex-shrink:0;}
         .logo-preview img{width:100%;height:100%;object-fit:cover;}
+        .signature-mode-toggle{display:flex;gap:8px;flex-wrap:wrap;}
+        .sig-mode-btn{flex:1;min-width:100px;padding:8px 10px;border-radius:8px;border:1.5px solid var(--paper-line);background:var(--surface);font-size:12.5px;font-weight:600;color:var(--ink-soft);cursor:pointer;}
+        .sig-mode-active{border-color:var(--ink);color:var(--ink);background:var(--surface-2);}
+        .signature-preview{margin-top:10px;border:1px solid var(--paper-line);border-radius:8px;padding:12px 14px;background:#fff;display:flex;justify-content:flex-end;}
+        .signature-canvas{width:100%;max-width:340px;height:120px;background:#fff;border:1.5px dashed var(--paper-line);border-radius:8px;touch-action:none;cursor:crosshair;display:block;}
         .invoice-items-edit{display:flex;flex-direction:column;gap:8px;}
         .invoice-item-row{display:flex;gap:6px;align-items:center;}
         .invoice-doc-head{display:flex;align-items:center;gap:12px;margin-bottom:6px;}
