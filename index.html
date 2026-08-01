@@ -317,7 +317,7 @@ function cycleCurrentRecipientId(plan) {
 function shareNodeImageToWhatsApp(elementId, filename, waHref) {
   const node = document.getElementById(elementId);
   if (!node || !window.html2canvas) { window.open(waHref, '_blank'); return; }
-  window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 4 }).then((canvas) => {
+  window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
     canvas.toBlob((blob) => {
       if (!blob) { window.open(waHref, '_blank'); return; }
       const file = new File([blob], filename, { type: 'image/png' });
@@ -986,15 +986,17 @@ function AddTabEntryRow({ onAdd }) {
         </button>
       </div>
       <div className="add-tab-entry-fields">
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="kb-input kb-mono" />
-        <input type="number" min="0" inputMode="decimal" placeholder="Amount" value={amount}
-          onChange={(e) => { setAmount(e.target.value); if (error) setError(''); }}
-          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-          className="kb-input kb-mono" style={{ width: 110 }} />
+        <div className="add-tab-entry-fields-top">
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="kb-input kb-mono" />
+          <input type="number" min="0" inputMode="decimal" placeholder="Amount" value={amount}
+            onChange={(e) => { setAmount(e.target.value); if (error) setError(''); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+            className="kb-input kb-mono" style={{ width: 110 }} />
+          <button className="btn btn-small btn-primary" onClick={submit}><Plus size={14} /> Add</button>
+        </div>
         <input type="text" placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-          className="kb-input" style={{ flex: 1, minWidth: 0 }} />
-        <button className="btn btn-small btn-primary" onClick={submit}><Plus size={14} /> Add</button>
+          className="kb-input add-tab-entry-note" />
       </div>
       {error && <div className="field-error">{error}</div>}
     </div>
@@ -1306,7 +1308,7 @@ function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, s
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 4 }).then((canvas) => {
+    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = `receipt-${receiptNo}.png`; a.click();
@@ -1366,7 +1368,7 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 4 }).then((canvas) => {
+    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = `${invoice.number}.png`; a.click();
@@ -1442,7 +1444,7 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 4 }).then((canvas) => {
+    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = `${receiptDoc.receiptNo}.png`; a.click();
@@ -1473,6 +1475,13 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
               {invoice && <div className="doc-line"><span>For invoice</span><span className="kb-mono">{invoice.number}</span></div>}
               {receiptDoc.note && <div className="doc-line"><span>Note</span><span className="kb-mono">{receiptDoc.note}</span></div>}
             </div>
+            {(receiptDoc.items || []).length > 0 && (
+              <div className="doc-items">
+                {receiptDoc.items.map((it) => (
+                  <div key={it.id} className="doc-line"><span>{it.desc || 'Item'} × {it.qty}</span><span className="kb-mono">{fmt(Number(it.qty || 0) * Number(it.price || 0))}</span></div>
+                ))}
+              </div>
+            )}
             <div className="doc-totals">
               <div className="doc-total-row balance"><span>Amount received</span><span className="kb-mono">{fmt(receiptDoc.amount)}</span></div>
             </div>
@@ -1491,6 +1500,62 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
   );
 }
 
+function ReminderDocModal({ reminderDoc, settings, fmt, onClose, shareImageToWhatsApp }) {
+  useEscClose(onClose);
+  const { title, personName, personPhone, message, amountDue, dueDate, filename } = reminderDoc;
+  const issuedOn = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const bodyLines = (message || '').split('\n').filter(Boolean);
+
+  const downloadImage = () => {
+    const node = document.getElementById('receipt-print-area');
+    if (!node || !window.html2canvas) return;
+    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+      const url = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = url; a.download = filename || 'reminder.png'; a.click();
+    });
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card receipt-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3 className="kb-display">{title || 'Payment Reminder'}</h3>
+          <button className="icon-btn" onClick={onClose} title="Close" aria-label="Close"><X size={18} /></button>
+        </div>
+        <div className="modal-body">
+          <div id="receipt-print-area" className="receipt-sheet">
+            <DocHeader settings={settings} />
+            <div className="doc-title-row">
+              <div>
+                <div className="doc-title">{title || 'Payment Reminder'}</div>
+                <div className="doc-title-meta">{issuedOn}</div>
+              </div>
+              <div>
+                <div className="doc-billed-label">To</div>
+                <div className="doc-billed-name">{personName || 'Customer'}</div>
+              </div>
+            </div>
+            <div>
+              {typeof amountDue === 'number' && <div className="doc-line"><span>Amount due</span><span className="kb-mono">{fmt(amountDue)}</span></div>}
+              {dueDate && <div className="doc-line"><span>Due date</span><span className="kb-mono">{new Date(dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</span></div>}
+            </div>
+            <div className="doc-totals" />
+            <div className="reminder-message">
+              {bodyLines.map((line, i) => <p key={i}>{line}</p>)}
+            </div>
+            <DocFooter settings={settings} />
+          </div>
+          <div className="receipt-actions">
+            <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
+            <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
+            <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(personPhone, '', filename)}><MessageCircle size={14} /> Share image on WhatsApp</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 function TabStatementModal({ tab, contact, settings, fmt, onClose, shareImageToWhatsApp }) {
   useEscClose(onClose);
   const sortedEntries = [...(tab.entries || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -1520,7 +1585,7 @@ function TabStatementModal({ tab, contact, settings, fmt, onClose, shareImageToW
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 4 }).then((canvas) => {
+    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = `statement-${statementNo}.png`; a.click();
@@ -1582,7 +1647,7 @@ function TaxReturnDocModal({ taxReturn, settings, fmt, onClose, onMarkFiled }) {
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 4 }).then((canvas) => {
+    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = `tax-return-${taxReturn.year}-${taxReturn.taxpayerName.replace(/\s+/g, '-')}.png`; a.click();
@@ -2360,6 +2425,7 @@ function App() {
   const [taxImportAccountLabelOtherMode, setTaxImportAccountLabelOtherMode] = useState(false);
   const [taxImportBatch, setTaxImportBatch] = useState([]);
   const [taxReturnDoc, setTaxReturnDoc] = useState(null);
+  const [reminderDoc, setReminderDoc] = useState(null);
   const taxFileInputRef = useRef(null);
   const importInputRef = useRef(null);
   const logoInputRef = useRef(null);
@@ -2471,7 +2537,7 @@ function App() {
   const setField = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   /* ---------- back button / swipe-back navigation ---------- */
-  const closeAllOverlays = () => { closeModal(); setInvoiceDoc(null); setReceipt(null); setPaymentReceiptDoc(null); };
+  const closeAllOverlays = () => { closeModal(); setInvoiceDoc(null); setReceipt(null); setPaymentReceiptDoc(null); setReminderDoc(null); };
   const historyInitedRef = useRef(false);
   const isRestoringRef = useRef(false);
   const exitArmedRef = useRef(false);
@@ -2856,6 +2922,22 @@ function App() {
     const base = Math.max(settings.receiptCounter || 2000, fromData.length ? Math.max(...fromData) : 2000);
     return `RCT-${base + 1}`;
   };
+  const addReceiptItem = () => setForm((f) => ({ ...f, items: [...(f.items || []), { id: uid(), desc: '', qty: 1, price: '' }] }));
+  const updateReceiptItem = (itemId, key, value) => setForm((f) => ({ ...f, items: (f.items || []).map((it) => it.id === itemId ? { ...it, [key]: value } : it) }));
+  const removeReceiptItem = (itemId) => setForm((f) => ({ ...f, items: (f.items || []).filter((it) => it.id !== itemId) }));
+  // Pulls a client + line items in from an existing invoice, so the receipt reflects
+  // what was actually sold rather than a bare amount. Items are cloned with fresh ids
+  // so editing them on the receipt never mutates the source invoice.
+  const applyInvoiceToReceipt = (invoiceId) => {
+    if (!invoiceId) { setField('invoiceId', ''); return; }
+    const inv = invoiceById(invoiceId);
+    if (!inv) return;
+    setForm((f) => ({
+      ...f, invoiceId, clientId: inv.clientId,
+      items: (inv.items || []).map((it) => ({ id: uid(), desc: it.desc, qty: it.qty, price: it.price })),
+      note: f.note || `Payment for invoice ${inv.number}`,
+    }));
+  };
   const markInvoicePaid = (invoiceId) => {
     if (guardWrite()) return;
     const invoice = invoices.find((i) => i.id === invoiceId);
@@ -2863,7 +2945,9 @@ function App() {
     if (invoice) {
       const rcpt = {
         id: uid(), receiptNo: nextReceiptNumber(), invoiceId: invoice.id, clientId: invoice.clientId,
-        clientName: '', amount: invoiceTotal(invoice), date: todayISO(), note: `Payment for invoice ${invoice.number}`,
+        clientName: '', amount: invoiceTotal(invoice),
+        items: (invoice.items || []).map((it) => ({ id: uid(), desc: it.desc, qty: it.qty, price: it.price })),
+        date: todayISO(), note: `Payment for invoice ${invoice.number}`,
       };
       setReceipts((r) => [rcpt, ...r]);
       setSettings((s) => ({ ...s, receiptCounter: Math.max(s.receiptCounter || 2000, Number((rcpt.receiptNo || '').replace(/\D/g, '')) || 0) }));
@@ -2873,11 +2957,14 @@ function App() {
   const submitManualReceipt = () => {
     if (guardWrite()) return;
     if (!form.clientId && !form.clientName) { flash('Pick a client or type a payer name.'); return; }
-    if (!form.amount) { flash('Enter an amount received.'); return; }
+    const items = (form.items || []).filter((it) => it.desc || it.qty || it.price);
+    const itemsTotal = items.reduce((s, it) => s + Number(it.qty || 0) * Number(it.price || 0), 0);
+    const amount = items.length ? itemsTotal : Number(form.amount || 0);
+    if (!amount) { flash(items.length ? 'Add a quantity and price to at least one item.' : 'Enter an amount received.'); return; }
     const rcpt = {
-      id: uid(), receiptNo: form.receiptNo || nextReceiptNumber(), invoiceId: null,
+      id: uid(), receiptNo: form.receiptNo || nextReceiptNumber(), invoiceId: form.invoiceId || null,
       clientId: form.clientId || null, clientName: form.clientId ? '' : form.clientName,
-      amount: Number(form.amount), date: form.date || todayISO(), note: form.note || '',
+      amount, items, date: form.date || todayISO(), note: form.note || '',
     };
     setReceipts((r) => [rcpt, ...r]);
     setSettings((s) => ({ ...s, receiptCounter: Math.max(s.receiptCounter || 2000, Number((rcpt.receiptNo || '').replace(/\D/g, '')) || 0) }));
@@ -4221,7 +4308,13 @@ function App() {
                             </div>
                             <div className="loan-actions">
                               {out > 0 && (
-                                <button className="btn btn-small btn-ghost" onClick={() => shareToWhatsApp(l.phone, reminderMessage(person, l, key, dateField))}>
+                                <button className="btn btn-small btn-ghost" onClick={() => setReminderDoc({
+                                  title: key === 'repayments' ? 'Repayment Reminder' : 'Refund Reminder',
+                                  personName: person, personPhone: l.phone,
+                                  message: reminderMessage(person, l, key, dateField),
+                                  amountDue: out, dueDate: l.dueDate,
+                                  filename: `reminder-${l.id.slice(0, 8)}.png`,
+                                })}>
                                   <Send size={13} /> Send reminder
                                 </button>
                               )}
@@ -4448,7 +4541,13 @@ function App() {
                     <div className="loan-actions" style={{ marginTop: 12, flexWrap: 'wrap' }}>
                       <button className="btn btn-outline btn-small" onClick={() => setInvoiceDoc(inv)}><FileText size={13} /> View / share</button>
                       {status !== 'paid' && <button className="btn btn-secondary btn-small" onClick={() => markInvoicePaid(inv.id)}><CheckCircle2 size={13} /> Mark paid</button>}
-                      {status !== 'paid' && client?.phone && <button className="btn btn-ghost btn-small" onClick={() => shareToWhatsApp(client.phone, invoiceReminderMessage(inv))}><Bell size={13} /> Send reminder</button>}
+                      {status !== 'paid' && client?.phone && <button className="btn btn-ghost btn-small" onClick={() => setReminderDoc({
+                        title: 'Invoice Reminder',
+                        personName: client.name, personPhone: client.phone,
+                        message: invoiceReminderMessage(inv),
+                        amountDue: total, dueDate: inv.dueDate,
+                        filename: `reminder-${inv.number}.png`,
+                      })}><Bell size={13} /> Send reminder</button>}
                       <button className="btn btn-danger btn-small" onClick={() => deleteInvoice(inv.id)}><Trash2 size={13} /> Delete</button>
                     </div>
                   </div>
@@ -5696,7 +5795,9 @@ function App() {
         .tab-type-active-borrow{border-color:var(--steel);color:var(--steel);background:var(--steel-bg);}
         .tab-type-active-payment{border-color:var(--green);color:var(--green);background:var(--green-bg);}
         .add-tab-entry-row{margin-top:12px;padding-top:12px;border-top:1px dashed var(--paper-line);}
-        .add-tab-entry-fields{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+        .add-tab-entry-fields{display:flex;flex-direction:column;gap:8px;}
+        .add-tab-entry-fields-top{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+        .add-tab-entry-note{width:100%;}
         .receipt-link{margin-left:auto;font-size:11.5px;}
         .settings-actions{display:flex;gap:10px;flex-wrap:wrap;}
         .toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:16px 20px 16px 26px;border-radius:12px;font-size:14.5px;box-shadow:0 10px 30px rgba(0,0,0,0.25);z-index:100;display:flex;align-items:center;gap:18px;width:min(92vw,480px);line-height:1.45;}
@@ -5729,6 +5830,9 @@ function App() {
         .doc-line{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--paper-line);font-size:11px;}
         .doc-line span:first-child{color:var(--ink);}
         .doc-totals{border-top:1.5px solid var(--ink);margin-top:3px;padding-top:7px;}
+        .reminder-message{padding-top:6px;}
+        .reminder-message p{margin:0 0 10px;font-size:13.5px;line-height:1.55;color:var(--ink);}
+        .reminder-message p:last-child{margin-bottom:0;}
         .doc-total-row{display:flex;justify-content:space-between;font-size:11px;padding:2px 0;color:var(--ink-soft);}
         .doc-total-row .kb-mono{color:var(--ink);}
         .doc-total-row.balance{font-weight:700;color:var(--brick);font-size:13px;padding-top:5px;}
@@ -6484,6 +6588,16 @@ function App() {
 
       {modal === 'newReceipt' && (
         <Modal title="Issue receipt" onClose={closeModal}>
+          <div className="field"><label>Pull from invoice (optional)</label>
+            <select className="kb-input" value={form.invoiceId || ''} onChange={(e) => applyInvoiceToReceipt(e.target.value)}>
+              <option value="">None — enter details below</option>
+              {invoices.map((inv) => {
+                const c = clientById(inv.clientId);
+                return <option key={inv.id} value={inv.id}>{inv.number} — {c ? c.name : 'Unknown client'} ({fmt(invoiceTotal(inv))})</option>;
+              })}
+            </select>
+            {form.invoiceId && <div className="field-hint">Client and line items copied from this invoice — edit freely below, the invoice itself won't change.</div>}
+          </div>
           <div className="field"><label>Client (optional)</label>
             <select className="kb-input" value={form.clientId || ''} onChange={(e) => setField('clientId', e.target.value)}>
               <option value="">Walk-in / type name below</option>
@@ -6495,9 +6609,27 @@ function App() {
               <input className="kb-input" value={form.clientName || ''} onChange={(e) => setField('clientName', e.target.value)} placeholder="e.g. Walk-in customer" />
             </div>
           )}
+          <div className="field">
+            <label>Purchase details (optional — itemize instead of a lump sum)</label>
+            <div className="invoice-items-edit">
+              {(form.items || []).map((it) => (
+                <div key={it.id} className="invoice-item-row">
+                  <input className="kb-input" placeholder="Description" value={it.desc} onChange={(e) => updateReceiptItem(it.id, 'desc', e.target.value)} style={{ flex: 3, minWidth: 0 }} />
+                  <input type="number" min="0" inputMode="decimal" className="kb-input" placeholder="Qty" value={it.qty} onChange={(e) => updateReceiptItem(it.id, 'qty', e.target.value)} style={{ width: 56, flexShrink: 0 }} />
+                  <input type="number" min="0" inputMode="decimal" className="kb-input" placeholder="Price" value={it.price} onChange={(e) => updateReceiptItem(it.id, 'price', e.target.value)} style={{ width: 90, flexShrink: 0 }} />
+                  <button className="icon-btn" onClick={() => removeReceiptItem(it.id)} title="Remove item" aria-label="Remove item"><X size={15} /></button>
+                </div>
+              ))}
+            </div>
+            <button className="btn btn-outline btn-small" style={{ marginTop: 8 }} onClick={addReceiptItem}><Plus size={13} /> Add purchase item</button>
+          </div>
           <div className="field-row">
-            <div className="field"><label>Amount received</label>
-              <input type="number" min="0" inputMode="decimal" className="kb-input" value={form.amount || ''} onChange={(e) => setField('amount', e.target.value)} placeholder="25000" />
+            <div className="field"><label>{(form.items || []).length ? 'Amount received (from items)' : 'Amount received'}</label>
+              {(form.items || []).length ? (
+                <div className="kb-input kb-mono" style={{ background: 'var(--surface-2)' }}>{fmt((form.items || []).reduce((s, it) => s + Number(it.qty || 0) * Number(it.price || 0), 0))}</div>
+              ) : (
+                <input type="number" min="0" inputMode="decimal" className="kb-input" value={form.amount || ''} onChange={(e) => setField('amount', e.target.value)} placeholder="25000" />
+              )}
             </div>
             <div className="field"><label>Date</label>
               <input type="date" className="kb-input" value={form.date || todayISO()} onChange={(e) => setField('date', e.target.value)} />
@@ -6554,6 +6686,15 @@ function App() {
           fmt={fmt}
           onClose={() => setTaxReturnDoc(null)}
           onMarkFiled={markTaxReturnFiled}
+        />
+      )}
+      {reminderDoc && (
+        <ReminderDocModal
+          reminderDoc={reminderDoc}
+          settings={settings}
+          fmt={fmt}
+          onClose={() => setReminderDoc(null)}
+          shareImageToWhatsApp={shareImageToWhatsApp}
         />
       )}
       {newAccountKeyModal && (
