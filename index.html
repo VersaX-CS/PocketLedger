@@ -96,6 +96,22 @@ async function idbClearHandle() {
 }
 const uid = () => Math.random().toString(36).slice(2, 10);
 const todayISO = () => new Date().toISOString().slice(0, 10);
+// Hashes a password with SHA-256 before it's ever stored or compared — the app has no
+// server, so this is client-side hashing (not salted/peppered like a real backend would do),
+// but it means the raw password is never written to localStorage or an exported backup.
+async function hashPassword(password) {
+  const enc = new TextEncoder().encode(String(password));
+  const digest = await crypto.subtle.digest('SHA-256', enc);
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+// Generates a random per-account key at signup, tied to that account's email + password.
+// Shown once at signup and viewable (show/hide) from Settings — it travels with the
+// account inside an exported backup so the account can be identified on a new device.
+function generateAccountKey() {
+  const groups = Array.from(crypto.getRandomValues(new Uint32Array(4)))
+    .map((n) => n.toString(36).toUpperCase().padStart(4, '0').slice(-4));
+  return `PL-${groups.join('-')}`;
+}
 // Builds a wa.me link from any phone string.
 const waLink = (phone, text) => `https://wa.me/${(phone || '').replace(/\D/g, '')}${text ? '?text=' + encodeURIComponent(text) : ''}`;
 // Base64-embedded user guide PDF (no external file needed).
@@ -1595,7 +1611,7 @@ function AppLogo({ size = 18, invert = false, iconOnly = false, barColor = null 
   );
 }
 
-function AuthScreen({ users, onLogin, onSignup, flash }) {
+function AuthScreen({ users, onLogin, onSignup, onImportBackup, flash }) {
   const [mode, setMode] = useState('login');
   const [showPw, setShowPw] = useState(false);
   const [showContact, setShowContact] = useState(false);
@@ -1603,6 +1619,39 @@ function AuthScreen({ users, onLogin, onSignup, flash }) {
   const [fpBusy, setFpBusy] = useState(false);
   const [authError, setAuthError] = useState('');
   const autoFpTried = useRef(false);
+  // ---------- import account on a new device (from an exported backup file) ----------
+  const newDeviceInputRef = useRef(null);
+  const [importFound, setImportFound] = useState(null); // { user, data }
+  const [importPassword, setImportPassword] = useState('');
+  const [showImportPw, setShowImportPw] = useState(false);
+  const [importError, setImportError] = useState('');
+  const triggerNewDeviceImport = () => newDeviceInputRef.current && newDeviceInputRef.current.click();
+  const handleNewDeviceFile = (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!data.users || !data.users.length) throw new Error('no users in file');
+        const user = data.users.find((u) => !u.isDemo) || data.users[0];
+        setImportFound({ user, data });
+        setImportPassword('');
+        setImportError('');
+      } catch (err) {
+        flash('Could not read that file — is it a PocketLedger backup?');
+      }
+    };
+    reader.readAsText(file);
+  };
+  const cancelImport = () => { setImportFound(null); setImportPassword(''); setImportError(''); };
+  const confirmImport = async () => {
+    if (!importPassword) { setImportError('Enter your password to confirm it\u2019s your account.'); return; }
+    const hash = await hashPassword(importPassword);
+    if (hash !== importFound.user.password) { setImportError('That password doesn\u2019t match this account.'); return; }
+    onImportBackup(importFound.data, importFound.user);
+  };
   const set = (k, v) => { setAuthError(''); setFields((f) => ({ ...f, [k]: v })); };
   const demoAvailable = users.some((u) => u.isDemo);
   const fingerprintAvailable = webauthnSupported() && users.some((u) => u.webauthnCredentialId);
@@ -1631,7 +1680,7 @@ function AuthScreen({ users, onLogin, onSignup, flash }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, fingerprintAvailable]);
 
-  const submit = () => {
+  const submit = async () => {
     if (mode === 'signup') {
       if (!fields.name || !fields.email || !fields.password) {
         flash('Please fill in your name, email and password to create your account.');
@@ -1649,9 +1698,15 @@ function AuthScreen({ users, onLogin, onSignup, flash }) {
         flash('An account with that email already exists — try logging in.');
         return;
       }
-      onSignup({ id: uid(), name: fields.name, businessName: fields.businessName || '', email: fields.email, password: fields.password });
+      // Password is hashed before it ever leaves this screen, and a random account key is
+      // generated and tied to this email + password — both travel with the account from
+      // here on (into exported backups, and shown/hidden from Settings).
+      const passwordHash = await hashPassword(fields.password);
+      const accountKey = generateAccountKey();
+      onSignup({ id: uid(), name: fields.name, businessName: fields.businessName || '', email: fields.email, password: passwordHash, accountKey });
     } else {
-      const match = users.find((u) => u.email.toLowerCase() === fields.email.toLowerCase() && u.password === fields.password);
+      const enteredHash = await hashPassword(fields.password);
+      const match = users.find((u) => u.email.toLowerCase() === fields.email.toLowerCase() && u.password === enteredHash);
       if (!match) { setAuthError('No account matches that email and password.'); return; }
       onLogin(match);
     }
@@ -1686,6 +1741,7 @@ function AuthScreen({ users, onLogin, onSignup, flash }) {
         .auth-demo-box{margin-top:16px;background:#EFEAE0;border-radius:9px;padding:10px 12px;font-size:12px;color:#5B6478;text-align:center;}
         .auth-demo-fill{display:block;margin:6px auto 0;background:none;border:none;color:#B78A2E;font-weight:600;font-size:12px;cursor:pointer;padding:0;}
         .auth-field-hint{font-size:11px;color:#8B8578;margin-top:5px;line-height:1.4;}
+        .auth-import-banner{display:flex;align-items:center;gap:8px;background:#E7ECF4;color:#2F4B7C;border-radius:9px;padding:10px 12px;font-size:12.5px;font-weight:600;margin-bottom:16px;line-height:1.4;}
         .auth-error{font-size:12.5px;color:#A6432D;background:#F7E7E2;border-radius:8px;padding:9px 12px;margin-top:2px;margin-bottom:14px;line-height:1.4;}
         .auth-contact-link{display:block;text-align:center;background:none;border:none;color:#2F4B7C;font-weight:600;font-size:12.5px;cursor:pointer;margin:14px auto 0;padding:0;}
         .auth-contact-backdrop{position:fixed;inset:0;background:rgba(27,42,74,0.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:20px;}
@@ -1698,60 +1754,95 @@ function AuthScreen({ users, onLogin, onSignup, flash }) {
           <div className="auth-title">PocketLedger</div>
         </div>
         <div className="auth-sub">Thrift, loans and business payments — all in one ledger.</div>
-        <div className="auth-tabs">
-          <div className={`auth-tab ${mode === 'login' ? 'auth-tab-active' : ''}`} onClick={() => { setMode('login'); setAuthError(''); }}>Log in</div>
-          <div className={`auth-tab ${mode === 'signup' ? 'auth-tab-active' : ''}`} onClick={() => { setMode('signup'); setAuthError(''); }}>Sign up</div>
-        </div>
 
-        {mode === 'signup' && (
+        {importFound ? (
           <>
-            <div className="auth-field"><label>Your full name</label>
-              <input className="auth-input" value={fields.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Amaka Obi" />
+            <div className="auth-import-banner">
+              <Upload size={14} /> Account found in file — confirm it's yours to import it to this device.
             </div>
-            <div className="auth-field"><label>Business name (optional)</label>
-              <input className="auth-input" value={fields.businessName} onChange={(e) => set('businessName', e.target.value)} placeholder="Only needed for Payments/Thrift receipts" />
+            <div className="auth-field"><label>Account email</label>
+              <input className="auth-input" value={importFound.user.email} disabled style={{ background: '#EFEAE0', color: '#5B6478' }} />
             </div>
-            <div className="auth-field"><label>Access key</label>
-              <input className="auth-input" value={fields.accessKey} onChange={(e) => set('accessKey', e.target.value)} placeholder="Enter your access key" />
-              <div className="auth-field-hint">Required for signup. Clears demo data for a fresh ledger.</div>
+            <div className="auth-field"><label>Enter your password to confirm</label>
+              <div className="auth-input-wrap">
+                <input className="auth-input" type={showImportPw ? 'text' : 'password'} value={importPassword}
+                  onChange={(e) => { setImportPassword(e.target.value); setImportError(''); }}
+                  onKeyDown={(e) => e.key === 'Enter' && confirmImport()}
+                  placeholder="••••••••" style={{ paddingRight: 36 }} autoFocus />
+                <button className="auth-eye" onClick={() => setShowImportPw((s) => !s)}>{showImportPw ? <EyeOff size={15} /> : <Eye size={15} />}</button>
+              </div>
             </div>
+            {importError && <div className="auth-error">{importError}</div>}
+            <button className="auth-submit" onClick={confirmImport}>
+              <Upload size={16} /> Unlock &amp; import to this device
+            </button>
+            <button type="button" className="auth-contact-link" onClick={cancelImport}>Cancel</button>
+            <div className="auth-hint">This replaces any data currently on this device with what's in the file, and signs you in as this account.</div>
+          </>
+        ) : (
+          <>
+            <div className="auth-tabs">
+              <div className={`auth-tab ${mode === 'login' ? 'auth-tab-active' : ''}`} onClick={() => { setMode('login'); setAuthError(''); }}>Log in</div>
+              <div className={`auth-tab ${mode === 'signup' ? 'auth-tab-active' : ''}`} onClick={() => { setMode('signup'); setAuthError(''); }}>Sign up</div>
+            </div>
+
+            {mode === 'signup' && (
+              <>
+                <div className="auth-field"><label>Your full name</label>
+                  <input className="auth-input" value={fields.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Amaka Obi" />
+                </div>
+                <div className="auth-field"><label>Business name (optional)</label>
+                  <input className="auth-input" value={fields.businessName} onChange={(e) => set('businessName', e.target.value)} placeholder="Only needed for Payments/Thrift receipts" />
+                </div>
+                <div className="auth-field"><label>Access key</label>
+                  <input className="auth-input" value={fields.accessKey} onChange={(e) => set('accessKey', e.target.value)} placeholder="Enter your access key" />
+                  <div className="auth-field-hint">Required for signup. Clears demo data for a fresh ledger.</div>
+                </div>
+              </>
+            )}
+            <div className="auth-field"><label>Email address</label>
+              <input className="auth-input" type="email" value={fields.email} onChange={(e) => set('email', e.target.value)} placeholder="you@example.com" />
+            </div>
+            <div className="auth-field"><label>Password</label>
+              <div className="auth-input-wrap">
+                <input className="auth-input" type={showPw ? 'text' : 'password'} value={fields.password} onChange={(e) => set('password', e.target.value)} placeholder="••••••••" style={{ paddingRight: 36 }} />
+                <button className="auth-eye" onClick={() => setShowPw((s) => !s)}>{showPw ? <EyeOff size={15} /> : <Eye size={15} />}</button>
+              </div>
+            </div>
+            {authError && <div className="auth-error">{authError}</div>}
+            <button className="auth-submit" onClick={submit}>
+              {mode === 'signup' ? <><UserPlus size={16} /> Create account</> : <><LogIn size={16} /> Log in</>}
+            </button>
+            {mode === 'login' && fingerprintAvailable && (
+              <button type="button" className="auth-fp-btn" onClick={handleFingerprintLogin} disabled={fpBusy}>
+                <Fingerprint size={16} /> {fpBusy ? 'Waiting for fingerprint…' : 'Sign in with fingerprint'}
+              </button>
+            )}
+            {mode === 'login' && (
+              <button type="button" className="auth-fp-btn" onClick={triggerNewDeviceImport}>
+                <Upload size={16} /> New device? Import your account
+              </button>
+            )}
+            <input ref={newDeviceInputRef} type="file" accept="application/json" style={{ display: 'none' }} onChange={handleNewDeviceFile} />
+            <div className="auth-switch">
+              {mode === 'signup' ? (
+                <>Already have an account? <button onClick={() => { setMode('login'); setAuthError(''); }}>Log in</button></>
+              ) : (
+                <>New here? <button onClick={() => { setMode('signup'); setAuthError(''); }}>Create an account</button></>
+              )}
+            </div>
+            {mode === 'login' && demoAvailable && (
+              <div className="auth-demo-box">
+                <div>Demo login (view only): <strong>{DEMO_EMAIL}</strong> / <strong>demo1234</strong></div>
+                <button type="button" className="auth-demo-fill" onClick={() => { set('email', DEMO_EMAIL); set('password', 'demo1234'); }}>Use demo login</button>
+              </div>
+            )}
+            {mode === 'signup' && (
+              <button type="button" className="auth-contact-link" onClick={() => setShowContact(true)}>Need an access key? Contact developer</button>
+            )}
+            <div className="auth-hint">Your data is saved to this device automatically — export a backup from Settings for safekeeping or to move to another device. You can change your login email and password anytime from Settings.</div>
           </>
         )}
-        <div className="auth-field"><label>Email address</label>
-          <input className="auth-input" type="email" value={fields.email} onChange={(e) => set('email', e.target.value)} placeholder="you@example.com" />
-        </div>
-        <div className="auth-field"><label>Password</label>
-          <div className="auth-input-wrap">
-            <input className="auth-input" type={showPw ? 'text' : 'password'} value={fields.password} onChange={(e) => set('password', e.target.value)} placeholder="••••••••" style={{ paddingRight: 36 }} />
-            <button className="auth-eye" onClick={() => setShowPw((s) => !s)}>{showPw ? <EyeOff size={15} /> : <Eye size={15} />}</button>
-          </div>
-        </div>
-        {authError && <div className="auth-error">{authError}</div>}
-        <button className="auth-submit" onClick={submit}>
-          {mode === 'signup' ? <><UserPlus size={16} /> Create account</> : <><LogIn size={16} /> Log in</>}
-        </button>
-        {mode === 'login' && fingerprintAvailable && (
-          <button type="button" className="auth-fp-btn" onClick={handleFingerprintLogin} disabled={fpBusy}>
-            <Fingerprint size={16} /> {fpBusy ? 'Waiting for fingerprint…' : 'Sign in with fingerprint'}
-          </button>
-        )}
-        <div className="auth-switch">
-          {mode === 'signup' ? (
-            <>Already have an account? <button onClick={() => { setMode('login'); setAuthError(''); }}>Log in</button></>
-          ) : (
-            <>New here? <button onClick={() => { setMode('signup'); setAuthError(''); }}>Create an account</button></>
-          )}
-        </div>
-        {mode === 'login' && demoAvailable && (
-          <div className="auth-demo-box">
-            <div>Demo login (view only): <strong>{DEMO_EMAIL}</strong> / <strong>demo1234</strong></div>
-            <button type="button" className="auth-demo-fill" onClick={() => { set('email', DEMO_EMAIL); set('password', 'demo1234'); }}>Use demo login</button>
-          </div>
-        )}
-        {mode === 'signup' && (
-          <button type="button" className="auth-contact-link" onClick={() => setShowContact(true)}>Need an access key? Contact developer</button>
-        )}
-        <div className="auth-hint">Your data is saved to this device automatically — export a backup from Settings for safekeeping or to move to another device. You can change your login email and password anytime from Settings.</div>
       </div>
       {showContact && (
         <div className="auth-contact-backdrop" onClick={() => setShowContact(false)}>
@@ -1991,7 +2082,7 @@ function HomeScreen({ user, stats, onPick, alerts, onViewAlerts }) {
 
 /* ============================== app ============================== */
 function App() {
-  const [users, setUsersRaw] = useState(() => (PERSISTED && PERSISTED.users) || [{ id: 'u1', name: 'Amaka Obi', businessName: 'PocketLedger Ledger', email: DEMO_EMAIL, password: 'demo1234', isDemo: true }]);
+  const [users, setUsersRaw] = useState(() => (PERSISTED && PERSISTED.users) || [{ id: 'u1', name: 'Amaka Obi', businessName: 'PocketLedger Ledger', email: DEMO_EMAIL, password: '0ead2060b65992dca4769af601a1b3a35ef38cfad2c2c465bb160ea764157c5d', isDemo: true }]);
   const [currentUser, setCurrentUser] = useState(null);
   const [activeModule, setActiveModule] = useState('home');
   const [preAuthWelcomeSeen, setPreAuthWelcomeSeen] = useState(false);
@@ -2066,6 +2157,8 @@ function App() {
   const [newLoginEmail, setNewLoginEmail] = useState('');
   const [newLoginPassword, setNewLoginPassword] = useState('');
   const [fpSetupBusy, setFpSetupBusy] = useState(false);
+  const [newAccountKeyModal, setNewAccountKeyModal] = useState(null); // account key to show once, right after signup
+  const [showAccountKey, setShowAccountKey] = useState(false);
   const [tourStep, setTourStep] = useState(null);
   const [tabStatementDoc, setTabStatementDoc] = useState(null);
   const [receipt, setReceipt] = useState(null);
@@ -2442,6 +2535,31 @@ function App() {
     setActiveModule('home'); setActiveTab('home');
     flash('Account created — your workspace has been reset with fresh, empty data.');
     setTourStep(0);
+    if (user.accountKey) setNewAccountKeyModal(user.accountKey);
+  };
+  // Signing in on a new device from an exported backup file: replaces this device's data
+  // with what's in the file and signs in as the matched (password-confirmed) account.
+  const handleImportBackup = (data, matchedUser) => {
+    setUsersRaw(data.users || [matchedUser]);
+    setMembersRaw(data.members || []);
+    setPlansRaw(data.plans || []);
+    setContributionsRaw(data.contributions || []);
+    setLoansGivenRaw(data.loansGiven || []);
+    setLoansReceivedRaw(data.loansReceived || []);
+    setLoanContactsRaw(data.loanContacts || []);
+    setLoanTabsRaw(data.loanTabs || []);
+    setExpensesRaw(data.expenses || []);
+    setBudgetsRaw(data.budgets || []);
+    setClientsRaw(data.clients || []);
+    setInvoicesRaw(data.invoices || []);
+    setReceiptsRaw(data.receipts || []);
+    setTaxTransactionsRaw(data.taxTransactions || []);
+    setTaxImportsRaw(data.taxImports || []);
+    setTaxReturnsRaw(data.taxReturns || []);
+    if (data.settings) setSettingsRaw((s) => ({ ...s, ...data.settings }));
+    setCurrentUser(matchedUser);
+    setActiveModule('home'); setActiveTab('home');
+    flash(`Welcome back, ${matchedUser.name.split(' ')[0]}. Your account and data were imported to this device.`);
   };
   const startTour = () => { setActiveModule('home'); setActiveTab('home'); setTourStep(0); };
   const tourNext = () => setTourStep((s) => {
@@ -2461,13 +2579,21 @@ function App() {
     setNewLoginEmail('');
     flash('Login email updated.');
   };
-  const updateLoginPassword = () => {
+  const updateLoginPassword = async () => {
     if (guardWrite()) return;
     if (!newLoginPassword || newLoginPassword.length < 4) { flash('Password must be at least 4 characters.'); return; }
-    setUsers((prev) => prev.map((u) => u.id === currentUser.id ? { ...u, password: newLoginPassword } : u));
-    setCurrentUser((u) => ({ ...u, password: newLoginPassword }));
+    const hash = await hashPassword(newLoginPassword);
+    setUsers((prev) => prev.map((u) => u.id === currentUser.id ? { ...u, password: hash } : u));
+    setCurrentUser((u) => ({ ...u, password: hash }));
     setNewLoginPassword('');
     flash('Password updated.');
+  };
+  const generateAccountKeyForCurrentUser = () => {
+    if (guardWrite()) return;
+    const key = generateAccountKey();
+    setUsers((prev) => prev.map((u) => u.id === currentUser.id ? { ...u, accountKey: key } : u));
+    setCurrentUser((u) => ({ ...u, accountKey: key }));
+    flash('Account key generated — you can view it below.');
   };
   const enableFingerprint = async () => {
     if (guardWrite()) return;
@@ -3106,7 +3232,7 @@ function App() {
 
   /* ---------- import / export ---------- */
   const backupPayload = () => ({
-    exportedAt: new Date().toISOString(), members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs,
+    exportedAt: new Date().toISOString(), users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs,
     expenses, budgets, clients, invoices, receipts, settings, taxTransactions, taxImports, taxReturns,
   });
   const exportBackup = () => {
@@ -3247,6 +3373,11 @@ function App() {
         const data = JSON.parse(reader.result);
         if (!data.members || !data.plans) throw new Error('Not a recognised PocketLedger backup file.');
         askConfirm('Import this backup? This replaces all current data on this device with what\'s in the file.', () => {
+          if (data.users && data.users.length) {
+            setUsers(data.users);
+            const matched = data.users.find((u) => u.id === currentUser.id) || data.users.find((u) => u.email.toLowerCase() === currentUser.email.toLowerCase());
+            if (matched) setCurrentUser(matched);
+          }
           setMembers(data.members || []);
           setPlans(data.plans || []);
           setContributions(data.contributions || []);
@@ -4655,6 +4786,22 @@ function App() {
         </div>
         <div className="field-row" style={{ marginTop: 4 }}>
           <div className="field">
+            <label>Account key</label>
+            {currentUser.accountKey ? (
+              <div style={{ position: 'relative' }}>
+                <input className="kb-input kb-mono" type={showAccountKey ? 'text' : 'password'} value={currentUser.accountKey} readOnly style={{ paddingRight: 36, width: '100%' }} />
+                <button type="button" style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-soft)', display: 'flex' }} onClick={() => setShowAccountKey((s) => !s)}>
+                  {showAccountKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
+            ) : (
+              <button className="btn btn-outline btn-small" onClick={generateAccountKeyForCurrentUser}>Generate account key</button>
+            )}
+            <div className="field-hint">Generated for this account and included in your exported backup — it's how a new device recognises this account when you import.</div>
+          </div>
+        </div>
+        <div className="field-row" style={{ marginTop: 4 }}>
+          <div className="field">
             <label>Fingerprint sign-in (this device)</label>
             <div className="panel-sub">
               {currentUser.webauthnCredentialId
@@ -4672,58 +4819,24 @@ function App() {
         </div>
       </div>
 
-      <div className="two-col">
-        <div className="panel" data-tour="settings-business">
-          <div className="panel-title">Business & receipt details</div>
-          <div className="field"><label>Business / ledger name</label>
-            <input className="kb-input" value={settings.businessName} onChange={(e) => setSettings((s) => ({ ...s, businessName: e.target.value }))} placeholder="Only needed for Payments & Thrift receipts" />
-            <div className="field-hint">Only needed for the Payment Portal or Thrift receipts.</div>
-          </div>
-          <div className="field"><label>Your name (shown on receipts)</label>
-            <input className="kb-input" value={settings.ownerName} onChange={(e) => setSettings((s) => ({ ...s, ownerName: e.target.value }))} placeholder="Optional" />
-          </div>
-          <div className="field-row">
-            <div className="field"><label>Currency symbol</label>
-              <input className="kb-input" value={settings.currencySymbol} onChange={(e) => setSettings((s) => ({ ...s, currencySymbol: e.target.value }))} style={{ width: 80 }} />
-            </div>
-            <div className="field"><label>WhatsApp country code</label>
-              <input className="kb-input" value={settings.countryCode} onChange={(e) => setSettings((s) => ({ ...s, countryCode: e.target.value.replace(/\D/g, '') }))} placeholder="234" />
-            </div>
-          </div>
-          <div className="panel-sub">Normalises phone numbers for WhatsApp share links.</div>
+      <div className="panel" data-tour="settings-business">
+        <div className="panel-title">Business & receipt details</div>
+        <div className="field"><label>Business / ledger name</label>
+          <input className="kb-input" value={settings.businessName} onChange={(e) => setSettings((s) => ({ ...s, businessName: e.target.value }))} placeholder="Only needed for Payments & Thrift receipts" />
+          <div className="field-hint">Only needed for the Payment Portal or Thrift receipts.</div>
         </div>
-
-        <div className="panel" data-tour="settings-theme">
-          <div className="panel-title">Theme colour</div>
-          <div className="panel-sub" style={{ marginBottom: 12 }}>Pick an accent colour for your sidebar, buttons and headings.</div>
-          <div className="theme-swatch-row">
-            {THEME_PRESETS.map((t) => (
-              <button key={t.id} className={`theme-swatch ${settings.themeColor === t.color ? 'theme-swatch-active' : ''}`}
-                style={{ background: t.color }} title={t.label} onClick={() => setSettings((s) => ({ ...s, themeColor: t.color }))}>
-                {settings.themeColor === t.color && <CheckCircle2 size={14} color="#fff" />}
-              </button>
-            ))}
-            <label className="theme-swatch theme-swatch-custom" title="Custom colour">
-              <Palette size={14} />
-              <input type="color" value={settings.themeColor} onChange={(e) => setSettings((s) => ({ ...s, themeColor: e.target.value }))} />
-            </label>
+        <div className="field"><label>Your name (shown on receipts)</label>
+          <input className="kb-input" value={settings.ownerName} onChange={(e) => setSettings((s) => ({ ...s, ownerName: e.target.value }))} placeholder="Optional" />
+        </div>
+        <div className="field-row">
+          <div className="field"><label>Currency symbol</label>
+            <input className="kb-input" value={settings.currencySymbol} onChange={(e) => setSettings((s) => ({ ...s, currencySymbol: e.target.value }))} style={{ width: 80 }} />
+          </div>
+          <div className="field"><label>WhatsApp country code</label>
+            <input className="kb-input" value={settings.countryCode} onChange={(e) => setSettings((s) => ({ ...s, countryCode: e.target.value.replace(/\D/g, '') }))} placeholder="234" />
           </div>
         </div>
-
-        <div className="panel">
-          <div className="panel-title-row">
-            <div className="panel-title" style={{ marginBottom: 0 }}>Dark theme</div>
-            <button
-              type="button"
-              className={`dm-switch ${settings.darkMode ? 'dm-switch-on' : ''}`}
-              onClick={() => setSettings((s) => ({ ...s, darkMode: !s.darkMode }))}
-              aria-pressed={!!settings.darkMode}
-            >
-              <span className="dm-switch-knob"><Moon size={11} /></span>
-            </button>
-          </div>
-          <div className="panel-sub">Dark background everywhere except printable receipts.</div>
-        </div>
+        <div className="panel-sub">Normalises phone numbers for WhatsApp share links.</div>
       </div>
 
       <div className="panel" style={{ marginTop: 16 }}>
@@ -4766,6 +4879,40 @@ function App() {
             </div>
             <div className="panel-sub">Prints on every invoice and shared receipt.</div>
           </div>
+        </div>
+      </div>
+
+      <div className="two-col" style={{ marginTop: 16 }}>
+        <div className="panel" data-tour="settings-theme">
+          <div className="panel-title">Theme colour</div>
+          <div className="panel-sub" style={{ marginBottom: 12 }}>Pick an accent colour for your sidebar, buttons and headings.</div>
+          <div className="theme-swatch-row">
+            {THEME_PRESETS.map((t) => (
+              <button key={t.id} className={`theme-swatch ${settings.themeColor === t.color ? 'theme-swatch-active' : ''}`}
+                style={{ background: t.color }} title={t.label} onClick={() => setSettings((s) => ({ ...s, themeColor: t.color }))}>
+                {settings.themeColor === t.color && <CheckCircle2 size={14} color="#fff" />}
+              </button>
+            ))}
+            <label className="theme-swatch theme-swatch-custom" title="Custom colour">
+              <Palette size={14} />
+              <input type="color" value={settings.themeColor} onChange={(e) => setSettings((s) => ({ ...s, themeColor: e.target.value }))} />
+            </label>
+          </div>
+        </div>
+
+        <div className="panel">
+          <div className="panel-title-row">
+            <div className="panel-title" style={{ marginBottom: 0 }}>Dark theme</div>
+            <button
+              type="button"
+              className={`dm-switch ${settings.darkMode ? 'dm-switch-on' : ''}`}
+              onClick={() => setSettings((s) => ({ ...s, darkMode: !s.darkMode }))}
+              aria-pressed={!!settings.darkMode}
+            >
+              <span className="dm-switch-knob"><Moon size={11} /></span>
+            </button>
+          </div>
+          <div className="panel-sub">Dark background everywhere except printable receipts.</div>
         </div>
       </div>
 
@@ -4932,7 +5079,7 @@ function App() {
   if (!currentUser) {
     return (
       <>
-        <AuthScreen users={users} onLogin={handleLogin} onSignup={handleSignup} flash={flash} />
+        <AuthScreen users={users} onLogin={handleLogin} onSignup={handleSignup} onImportBackup={handleImportBackup} flash={flash} />
         <Toast message={toast} onDismiss={() => setToast('')} />
       </>
     );
@@ -5989,6 +6136,20 @@ function App() {
           onClose={() => setTaxReturnDoc(null)}
           onMarkFiled={markTaxReturnFiled}
         />
+      )}
+      {newAccountKeyModal && (
+        <Modal title="Save your account key" onClose={() => setNewAccountKeyModal(null)}>
+          <div className="panel-sub" style={{ marginBottom: 12 }}>
+            This key is tied to your account's email and password. Keep it — along with an exported backup — so you can bring this account to a new device. You can view it anytime from Settings.
+          </div>
+          <div className="kb-input kb-mono" style={{ padding: '10px 12px', wordBreak: 'break-all', marginBottom: 12 }}>{newAccountKeyModal}</div>
+          <div className="settings-actions">
+            <button className="btn btn-outline btn-small" onClick={() => {
+              if (navigator.clipboard) { navigator.clipboard.writeText(newAccountKeyModal); flash('Account key copied.'); }
+            }}><Copy size={14} /> Copy key</button>
+            <button className="btn btn-primary" onClick={() => setNewAccountKeyModal(null)}>I've saved it</button>
+          </div>
+        </Modal>
       )}
     </div>
   );
