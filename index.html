@@ -1794,6 +1794,26 @@ function Carousel({ slides }) {
   );
 }
 
+// Self-styled (like AppLogo) so a flash message looks right even on the splash, welcome
+// and sign-in screens — these render before the main app's <style> block ever mounts, so
+// without its own styles this was showing up as plain unstyled text on those screens.
+function Toast({ message, onDismiss }) {
+  if (!message) return null;
+  return (
+    <>
+      <style>{`
+        .app-toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#1B2A4A;color:#fff;padding:11px 14px 11px 20px;border-radius:10px;font-size:13px;font-family:'IBM Plex Sans',sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.25);z-index:9998;display:flex;align-items:center;gap:10px;max-width:min(92vw,420px);}
+        .app-toast-close{background:none;border:none;color:rgba(255,255,255,0.7);cursor:pointer;padding:4px;display:flex;align-items:center;flex-shrink:0;border-radius:50%;}
+        .app-toast-close:hover{color:#fff;}
+      `}</style>
+      <div className="app-toast" role="status" aria-live="polite">
+        <span>{message}</span>
+        <button type="button" className="app-toast-close" onClick={onDismiss} aria-label="Dismiss"><X size={13} /></button>
+      </div>
+    </>
+  );
+}
+
 function SplashScreen({ onFinish }) {
   // Auto-advances after 7 seconds; tapping/clicking skips straight to the welcome screen.
   useEffect(() => {
@@ -4901,12 +4921,7 @@ function App() {
     return (
       <>
         <WelcomeScreen settings={settings} onStart={() => setPreAuthWelcomeSeen(true)} />
-        {toast && (
-          <div className="toast" role="status" aria-live="polite">
-            <span>{toast}</span>
-            <button type="button" className="toast-close" onClick={() => setToast('')} aria-label="Dismiss"><X size={13} /></button>
-          </div>
-        )}
+        <Toast message={toast} onDismiss={() => setToast('')} />
       </>
     );
   }
@@ -4915,12 +4930,7 @@ function App() {
     return (
       <>
         <AuthScreen users={users} onLogin={handleLogin} onSignup={handleSignup} flash={flash} />
-        {toast && (
-          <div className="toast" role="status" aria-live="polite">
-            <span>{toast}</span>
-            <button type="button" className="toast-close" onClick={() => setToast('')} aria-label="Dismiss"><X size={13} /></button>
-          </div>
-        )}
+        <Toast message={toast} onDismiss={() => setToast('')} />
       </>
     );
   }
