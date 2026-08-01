@@ -1813,13 +1813,16 @@ function SplashScreen({ onFinish }) {
         .splash-logo-mark rect:nth-child(3){animation-delay:.3s;}
         .splash-logo-mark rect:nth-child(4){animation-delay:.45s;}
         @keyframes splashLoadBar{0%,100%{opacity:0.18;}40%{opacity:1;}}
-        .splash-name{position:relative;margin-top:20px;font-family:'Fraunces',serif;font-size:24px;font-weight:600;color:#1B2A4A;letter-spacing:.01em;}
+        .splash-bottom{position:absolute;left:0;right:0;bottom:56px;display:flex;flex-direction:column;align-items:center;}
+        .splash-name{position:relative;font-family:'Fraunces',serif;font-size:24px;font-weight:600;color:#1B2A4A;letter-spacing:.01em;}
         .splash-desc{position:relative;margin-top:8px;font-size:11px;color:#8B8578;letter-spacing:.02em;text-align:center;padding:0 24px;}
       `}</style>
       <div className="splash-bg-logo"><AppLogo size={420} iconOnly /></div>
       <div className="splash-logo-mark"><AppLogo size={160} iconOnly barColor="var(--steel)" /></div>
-      <div className="splash-name">PocketLedger</div>
-      <div className="splash-desc">Thrift &middot; Loans &middot; Payments &middot; Expenses &middot; Tax</div>
+      <div className="splash-bottom">
+        <div className="splash-name">PocketLedger</div>
+        <div className="splash-desc">Thrift &middot; Loans &middot; Payments &middot; Expenses &middot; Tax</div>
+      </div>
     </div>
   );
 }
