@@ -1805,7 +1805,8 @@ function SplashScreen({ onFinish }) {
       <style>{`
         .splash-screen{position:fixed;inset:0;background:#FFFFFF;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;cursor:pointer;overflow:hidden;}
         .splash-bg-logo{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-6deg);opacity:0.05;pointer-events:none;}
-        .splash-logo-mark{position:relative;}
+        .splash-logo-mark{position:relative;width:160px;height:160px;display:flex;align-items:center;justify-content:center;}
+        .splash-logo-mark svg{width:100%;height:100%;}
         .splash-logo-mark rect{animation:splashLoadBar 1.4s ease-in-out infinite;}
         .splash-logo-mark rect:nth-child(1){animation-delay:0s;}
         .splash-logo-mark rect:nth-child(2){animation-delay:.15s;}
@@ -1816,7 +1817,7 @@ function SplashScreen({ onFinish }) {
         .splash-desc{position:relative;margin-top:8px;font-size:11px;color:#8B8578;letter-spacing:.02em;text-align:center;padding:0 24px;}
       `}</style>
       <div className="splash-bg-logo"><AppLogo size={420} iconOnly /></div>
-      <div className="splash-logo-mark"><AppLogo size={88} iconOnly barColor="var(--steel)" /></div>
+      <div className="splash-logo-mark"><AppLogo size={160} iconOnly barColor="var(--steel)" /></div>
       <div className="splash-name">PocketLedger</div>
       <div className="splash-desc">Thrift &middot; Loans &middot; Payments &middot; Expenses &middot; Tax</div>
     </div>
