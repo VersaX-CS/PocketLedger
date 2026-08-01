@@ -860,6 +860,7 @@ const DEVELOPER_CONTACT = {
   phone: '+234 813 795 2242',
   support: '9642608094',
   bank: 'Providus Bank',
+  accountName: 'VersaX CS Global Services',
   note: 'Need help signing up, or spotted an issue? Reach out directly.',
 };
 
@@ -1032,41 +1033,59 @@ function Modal({ title, onClose, children }) {
 function ContactDeveloperCard() {
   const c = DEVELOPER_CONTACT;
   const cleanPhone = (c.phone || '').replace(/[^\d+]/g, '');
-  const [copied, setCopied] = useState(false);
-  const copySupportNumber = async () => {
+  const [copiedField, setCopiedField] = useState(null); // 'number' | 'name' | 'bank' | null
+  const copyField = async (field, value) => {
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(c.support);
+        await navigator.clipboard.writeText(value);
       } else {
         const ta = document.createElement('textarea');
-        ta.value = c.support;
+        ta.value = value;
         ta.style.position = 'fixed'; ta.style.opacity = '0';
         document.body.appendChild(ta); ta.select();
         document.execCommand('copy');
         document.body.removeChild(ta);
       }
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(null), 1800);
     } catch (err) {
-      console.warn('PocketLedger: could not copy support account number.', err);
+      console.warn('PocketLedger: could not copy support account detail.', err);
     }
   };
+  const AccountRow = ({ field, label, value }) => (
+    <div className="support-row">
+      <div className="support-row-text">
+        <div className="support-row-label">{label}</div>
+        <div className="support-row-value">{value}</div>
+      </div>
+      <button type="button" className={`support-copy-btn ${copiedField === field ? 'support-copy-btn-done' : ''}`} onClick={() => copyField(field, value)} aria-label={`Copy ${label}`}>
+        {copiedField === field ? <><CheckCircle2 size={13} /> Copied</> : <><Copy size={13} /> Copy</>}
+      </button>
+    </div>
+  );
   return (
     <div className="contact-dev-card">
       <style>{`
         .contact-dev-card{background:#151E33;border-radius:14px;padding:20px 22px;color:#F7F3EA;font-family:'IBM Plex Sans',sans-serif;}
         .contact-dev-title{font-family:'Fraunces',serif;font-size:18px;font-weight:600;margin-bottom:6px;}
         .contact-dev-sub{font-size:12.5px;color:rgba(247,243,234,0.65);margin-bottom:16px;line-height:1.5;}
-        .contact-dev-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;}
+        .contact-dev-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;}
         .contact-dev-btn{display:inline-flex;align-items:center;gap:6px;border-radius:8px;padding:9px 14px;font-size:12.5px;font-weight:600;cursor:pointer;text-decoration:none;border:1px solid rgba(247,243,234,0.25);color:#F7F3EA;background:none;}
         .contact-dev-btn:hover{border-color:rgba(247,243,234,0.5);}
         .contact-dev-btn-whatsapp{background:#25D366;border-color:#25D366;color:#0B2013;}
         .contact-dev-btn-whatsapp:hover{background:#20bd5a;}
-        .contact-dev-foot{border-top:1px solid rgba(247,243,234,0.15);padding-top:12px;font-size:11.5px;color:rgba(247,243,234,0.62);line-height:1.8;}
+        .contact-dev-foot{border-top:1px solid rgba(247,243,234,0.15);padding-top:10px;font-size:11.5px;color:rgba(247,243,234,0.62);line-height:1.7;margin-bottom:16px;}
         .contact-dev-foot strong{color:#F7F3EA;font-weight:600;}
-        .contact-dev-copy{display:inline-flex;align-items:center;gap:4px;background:none;border:none;cursor:pointer;color:rgba(247,243,234,0.8);font-family:inherit;font-size:11.5px;font-weight:600;padding:1px 6px;border-radius:5px;vertical-align:middle;}
-        .contact-dev-copy:hover{color:#F7F3EA;background:rgba(247,243,234,0.1);}
-        .contact-dev-copy-done{color:#8FD9B2;}
+        .support-block{background:rgba(247,243,234,0.06);border:1px solid rgba(247,243,234,0.15);border-radius:10px;padding:14px 16px;}
+        .support-block-title{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#E8B84B;margin-bottom:4px;}
+        .support-block-sub{font-size:11.5px;color:rgba(247,243,234,0.6);margin-bottom:12px;line-height:1.5;}
+        .support-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid rgba(247,243,234,0.1);}
+        .support-row:first-of-type{border-top:none;padding-top:0;}
+        .support-row-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:rgba(247,243,234,0.55);margin-bottom:2px;}
+        .support-row-value{font-size:14.5px;font-weight:600;color:#F7F3EA;word-break:break-word;}
+        .support-copy-btn{flex:0 0 auto;display:inline-flex;align-items:center;gap:5px;background:rgba(247,243,234,0.08);border:1px solid rgba(247,243,234,0.25);cursor:pointer;color:#F7F3EA;font-family:inherit;font-size:11.5px;font-weight:600;padding:6px 10px;border-radius:7px;}
+        .support-copy-btn:hover{background:rgba(247,243,234,0.16);}
+        .support-copy-btn-done{color:#8FD9B2;border-color:#8FD9B2;}
       `}</style>
       <div className="contact-dev-title">Contact the developer</div>
       <div className="contact-dev-sub">{c.note}</div>
@@ -1077,11 +1096,14 @@ function ContactDeveloperCard() {
       </div>
       <div className="contact-dev-foot">
         <strong>{c.company}</strong> — developed by {c.developer}<br />
-        {c.email} · {c.phone}<br />
-        Support: <strong>{c.support}</strong> · Bank: {c.bank}{' '}
-        <button type="button" className={`contact-dev-copy ${copied ? 'contact-dev-copy-done' : ''}`} onClick={copySupportNumber}>
-          {copied ? <><CheckCircle2 size={12} /> Copied</> : <><Copy size={12} /> Copy number</>}
-        </button>
+        {c.email} · {c.phone}
+      </div>
+      <div className="support-block">
+        <div className="support-block-title"><HandCoins size={14} /> Support this app</div>
+        <div className="support-block-sub">Send support to this account. Double-check the details below before transferring.</div>
+        <AccountRow field="name" label="Account name" value={c.accountName} />
+        <AccountRow field="number" label="Account number" value={c.support} />
+        <AccountRow field="bank" label="Bank" value={c.bank} />
       </div>
     </div>
   );
@@ -1829,10 +1851,6 @@ function AuthScreen({ users, onLogin, onSignup, onImportBackup, flash }) {
                 <div className="auth-field"><label>Business name (optional)</label>
                   <input className="auth-input" value={fields.businessName} onChange={(e) => set('businessName', e.target.value)} placeholder="Only needed for Payments/Thrift receipts" />
                 </div>
-                <div className="auth-field"><label>Access key</label>
-                  <input className="auth-input" value={fields.accessKey} onChange={(e) => set('accessKey', e.target.value)} placeholder="Enter your access key" />
-                  <div className="auth-field-hint">Required for signup. Clears demo data for a fresh ledger.</div>
-                </div>
               </>
             )}
             <div className="auth-field"><label>Email address</label>
@@ -1844,6 +1862,12 @@ function AuthScreen({ users, onLogin, onSignup, onImportBackup, flash }) {
                 <button className="auth-eye" onClick={() => setShowPw((s) => !s)}>{showPw ? <EyeOff size={15} /> : <Eye size={15} />}</button>
               </div>
             </div>
+            {mode === 'signup' && (
+              <div className="auth-field"><label>Access key</label>
+                <input className="auth-input" value={fields.accessKey} onChange={(e) => set('accessKey', e.target.value)} placeholder="Enter your access key" />
+                <div className="auth-field-hint">Required for signup. Clears demo data for a fresh ledger.</div>
+              </div>
+            )}
             {authError && <div className="auth-error">{authError}</div>}
             <button className="auth-submit" onClick={submit}>
               {mode === 'signup' ? <><UserPlus size={16} /> Create account</> : <><LogIn size={16} /> Log in</>}
@@ -2202,7 +2226,10 @@ function App() {
   const [confirmDialog, setConfirmDialog] = useState(null); // { message, confirmLabel, danger, onConfirm }
   const [taxYearFilter, setTaxYearFilter] = useState(new Date().getFullYear());
   const [taxSourceFilter, setTaxSourceFilter] = useState('All');
+  const [taxTxnShowCount, setTaxTxnShowCount] = useState(30);
   const [taxImportSourceName, setTaxImportSourceName] = useState('');
+  const [taxImportBankOtherMode, setTaxImportBankOtherMode] = useState(false);
+  const [taxImportAccountLabel, setTaxImportAccountLabel] = useState('');
   const [taxImportBatch, setTaxImportBatch] = useState([]);
   const [taxReturnDoc, setTaxReturnDoc] = useState(null);
   const taxFileInputRef = useRef(null);
@@ -3060,7 +3087,7 @@ function App() {
     if (guardWrite()) return;
     const ready = taxImportBatch.filter((entry) => entry.rows.length > 0);
     if (ready.length === 0) { flash('No readable transactions to add yet.'); return; }
-    const sourceName = taxImportSourceName.trim() || 'Bank statement';
+    const sourceName = (taxImportSourceName.trim() || 'Bank statement') + (taxImportAccountLabel.trim() ? ` — ${taxImportAccountLabel.trim()}` : '');
     let allNewTxns = [];
     const newImportRecords = [];
     let totalAdded = 0;
@@ -3079,6 +3106,7 @@ function App() {
     setTaxImportBatch((prev) => prev.filter((entry) => !ready.some((r) => r.id === entry.id)));
     flash(`Imported ${totalAdded} transaction(s) from ${ready.length} file(s).`);
     setTaxImportSourceName('');
+    setTaxImportAccountLabel('');
   };
   // Pulls expenses into the tax ledger; safe to re-run, only pulls in new ones.
   const importFromExpenseTracker = () => {
@@ -4504,6 +4532,7 @@ function App() {
         <div className="panel" style={{ marginTop: 16 }}>
           <div className="panel-title">Recent transactions</div>
           {recent.length === 0 ? <EmptyState text="No transactions consolidated yet — import a bank statement to get started." /> : (
+            <div className="grid-scroll">
             <table className="history-table">
               <thead><tr><th>Date</th><th>Source</th><th>Description</th><th>Category</th><th>Amount</th></tr></thead>
               <tbody>
@@ -4518,6 +4547,7 @@ function App() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       </>
@@ -4532,8 +4562,28 @@ function App() {
         <div className="panel-sub" style={{ marginBottom: 12 }}>
           Works with CSV, Excel or PDF exports from any bank. Columns are auto-detected; scanned PDFs can use OCR instead.
         </div>
-        <div className="field"><label>Bank / account name</label>
-          <input className="kb-input" value={taxImportSourceName} onChange={(e) => setTaxImportSourceName(e.target.value)} placeholder="e.g. GTBank — Current Account" />
+        <div className="field"><label>Bank</label>
+          <select className="kb-input" value={taxImportBankOtherMode ? '__other__' : (taxImportSourceName || '')} onChange={(e) => {
+            const v = e.target.value;
+            if (v === '__other__') {
+              setTaxImportBankOtherMode(true);
+              setTaxImportSourceName((s) => NIGERIA_BANK_NAMES.includes(s) ? '' : s);
+            } else {
+              setTaxImportBankOtherMode(false);
+              setTaxImportSourceName(v);
+            }
+          }}>
+            <option value="">Select the bank…</option>
+            {NIGERIA_BANK_NAMES_SORTED.map((b) => <option key={b} value={b}>{b}</option>)}
+            <option value="__other__">Other / not listed…</option>
+          </select>
+          {taxImportBankOtherMode && (
+            <input className="kb-input" style={{ marginTop: 8 }} value={taxImportSourceName} onChange={(e) => setTaxImportSourceName(e.target.value)} placeholder="Enter the bank's name" />
+          )}
+        </div>
+        <div className="field"><label>Account label (optional)</label>
+          <input className="kb-input" value={taxImportAccountLabel} onChange={(e) => setTaxImportAccountLabel(e.target.value)} placeholder="e.g. Current Account" />
+          <div className="field-hint">Helps tell accounts at the same bank apart, e.g. "GTBank — Current Account".</div>
         </div>
         <input ref={taxFileInputRef} type="file" multiple accept=".csv,.txt,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.pdf,application/pdf" style={{ display: 'none' }} onChange={handleTaxFileSelected} />
         <button className="btn btn-primary" onClick={triggerTaxImport}><Upload size={15} /> Choose statement file(s) (CSV, Excel or PDF)</button>
@@ -4548,13 +4598,14 @@ function App() {
               }));
               return (
                 <div key={entry.id} className="panel" style={{ marginTop: 12, background: 'var(--surface-2)' }}>
-                  <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span>{entry.fileName}</span>
-                    <button className="icon-btn" onClick={() => removeTaxImportEntry(entry.id)} title="Remove" aria-label="Remove"><Trash2 size={14} /></button>
+                  <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title={entry.fileName}>{entry.fileName}</span>
+                    <button className="icon-btn" style={{ flex: '0 0 auto' }} onClick={() => removeTaxImportEntry(entry.id)} title="Remove" aria-label="Remove"><Trash2 size={14} /></button>
                   </div>
                   {entry.rows.length > 0 ? (
                     <>
                       <div className="panel-sub" style={{ marginBottom: 10 }}>{entry.rows.length} transaction(s) found. Preview of the first 5:</div>
+                      <div className="grid-scroll">
                       <table className="history-table">
                         <thead><tr><th>Date</th><th>Description</th><th>Amount</th></tr></thead>
                         <tbody>
@@ -4567,6 +4618,7 @@ function App() {
                           ))}
                         </tbody>
                       </table>
+                      </div>
                     </>
                   ) : entry.isPdf && entry.looksScanned && !entry.ocrAttempted ? (
                     <>
@@ -4672,12 +4724,12 @@ function App() {
           <div className="loan-list">
             {taxImports.map((b) => (
               <div key={b.id} className="loan-card">
-                <div className="loan-card-body" style={{ paddingTop: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
+                <div className="loan-card-body" style={{ paddingTop: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                  <div style={{ minWidth: 0, overflow: 'hidden' }}>
                     <div className="loan-name kb-display">{b.source}</div>
-                    <div className="panel-sub">{b.fileName} · {b.count} transaction(s) · imported {new Date(b.importedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
+                    <div className="panel-sub" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${b.fileName} · ${b.count} transaction(s)`}>{b.fileName} · {b.count} transaction(s) · imported {new Date(b.importedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
                   </div>
-                  <button className="icon-btn" onClick={() => removeTaxImportRecord(b.id)} title="Remove batch" aria-label="Remove batch"><Trash2 size={15} /></button>
+                  <button className="icon-btn" style={{ flex: '0 0 auto' }} onClick={() => removeTaxImportRecord(b.id)} title="Remove batch" aria-label="Remove batch"><Trash2 size={15} /></button>
                 </div>
               </div>
             ))}
@@ -4694,15 +4746,16 @@ function App() {
       .sort((a, b) => new Date(b.date) - new Date(a.date));
     const income = filtered.filter((t) => t.amount >= 0 && t.category !== 'Non-Taxable Transfer').reduce((s, t) => s + t.amount, 0);
     const deductible = filtered.filter((t) => TAX_DEDUCTION_CATEGORIES.includes(t.category) && t.category !== 'Personal (non-deductible)').reduce((s, t) => s + Math.abs(t.amount), 0);
+    const visible = filtered.slice(0, taxTxnShowCount);
     return (
       <>
         <SectionHeader eyebrow="Every bank, one ledger" title="Consolidated ledger"
           action={<button className="btn btn-primary" onClick={() => openModal('newTaxTxn', { date: todayISO(), direction: 'in', source: 'Manual entry' })}><Plus size={16} /> Add entry</button>} />
         <div className="field-row" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
-          <select className="kb-input" value={taxYearFilter} onChange={(e) => setTaxYearFilter(Number(e.target.value))}>
+          <select className="kb-input" value={taxYearFilter} onChange={(e) => { setTaxYearFilter(Number(e.target.value)); setTaxTxnShowCount(30); }}>
             {taxYearsAvailable.map((y) => <option key={y} value={y}>{y}</option>)}
           </select>
-          <select className="kb-input" value={taxSourceFilter} onChange={(e) => setTaxSourceFilter(e.target.value)}>
+          <select className="kb-input" value={taxSourceFilter} onChange={(e) => { setTaxSourceFilter(e.target.value); setTaxTxnShowCount(30); }}>
             <option value="All">All sources</option>
             {taxSourcesAvailable.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
@@ -4714,10 +4767,12 @@ function App() {
           <StatCard label="Deductible (this filter)" value={fmt(deductible)} icon={CreditCard} tone="steel" />
         </div>
         {filtered.length === 0 ? <EmptyState text={taxTransactions.length === 0 ? 'No transactions yet — import a statement or add one manually.' : 'No transactions match this filter.'} /> : (
+          <>
+          <div className="grid-scroll">
           <table className="history-table">
             <thead><tr><th>Date</th><th>Source</th><th>Description</th><th>Category</th><th>Amount</th><th></th></tr></thead>
             <tbody>
-              {filtered.map((t) => (
+              {visible.map((t) => (
                 <tr key={t.id}>
                   <td className="kb-mono">{new Date(t.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
                   <td className="panel-sub">{t.source}</td>
@@ -4739,6 +4794,13 @@ function App() {
               ))}
             </tbody>
           </table>
+          </div>
+          {filtered.length > visible.length && (
+            <button className="btn btn-outline btn-small" style={{ marginTop: 12 }} onClick={() => setTaxTxnShowCount((n) => n + 30)}>
+              Load more ({filtered.length - visible.length} remaining)
+            </button>
+          )}
+          </>
         )}
       </>
     );
