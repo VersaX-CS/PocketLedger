@@ -2392,6 +2392,7 @@ function App() {
   const [selectedPlanId, setSelectedPlanId] = useState('tp1');
   const [selectedMemberId, setSelectedMemberId] = useState('m1');
   const [expandedLoan, setExpandedLoan] = useState(null);
+  const [expandedClient, setExpandedClient] = useState(null);
   const [dismissed, setDismissed] = useState([]);
   const [memberSearch, setMemberSearch] = useState('');
   const [loanGivenSearch, setLoanGivenSearch] = useState('');
@@ -2894,6 +2895,20 @@ function App() {
     if (dup) { askConfirm(`A client named "${form.name.trim()}" already exists. Add another one anyway?`, finish, { confirmLabel: 'Add anyway', danger: false }); return; }
     finish();
   };
+  const submitEditClient = () => {
+    if (guardWrite()) return;
+    if (!form.name) { flash('Enter a client name.'); return; }
+    const dup = clients.some((c) => c.id !== form.clientId && c.name.trim().toLowerCase() === form.name.trim().toLowerCase());
+    const finish = () => {
+      setClients((prev) => prev.map((c) => c.id === form.clientId
+        ? { ...c, name: form.name, phone: form.phone || '', email: form.email || '', address: form.address || '' }
+        : c));
+      closeModalSilently();
+      flash('Client updated.');
+    };
+    if (dup) { askConfirm(`Another client named "${form.name.trim()}" already exists. Save anyway?`, finish, { confirmLabel: 'Save anyway', danger: false }); return; }
+    finish();
+  };
   // Tracked via a persisted counter, not "highest in list", to avoid number reuse.
   const nextInvoiceNumber = () => {
     const fromData = invoices.map((i) => Number((i.number || '').replace(/\D/g, '')) || 0);
@@ -2906,15 +2921,32 @@ function App() {
   const submitNewInvoice = () => {
     if (guardWrite()) return;
     if (!form.clientId || !(form.items || []).length) { flash('Pick a client and add at least one item.'); return; }
+    // "Add new client…" lets you invoice someone not yet in Clients without leaving the
+    // modal — matches an existing name case-insensitively, or creates a fresh client.
+    let clientId = form.clientId;
+    let newClientSaved = false;
+    if (clientId === '__new__') {
+      const typedName = (form.newClientName || '').trim();
+      if (!typedName) { flash('Enter the new client\u2019s name.'); return; }
+      const existing = clients.find((c) => c.name.trim().toLowerCase() === typedName.toLowerCase());
+      if (existing) {
+        clientId = existing.id;
+      } else {
+        const newClient = { id: uid(), name: typedName, phone: form.newClientPhone || '', email: '', address: '' };
+        setClients((c) => [...c, newClient]);
+        clientId = newClient.id;
+        newClientSaved = true;
+      }
+    }
     const invoice = {
-      id: uid(), number: form.number || nextInvoiceNumber(), clientId: form.clientId,
+      id: uid(), number: form.number || nextInvoiceNumber(), clientId,
       issueDate: form.issueDate || todayISO(), dueDate: form.dueDate || todayISO(),
       items: form.items, status: 'sent', notes: form.notes || '', paidDate: null,
     };
     setInvoices((i) => [invoice, ...i]);
     setSettings((s) => ({ ...s, invoiceCounter: Math.max(s.invoiceCounter || 1000, Number((invoice.number || '').replace(/\D/g, '')) || 0) }));
     closeModalSilently();
-    flash('Invoice created.');
+    flash(newClientSaved ? 'Invoice created — new client saved.' : 'Invoice created.');
     setInvoiceDoc(invoice);
   };
   const nextReceiptNumber = () => {
@@ -2961,15 +2993,31 @@ function App() {
     const itemsTotal = items.reduce((s, it) => s + Number(it.qty || 0) * Number(it.price || 0), 0);
     const amount = items.length ? itemsTotal : Number(form.amount || 0);
     if (!amount) { flash(items.length ? 'Add a quantity and price to at least one item.' : 'Enter an amount received.'); return; }
+    // Walk-in payers (typed name, no client picked) are auto-saved to Clients so they show
+    // up in the client list and picker next time, instead of being lost as one-off free text.
+    let clientId = form.clientId || null;
+    let newClientSaved = false;
+    if (!clientId && form.clientName) {
+      const typedName = form.clientName.trim();
+      const existing = clients.find((c) => c.name.trim().toLowerCase() === typedName.toLowerCase());
+      if (existing) {
+        clientId = existing.id;
+      } else {
+        const newClient = { id: uid(), name: typedName, phone: form.clientPhone || '', email: '', address: '' };
+        setClients((c) => [...c, newClient]);
+        clientId = newClient.id;
+        newClientSaved = true;
+      }
+    }
     const rcpt = {
       id: uid(), receiptNo: form.receiptNo || nextReceiptNumber(), invoiceId: form.invoiceId || null,
-      clientId: form.clientId || null, clientName: form.clientId ? '' : form.clientName,
+      clientId, clientName: '',
       amount, items, date: form.date || todayISO(), note: form.note || '',
     };
     setReceipts((r) => [rcpt, ...r]);
     setSettings((s) => ({ ...s, receiptCounter: Math.max(s.receiptCounter || 2000, Number((rcpt.receiptNo || '').replace(/\D/g, '')) || 0) }));
     closeModalSilently();
-    flash('Receipt issued.');
+    flash(newClientSaved ? 'Receipt issued — new client saved.' : 'Receipt issued.');
     setPaymentReceiptDoc(rcpt);
   };
   const deleteReceipt = (receiptId) => {
@@ -4477,18 +4525,69 @@ function App() {
         {filtered.length === 0 ? <EmptyState text={clients.length === 0 ? 'No clients yet — add your first one.' : 'No clients match your search.'} /> : (
           <div className="plan-card-grid">
             {filtered.map((c) => {
-              const clientInvoices = invoices.filter((i) => i.clientId === c.id);
+              const clientInvoices = invoices.filter((i) => i.clientId === c.id).sort((a, b) => new Date(b.issueDate) - new Date(a.issueDate));
+              const clientReceipts = receipts.filter((r) => r.clientId === c.id).sort((a, b) => new Date(b.date) - new Date(a.date));
               const owed = clientInvoices.filter((i) => i.status !== 'paid').reduce((s, i) => s + invoiceTotal(i), 0);
+              const isOpen = expandedClient === c.id;
               return (
-                <div key={c.id} className="plan-card client-card">
+                <div key={c.id} className="plan-card client-card" onClick={() => setExpandedClient(isOpen ? null : c.id)}>
                   <div className="plan-card-top">
                     <span className="plan-card-name">{c.name}</span>
-                    <button className="icon-btn" onClick={() => deleteClient(c.id)} title="Delete client" aria-label="Delete client"><Trash2 size={14} /></button>
+                    <div className="client-card-top-right">
+                      <button className="icon-btn" onClick={(e) => { e.stopPropagation(); openModal('editClient', { clientId: c.id, name: c.name, phone: c.phone || '', email: c.email || '', address: c.address || '' }); }} title="Edit client" aria-label="Edit client"><Edit3 size={14} /></button>
+                      <button className="icon-btn" onClick={(e) => { e.stopPropagation(); deleteClient(c.id); }} title="Delete client" aria-label="Delete client"><Trash2 size={14} /></button>
+                      <ChevronDown size={16} className={`chev ${isOpen ? 'chev-open' : ''}`} />
+                    </div>
                   </div>
                   <div className="plan-card-meta"><Phone size={12} style={{ verticalAlign: '-2px' }} /> {c.phone ? <a className="tel-link" href={`tel:${c.phone.replace(/[^0-9+]/g, '')}`} onClick={(e) => e.stopPropagation()}>{c.phone}</a> : 'No phone'}</div>
                   {c.email && <div className="plan-card-meta"><Mail size={12} style={{ verticalAlign: '-2px' }} /> {c.email}</div>}
                   {c.address && <div className="plan-card-meta"><MapPin size={12} style={{ verticalAlign: '-2px' }} /> {c.address}</div>}
                   <div className="plan-card-total" style={{ marginTop: 8 }}>{clientInvoices.length} invoice(s) &middot; {fmt(owed)} outstanding</div>
+                  {isOpen && (
+                    <div className="client-card-body" onClick={(e) => e.stopPropagation()}>
+                      <div className="client-card-section-label">Invoices ({clientInvoices.length})</div>
+                      {clientInvoices.length === 0 ? (
+                        <div className="panel-sub" style={{ padding: '2px 0 12px' }}>No invoices yet.</div>
+                      ) : (
+                        <div className="loan-list client-doc-list">
+                          {clientInvoices.map((inv) => {
+                            const status = invoiceStatusOf(inv);
+                            return (
+                              <div key={inv.id} className="loan-card">
+                                <div className="loan-card-top" onClick={() => setInvoiceDoc(inv)}>
+                                  <span className="loan-name">{inv.number}</span>
+                                  <div className="loan-card-right">
+                                    <Stamp status={status === 'sent' ? 'active' : status === 'overdue' ? 'overdue' : status === 'paid' ? 'completed' : 'due-soon'} />
+                                    <div className="outstanding kb-mono">{fmt(invoiceTotal(inv))}</div>
+                                    <ChevronRight size={15} className="chev" />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <div className="client-card-section-label">Receipts ({clientReceipts.length})</div>
+                      {clientReceipts.length === 0 ? (
+                        <div className="panel-sub" style={{ padding: '2px 0 4px' }}>No receipts yet.</div>
+                      ) : (
+                        <div className="loan-list client-doc-list">
+                          {clientReceipts.map((r) => (
+                            <div key={r.id} className="loan-card">
+                              <div className="loan-card-top" onClick={() => setPaymentReceiptDoc(r)}>
+                                <span className="loan-name">{r.receiptNo}</span>
+                                <div className="loan-card-right">
+                                  <Stamp status="completed" label="Paid" />
+                                  <div className="outstanding kb-mono">{fmt(r.amount)}</div>
+                                  <ChevronRight size={15} className="chev" />
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -5897,7 +5996,13 @@ function App() {
         .invoice-item-row{display:flex;gap:6px;align-items:center;}
         .invoice-doc-head{display:flex;align-items:center;gap:12px;margin-bottom:6px;}
         .invoice-logo{width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;}
-        .client-card{cursor:default;}
+        .client-card{cursor:pointer;}
+        .client-card-top-right{display:flex;align-items:center;gap:8px;}
+        .client-card-body{margin-top:14px;padding-top:12px;border-top:1px dashed var(--paper-line);cursor:default;}
+        .client-card-section-label{font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:8px;}
+        .client-card-section-label:not(:first-child){margin-top:14px;}
+        .client-doc-list .loan-card-top{padding:11px 14px;}
+        .client-doc-list .loan-name{font-size:13px;}
         .cycle-panel{background:var(--brick-bg);border-radius:12px;padding:16px;margin-bottom:16px;}
         .cycle-panel-top{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;}
         .cycle-pot{font-size:22px;font-weight:700;color:var(--brick);}
@@ -6546,14 +6651,50 @@ function App() {
         </Modal>
       )}
 
+      {modal === 'editClient' && (
+        <Modal title="Edit client" onClose={closeModal}>
+          <div className="field"><label>Client / business name</label>
+            <input className="kb-input" value={form.name || ''} onChange={(e) => setField('name', e.target.value)} placeholder="e.g. Bright Star Ventures" />
+          </div>
+          <div className="field"><label>Phone number</label>
+            <input className="kb-input" value={form.phone || ''} onChange={(e) => setField('phone', e.target.value)} placeholder="080…" />
+          </div>
+          <div className="field"><label>Email (optional)</label>
+            <input className="kb-input" value={form.email || ''} onChange={(e) => setField('email', e.target.value)} placeholder="client@example.com" />
+          </div>
+          <div className="field"><label>Address (optional)</label>
+            <input className="kb-input" value={form.address || ''} onChange={(e) => setField('address', e.target.value)} placeholder="Delivery / billing address" />
+          </div>
+          <button className="btn btn-primary" onClick={submitEditClient}>Save changes</button>
+        </Modal>
+      )}
+
       {modal === 'newInvoice' && (
         <Modal title="New invoice" onClose={closeModal}>
           <div className="field"><label>Client</label>
             <select className="kb-input" value={form.clientId || ''} onChange={(e) => setField('clientId', e.target.value)}>
               <option value="">Select a client</option>
               {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <option value="__new__">+ Add new client…</option>
             </select>
           </div>
+          {form.clientId === '__new__' && (
+            <div className="field-row">
+              <div className="field"><label>New client name</label>
+                <input className="kb-input" value={form.newClientName || ''} onChange={(e) => setField('newClientName', e.target.value)} placeholder="e.g. Amaka Obi" />
+              </div>
+              <div className="field"><label>Phone (optional)</label>
+                <input className="kb-input" value={form.newClientPhone || ''} onChange={(e) => setField('newClientPhone', e.target.value)} placeholder="0803 123 4567" />
+              </div>
+            </div>
+          )}
+          {form.clientId === '__new__' && form.newClientName && (
+            <div className="field-hint" style={{ marginTop: -6, marginBottom: 12 }}>
+              {clients.some((c) => c.name.trim().toLowerCase() === form.newClientName.trim().toLowerCase())
+                ? `Matches an existing client — this invoice will be linked to them.`
+                : `New name — "${form.newClientName.trim()}" will be saved to Clients when you create this invoice.`}
+            </div>
+          )}
           <div className="field-row">
             <div className="field"><label>Issue date</label>
               <input type="date" className="kb-input" value={form.issueDate || todayISO()} onChange={(e) => setField('issueDate', e.target.value)} />
@@ -6605,8 +6746,20 @@ function App() {
             </select>
           </div>
           {!form.clientId && (
-            <div className="field"><label>Payer name</label>
-              <input className="kb-input" value={form.clientName || ''} onChange={(e) => setField('clientName', e.target.value)} placeholder="e.g. Walk-in customer" />
+            <div className="field-row">
+              <div className="field"><label>Payer name</label>
+                <input className="kb-input" value={form.clientName || ''} onChange={(e) => setField('clientName', e.target.value)} placeholder="e.g. Amaka Obi" />
+              </div>
+              <div className="field"><label>Phone (optional)</label>
+                <input className="kb-input" value={form.clientPhone || ''} onChange={(e) => setField('clientPhone', e.target.value)} placeholder="0803 123 4567" />
+              </div>
+            </div>
+          )}
+          {!form.clientId && form.clientName && (
+            <div className="field-hint" style={{ marginTop: -6, marginBottom: 12 }}>
+              {clients.some((c) => c.name.trim().toLowerCase() === form.clientName.trim().toLowerCase())
+                ? `Matches an existing client — this receipt will be linked to them.`
+                : `New name — "${form.clientName.trim()}" will be saved to Clients when you issue this receipt.`}
             </div>
           )}
           <div className="field">
