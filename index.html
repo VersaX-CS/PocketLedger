@@ -57,18 +57,52 @@ const {
 } = Recharts;
 
 /* ============================== helpers ============================== */
+// Persists the backup folder handle in IndexedDB (localStorage can't store it).
+const IDB_DB = 'pocketledger-fs', IDB_STORE = 'handles', IDB_KEY = 'backupDir';
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbSetHandle(handle) {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put(handle, IDB_KEY);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function idbGetHandle() {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbClearHandle() {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).delete(IDB_KEY);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  });
+}
 const uid = () => Math.random().toString(36).slice(2, 10);
 const todayISO = () => new Date().toISOString().slice(0, 10);
-// Builds a wa.me link from any phone string (handles spaces, +, etc.) — used by the
-// developer/support contact buttons.
+// Builds a wa.me link from any phone string.
 const waLink = (phone, text) => `https://wa.me/${(phone || '').replace(/\D/g, '')}${text ? '?text=' + encodeURIComponent(text) : ''}`;
-// Base64-embedded PDF, so the user guide download works with no external file
-// on any server/host. Regenerate this constant whenever the guide content changes.
+// Base64-embedded user guide PDF (no external file needed).
 const USER_GUIDE_PDF_BASE64 = 'JVBERi0xLjQKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG9jdW1lbnQgKG9wZW5zb3VyY2UpCjEgMCBvYmoKPDwKL0YxIDIgMCBSIC9GMiAzIDAgUiAvRjMgNSAwIFIgL0Y0IDYgMCBSCj4+CmVuZG9iagoyIDAgb2JqCjw8Ci9CYXNlRm9udCAvSGVsdmV0aWNhIC9FbmNvZGluZyAvV2luQW5zaUVuY29kaW5nIC9OYW1lIC9GMSAvU3VidHlwZSAvVHlwZTEgL1R5cGUgL0ZvbnQKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL0Jhc2VGb250IC9IZWx2ZXRpY2EtQm9sZCAvRW5jb2RpbmcgL1dpbkFuc2lFbmNvZGluZyAvTmFtZSAvRjIgL1N1YnR5cGUgL1R5cGUxIC9UeXBlIC9Gb250Cj4+CmVuZG9iago0IDAgb2JqCjw8Ci9Db250ZW50cyAxNCAwIFIgL01lZGlhQm94IFsgMCAwIDYxMiA3OTIgXSAvUGFyZW50IDEzIDAgUiAvUmVzb3VyY2VzIDw8Ci9Gb250IDEgMCBSIC9Qcm9jU2V0IFsgL1BERiAvVGV4dCAvSW1hZ2VCIC9JbWFnZUMgL0ltYWdlSSBdCj4+IC9Sb3RhdGUgMCAvVHJhbnMgPDwKCj4+IAogIC9UeXBlIC9QYWdlCj4+CmVuZG9iago1IDAgb2JqCjw8Ci9CYXNlRm9udCAvU3ltYm9sIC9OYW1lIC9GMyAvU3VidHlwZSAvVHlwZTEgL1R5cGUgL0ZvbnQKPj4KZW5kb2JqCjYgMCBvYmoKPDwKL0Jhc2VGb250IC9IZWx2ZXRpY2EtT2JsaXF1ZSAvRW5jb2RpbmcgL1dpbkFuc2lFbmNvZGluZyAvTmFtZSAvRjQgL1N1YnR5cGUgL1R5cGUxIC9UeXBlIC9Gb250Cj4+CmVuZG9iago3IDAgb2JqCjw8Ci9Db250ZW50cyAxNSAwIFIgL01lZGlhQm94IFsgMCAwIDYxMiA3OTIgXSAvUGFyZW50IDEzIDAgUiAvUmVzb3VyY2VzIDw8Ci9Gb250IDEgMCBSIC9Qcm9jU2V0IFsgL1BERiAvVGV4dCAvSW1hZ2VCIC9JbWFnZUMgL0ltYWdlSSBdCj4+IC9Sb3RhdGUgMCAvVHJhbnMgPDwKCj4+IAogIC9UeXBlIC9QYWdlCj4+CmVuZG9iago4IDAgb2JqCjw8Ci9Db250ZW50cyAxNiAwIFIgL01lZGlhQm94IFsgMCAwIDYxMiA3OTIgXSAvUGFyZW50IDEzIDAgUiAvUmVzb3VyY2VzIDw8Ci9Gb250IDEgMCBSIC9Qcm9jU2V0IFsgL1BERiAvVGV4dCAvSW1hZ2VCIC9JbWFnZUMgL0ltYWdlSSBdCj4+IC9Sb3RhdGUgMCAvVHJhbnMgPDwKCj4+IAogIC9UeXBlIC9QYWdlCj4+CmVuZG9iago5IDAgb2JqCjw8Ci9Db250ZW50cyAxNyAwIFIgL01lZGlhQm94IFsgMCAwIDYxMiA3OTIgXSAvUGFyZW50IDEzIDAgUiAvUmVzb3VyY2VzIDw8Ci9Gb250IDEgMCBSIC9Qcm9jU2V0IFsgL1BERiAvVGV4dCAvSW1hZ2VCIC9JbWFnZUMgL0ltYWdlSSBdCj4+IC9Sb3RhdGUgMCAvVHJhbnMgPDwKCj4+IAogIC9UeXBlIC9QYWdlCj4+CmVuZG9iagoxMCAwIG9iago8PAovQ29udGVudHMgMTggMCBSIC9NZWRpYUJveCBbIDAgMCA2MTIgNzkyIF0gL1BhcmVudCAxMyAwIFIgL1Jlc291cmNlcyA8PAovRm9udCAxIDAgUiAvUHJvY1NldCBbIC9QREYgL1RleHQgL0ltYWdlQiAvSW1hZ2VDIC9JbWFnZUkgXQo+PiAvUm90YXRlIDAgL1RyYW5zIDw8Cgo+PiAKICAvVHlwZSAvUGFnZQo+PgplbmRvYmoKMTEgMCBvYmoKPDwKL1BhZ2VNb2RlIC9Vc2VOb25lIC9QYWdlcyAxMyAwIFIgL1R5cGUgL0NhdGFsb2cKPj4KZW5kb2JqCjEyIDAgb2JqCjw8Ci9BdXRob3IgKFBvY2tldExlZGdlcikgL0NyZWF0aW9uRGF0ZSAoRDoyMDI2MDczMDA3NDcxNiswMCcwMCcpIC9DcmVhdG9yIChcKHVuc3BlY2lmaWVkXCkpIC9LZXl3b3JkcyAoKSAvTW9kRGF0ZSAoRDoyMDI2MDczMDA3NDcxNiswMCcwMCcpIC9Qcm9kdWNlciAoUmVwb3J0TGFiIFBERiBMaWJyYXJ5IC0gXChvcGVuc291cmNlXCkpIAogIC9TdWJqZWN0IChcKHVuc3BlY2lmaWVkXCkpIC9UaXRsZSAoUG9ja2V0TGVkZ2VyIFVzZXIgR3VpZGUpIC9UcmFwcGVkIC9GYWxzZQo+PgplbmRvYmoKMTMgMCBvYmoKPDwKL0NvdW50IDUgL0tpZHMgWyA0IDAgUiA3IDAgUiA4IDAgUiA5IDAgUiAxMCAwIFIgXSAvVHlwZSAvUGFnZXMKPj4KZW5kb2JqCjE0IDAgb2JqCjw8Ci9GaWx0ZXIgWyAvQVNDSUk4NURlY29kZSAvRmxhdGVEZWNvZGUgXSAvTGVuZ3RoIDkyMAo+PgpzdHJlYW0KR2F0biU/I1EyZCdTYylKLydjXHA5clZuSWdWPkZDW0dAaVRsVy88ZFdBYjxzI24lZ20zOWcjJkc3NWBpXCNhWlE3MDVnQkYuVnVwJXUxMiklcjg9ZiVlKFduWlYoTF02aENYWCYtOi9mPlhYYnQnLCIxXCI8OXRqI0pzdHFMVGFibVU+VGBgSjc9MWE7InVYSi40TyxDMCxgUD4zZkFQRih1ayw7KnE/JDVQUiMsNzNLbFc8aUItWC1jLnJUVDspTXJLNXBVP2tpVC5HK1FjQG1MQThXbSxZT1FZQDopITQ3VUAvWixGKFBzVjhoUHIzXztUUSMybyNvKEomL0FfWSdiPmYiQGoyZV1dVyQxLU5gVSU/al9IIiYwPV5iV14hXjpTNF91N20jaEpGPy9WNmJcPVdyb044bmk7UGxJWE9kPGBhZFc/dWhrYS5rKyluYFI4RCg6aic7YTc2MF8rVTk8NjpWdHJaU2dAUT5sKGFlOTxwSEVOX0ZlYGY7cU4iMU9iITg8MS4/JXBHaTVOZmM4JW91LWpwLVg5WkxgUFtHSThSP2JqKlQ9LS9lRClCNyo8UDNTNShOL3AnMSg8RT4tOyRUWD5rK2ZSU1VnV3ROQEwhVi1gOEtTNywiWldUKEBVNC5TU2BwVlhvS0JcLVAnSlhtMVs5XFxNNyhuTTY8LlAoRkRaNVxQa1dsTW5pODk5RkspP1dfKlgsRlpNME5kcGBaVjUyVytGSD5VaTFnR0ZZUU5nSyczaCVRKW5tRjtAJV0mTypIXiZDTkMoPHNRNUteV0YyZEFAcUY9ZW9NPm5bNm1vYWhHUmI4SWgxN1Q5azdTPWFgOjkmUDFuJWFcR2RRMy1PQk9yM1kkXmIjJGpAOXU2M3RuKm1xaEtPWVFNQk5CPyFsWV1lRD4iZkNUPGBkaXQ0ayoqbEtHbVYxIz5kcDpCakAmSGVsV0dEY0shOlRwQkk6Py85P0dcO0QyWFlZNTdlUUMtOTJLJkE9UlRqXnFCOz00bCJFOk0yWmZxJClVKmZFcyFgLys1RkFYRWJdPiRpS1BFPFdnXWVnT2ZOLUFTJCM4IjBJMUZvXyZNVD9hTCVULlFxInJuYTstKCYlTXRjUDwwVUhJYjBVcV4/WFk4R1hAL2ZFNSs4WyE0OjkpMjRnXWIqSC07R0JmTV4yTiItXk1sKUkzZj5GIk1XQidNZmYqW3FiaXF1UzBHUkptfj5lbmRzdHJlYW0KZW5kb2JqCjE1IDAgb2JqCjw8Ci9GaWx0ZXIgWyAvQVNDSUk4NURlY29kZSAvRmxhdGVEZWNvZGUgXSAvTGVuZ3RoIDIxODEKPj4Kc3RyZWFtCkdhdUhMOWxvJkkmQUBzQm0sWk41M1hSSGZNLEdzcy01MztKbktfaE5bTU46WSRCYzZpISgyOTtvXkJFKEoxK1FgOTA6W0s0T3NgQG1PbUFOSUNpa202aTc+ZjI2UiM6OiNZKGVLSjgjQio1V3NsQCFWdHVWSiJmM0sjb1xlTyE9cU1mZjRnVUkic3BOU2NwP0BTTEdEMDVtNTo4WT5wW102W1wmTS0hWydmTWRuTSVfPCZzSyY+dTtuLiMmazk2dClOTU9DVmxDUktfTFlxUGAlX1MtMTp0PGwrU0pTX20iYy0iZFY9XmdAOlE1LjhGKF40dGxSUi9UY2tHT0EyIzFlPGYibWQ0SSwra2cpdCNCJFNgUShiNjAsU11iNU5oJT5oRkVcRXJqOzQtcEtHZVZRYU1NYlhALFBgM2lbNSNLbklZR0gpaEBPQUkwPzVLL0F1WnU+UzBcYmlGS2tXSjYtUkQ1Il1TdVsvYV0qQSoqJkNLRWo1bFpJbS5LZyVDcWgjZCJYMytpT0JlYFF0VXE0Zl4lIWpXVS48O1V1JydcbyM1OFJwcDlPTGpLUVElJXUqOmlFTiNERmNmPCE2SHFjRVlHRiNMViwzaE0iQiFjaScxRWVbSGVHTGZQLiI6K1o2PGpnb2ska1tscC5gZ2JpQ28qKWg/P1BJZzYiYlklalpdSkApJi1URWcuRyI1dHRycEdgUlpMQkAjX2Q6XkMrYlU/L1MyJiRoZzc6WVphRjlBQ0ItdHFxPCEvOy1vaTNAPEo0P044SGFaKShwX0NVJFowPzxWNmdVQ1wyRFdwL2AwdThudSMrWV4hYU9NNjNhdSdmLjNFaWtaRVVHNyk4MWMwPixGLT4mb24lRXAnbUBeTmt1SkBAWSQ4bStANT0oWU9jRmNCR3BCLm1EKyVCaj8lSlRuS0c9TjhkT21hPChWa29zOVFzTllVIzhzPF4oYj01UjZ1J20kTUMyXlJVbi5uTEEsaW0yVnBBaj06JjgxR1lGMUk2O1lBLEcwMFBwISljck4+Sj0qbyQ3Y0ZGUEVkT2dWUTpRUVhFNjY7bjJEW01hNGBCaydtRl1DIktXal1bal5bQCQ9TEhgUCRKZVtROFJMV2E5KldHWGZzcG03WSUpVipQa2plViVhOVNXRzkkTEZFcU02T2lvcipQM2MwQDk4S2grcGxvOFZrJzA8UUZdM049KnQ5SjU6IWhUO1MibiViaCF1PUhKXjtYbEIvVyR1VzIoWipfSk1HVCdtOG5DaExNTF9oVWdlVy1scVxQaHUqYVxIO1RjPT4lSDhXWVxiPy1oTW8nP143QVZLcFdiTSsuRmBmNSJgVy9ZTUZdJyUiOF5Aakw7LjsoYGFvSDZZLSttWmVkNDlJQTdUamxWR2BzMG5Zaz9maStMR0A+bVhgclUtdTZ1ZkVzSVRNWFJMTyI6JGghVVdJIS5cM1xKXFdLUSRrXm9oSFspNE9rOFluNV0uME9BMTkrP2pSRGRRJS1mR1BAPFNWIShSQChEUG5RWTxHdVQ7aC9USj4jWUhUZ0lBQk4lQ3QzL0dnWDVXSHJUMHApUDIkLy5bMDFTRSYqX2M+TjVoU2ItPyQ/RCQ8WFJUPkNKNmRwIkUnJD4hckpsNmAzPWBgTEhMLUUmWmE7TlNIOzhUPVpkKyhRKjlaJFpxb2NRPF8vOFYiWitAYkZZYUBzQkNKXUk9QCRuYS8nMGAxI0dqI0VUTDxKcVksWyY2cz4zVCdOOT1eXyNVIlhHbUlFXGEucHM0O2YxbGVuNU0sZDUpJDdXT1MvKVNIWzktYCpWM2pLVVRuJDs/KGk4UyJhQzY6RzwvLFZfPyttQEAhIVJydWdoRj8xL1dHSzxhaVEpNlFBUWs2KWM7NFBfVnA0LmQxZ2FIUD5XTXFmKE8pNXRhMEZNXW5jQVssQCdwczIuI2FIcC09Z0BhcGwxXjpHRHIzPCZgUFJmU2wjVVJRJCsyTXJFTUVeSTldPTNvTEdDLyMtci5zcUQsTVhcWFVubXAkVj46QG1mV2tmJVNvInBPP1tiREhEZDdTcGNEbUFjI0wrPW9MTVUndUBqTjA9TlBFb2s5VVg5NW1QJyUpK2ojKXMpM1VRbS9LWE5vMGAqLTErJjVEJ2YpI2o0TT5aZEwrbkFVc0hoajw/TjViQiFjaTVoN0ZkZkM5Q1R1bEY4WEtDUyE0ZCVtU3NTLkJqJ0NuP2Q/TnI8LURKbVwqWmh1JycrIzZzLjxOX1ciNiYlXSciYEcyaCZRbFNnWiRobldgYUleT1VZS05eX1YiKjtNbk1LTjZoUzZYX15rUTxsYkY5K1c2aUgrMmxMbCNKQUhQMFshW1tILWQ1YTBSQFVhODJlQlI7JE0zRV5bT2E6QXFFRl1mJHFSbTYqMEFmSWFbXmErMl5tQG5aO0VXXkxJZkUyMTw7P21KTk0/MkVvVTY6IiY1b2RyZFo2Q0osV1VHczlwNU1DQ2RhZk40IUlfN0QuVm08NzJrL2dLQlNiSi9qVUtuaFBQYkRkN3VpVkkmaW90YGR0SlkxaytNZ2FBJTNvVnBSRDs7OWNaPilRKkA1WDMnb2krWVElVVpOZEg/WjkjWmdYNy8uMSJeJCdHZyw3MylebVZwTTIzVFIzJFhkSl0wP1pqbFdnSzw+XClUWSpFal1nWGFWNGAhTlIhNTRiTjVeMjxYdW8pcj4rajYvPVJvNDNnP2tcMClVJkJcNj1xaUddbV5dUkNwcS1ST3VGLUtMUmBKSk48M1BbTHU/QmspPFU5OEtxVE1tVGo5VE9nUEouLGQjYHBkTF1kYiRtYm0sTFktST1VOFwyPT9eYSxvUDYibmFKZ29rKjJuT1htRl1hcCQ/UmA0U05zWVNlb2s7RHRgMUNaW1ciO2xWaiN+PmVuZHN0cmVhbQplbmRvYmoKMTYgMCBvYmoKPDwKL0ZpbHRlciBbIC9BU0NJSTg1RGVjb2RlIC9GbGF0ZURlY29kZSBdIC9MZW5ndGggMjI5MQo+PgpzdHJlYW0KR2F1SEw/I1NLPSduLGhbXENjUmo7VE9lZjsuJlFkXTg7LkRkVmNXblxnWkwnJk5RImQ6IVJdakw9WVlJcFk2b0BhY1tCIVheRSFPNTAzT1xwWUt1OkFQPDQoYFNsO0knKWQ1UkRzcS5tJzpMUic6OD0nOVRCTzJqaylaIUYyQWYvZCN0PD1iMWBhU1xWZERbRjZ0PXMrQkgib2c2S28/JVByJ0Jnbi9mOlhvXTtzQEVRU3M/RS1qQkoxYFZMUWl1cGsvPVY/Y0InVnVKN1QnVj0+YDlqX0VbKTRePUA5Pys3Y1IrIiNyZmJRLWRhRDNQSWlpSGtiO1Y5WFNgWUZcQmIvNERQIzdJQGUmMS1SLSMlVUNwVjFbS2gsNG47MiZRZ1IhWnM8QUBtYWFgaW9wRylVYVYoNGoyKDlabj0mbWshTzRxS2ZTRT5VUyQvcXRIRSU9RypJMDBAI0k2K2NYXTlbOS5yNEYtTjI5LU1CPScpLk0rOmZpJlViNUQzZktmQEUkUWhGP0VUN0NQJFxTbVxdZiMhN3IsSHFObVolL3AvV2JbWTctXjA8ZyhZVzE5VihSXk8oIlBQTEdQaSQkTTZ1U2RUaiRNJ3ApaVUvO2loZGdoQEknUjFOI3BjYjlDY0cyTF4qXFI2LmUrJS0uXichaWs/Li1UODRxLHFmMDMjM1FcK0gvUyYpa0RqITV1SiRMKDNKb2RcSFtiUi9mZ1ZiLFVPLjspZVtnK10zTldOMGE3TFcoWUMvaUtsPEZGOTA/K14oLSVicGdrUmtsUShVO3JJLDE8X1FLXCFNY2MxLVpuZl9MTlVnbF9bVCViIVM0JSgrbUUkPF9NMWdsUFwkYV9NaUpWPloiWjZyUE03Yl0nQnNYTExEMmQzYUNDYEZhVW07JSw7SmhPPUI7c11eXCxZO3Q2bTxHRkVGI1A2KStwXDJmRm1qJishak1fMl5AJDtQQDhxJ0tnaypyTnJKbkFlMFYkO2FsRXQxPGZZNEVxbjQiPEs1JC8hSSJTLkRLUUFWWSJzYSM2NGBMPyQtOzp1X2dPPDg8XWInSSxCTCNyKyspcDdVTiIyTFUqMTtkTWZJJ2Y2LTosYWgnJjxgckBHcUZqTlJHQWo+WTw0K3FQcU5qLzlkKiVyYjdpOm5tIzQhaiRULWchbm90UVRtQih0aD1ua1ZrLGlhNVdyX0BrT1M8WywhdXJWUFo8Vm9vYWJwRGI2dTxOc0REOEBSS1ltS2xCVD1FUi1PbTBmRnBDUU0iKVJvPVtvJTU7RThsQmtkJTpNWnBmMXFHay9TMXMwIShaVFhzP2BWPDJgZS8wRktuQEpQM3QpLGBAOD1oQTdLZFprVzUtT2UpYkVKZ2FWI2YyLTprJVxMOSFfQXQ0NGRNcjk7Pl5vaT1QcjEnQlNZTG0oJSJ1cEQkOCRyR0VrMUBxNGBTdE8tajNDbzteMHFgLiNSRGchNidTKyJtRWpyUSpEcCkwaGdKMjMxVUxiVko+Vy87WkclMlAuaktVIjdyclkwS11qKEk1Ml1fZV03KHJdYmIjJU8kR2RSVyU2STFyMHNCRF5falg6IXBtJXUjTWFBRUsrczliOkxGKXFZIVE2MlwhSFNfRmVsNmdjWEBAcjg8UjlDOlZ1cVIxKFglSUBAZCE1YDsuN2poOmo8MFA2TDQvRTtgPGxzNzVoTCtmLmQsST4qby9IMUhwOUs1UXMvXWlNQFFJVmdDQCI/WzFINlVsXi9RUS9sSnBrQTcwNURrMCxAKkknOG45J2BERFNeK21wSUZHUUlcKzRyUVpDN1VhZjUiXzs+bEs0MFddSzYvPTtDL1E5YmBGPyJqaUtHITwtYlEnTCFmNDlEYTZHaUIpazNMbCs6Jz5vIihDRU5uNk84cSJiKmxNQDVKNz03cm1Fb0hpZGstQmxxMXFyOkNCTWR1ZmNONSIkK0o7XkhpciFzOTQvXSVCLF9jWkBhP25OVm9hbiJjaEJgOGorLm09UF9OWTRVP0RpOl1MP0dnaVdoYFcwXDJbJTZQVTBuP0Qpa1xocTxnSV1xby9sI3JHTio4NjA6QCVnIUNMRTFgUlZZPV1bMWZCP1pfNj1PYDRIJWdxUHMyKEVxZ2NSWl5IYDNgZjwyT2lLWW4uOjYwclgsZjNPbigocV9zaUNRPF9cJyEmaSs+bTZrSGNnLkxELjhaS3BfSFFVP2hJUi4/MyZmIzQ2JD1vJWcnLSUpbzkjLlhgI0g8WyImdEZfPkVWM1tIJjEmIi84SE0wPTRBSTE8ay04VjElYVM+OlhGNF1VUS40NGRxYSZFOi4hQSlCKS47PS8vT3UhZEBCMUQ/K1teajpKXnJlOFRQOiRZaW5vTSRmP2ZOOFIrYixCSVVKYCE/dV9ZL0dKOHBHPS5bLXMrZWxTTD9dXnAuOSE8VVJGJXJZSy5wYFtFMDZaSVtGRGY+dCQjWGBCUXMtV2pyaCdIKVNhYyZjPEhUSlgmbGVaQTwuRmg6V3JLV0tRdS85P146aEwxUT9NIVVzIiIoTWEqRyFtSTxNYzlBIXJVMjFiLlBEM2dDclY5Q0FJaDFCayZvaCdgXiQia0FZXVlNLTIhUE8lbVdLZ0lXQW4xRTdLJG5gM2k2YjJoVStrTiZ0bThoWyk7XTB1SzptKyxtPXVcMEw8Qk0yN1kjRiUrR1JgR1dEVSpLJVcnRmg3NW1DTEBnbFhgLFBUVzRxTzVWNztZPz0+OC8hX1QlWW44SEIwSis3OkswIUZTNUk+PkYscGM9N2xlcVYrKFUuLTQ9V2QsdFw+U1VzM1wnPC1CKGV0ayUqTD1cQS00U09NLjIsVl9WSigiQlNlY0ZDdE90bnBASjBuZ1tNMCNUXDBMZFJlZnBzMW5FdG1rc1otIlZhKUdwMW8tQWEvL2ddXFYxMEM6aHBIcEldcnJYLjBSbkxRYDBGYytVRT1aRWE2MmBmWjFVRkxkRzExXzY1ZEk0XCZOTUs/b0FPXWpeJy81RFU+b0I/TS9QZSNMMlB1ZicrV0s2X1ZfJSdkbVFnMnVhJTRfZjttfj5lbmRzdHJlYW0KZW5kb2JqCjE3IDAgb2JqCjw8Ci9GaWx0ZXIgWyAvQVNDSUk4NURlY29kZSAvRmxhdGVEZWNvZGUgXSAvTGVuZ3RoIDIxMzQKPj4Kc3RyZWFtCkdhdUhMZ01ZYjolIjZIJ24+VUBDWHMxdVJBVCsyZTdpMSJLRFdASG4rPjRDQkNoWUo4PDZaaG9zKmJKS1AyZGcyUGRIL1dgIyFdMjgwM3FMakVUYkZjYTBmUDpAcmota08xUylJJHVfMClgcVB1SiJoL1laZ1ZQUGJSTEZKVDpCVVQqS049cWUhQ1NYY0BqYl0iXGgsIlZzc285RVhEamFuK0tDRChNRSxsO2EsL1RqaXIoci4lIVtVLEI/NzBoWztia2BaWkYiZVdNazlYXUcvSmRGXGMwL1o2R0IuVSNGODhdRkQrZDh1PG8lczhmNms7PDQiay5nR2s0KnEmb0U1cHImbVdQayIxdTtDNiYnV2FiJDZebmsoXjMlWDNRSXRIR1BhUj5JZkExTzA0XCJPY2pNNDItbSI9MUhtNlYjXSEpPkJjbGZcTiozVE9pX2BBU2FyMGNscS0/XVJHKCNAV1YrL0xOcVVoPWRMX2AhXG9iP0owLGRyUjhSU1VgUlxqSz9EU2gpPE4lWERya2MwKzg/azFFR2lpNmxePTJacSEvQE4sbkI1Y0Q+TiVaclBGaGVJLEttXydjWGQ7SD9zOStzVSsoQlVvbzpDUV0sOlJkKSlPRXM1IkxhSkdtcEY/LEguZE5NUEc2QzRdLTZkYzFUMFZtRXU9X15qNjA6dDxoUiJhcyImSVtFKWlINjpRWWZLZ1FQJi9VJSNRbztSTyFuSUAkUE9objswPjtHMFpGQUIma2U/JmcvKlkvMiNnJDxlSF0lMlQvYTI9Sl1FPCtJQDsjUkBoUkd1JzRpVG1cRCNfZ0FKQWktQnE8PTsxOSxAXlc/cjRGPiVHRW1XSVM0cThGRWs2cTpEIUNxRiUyRy1ubWFITFhjZEwiNnFiUkguL21JZWsoYyknbVNQR2s7KmBeLjBXVSdQIS9BZ2ZkUy9FJ21HVzNmYyIoTj5Saj8tJFVkcWIzTkIsUCg9QG0vLUdOSEhjKy5iTDBgImRQO1BgVHArTFdJL2JGW0A7ZEFLXkNYaGFDUDs8Vmkqbl9jPVFFIVNvT2JTLUM7UiRpTTxYTyVtdCNCXTUtK2RIY0shXVdgTDgvQSguOGRpaTZgaSkzNy4/VDVIOFF1VWVGST9cNzJ1IUUzWm1FPl8jL0I+U2pRbzBSND9FbjksT15iJltkcmlPMz8laSlRPl00IkBdSVQ0SU8jXzQ+JDxFKWxdZXJuTz9YL1tmPCxXOFMjbyxjRE9tXyJFZ0g4cDVyIyFdLSkvcXE2P3BLW0k1SUwvIiJfU2syK18sdEM9PyJRciI3JGBLciVCTCxIYnVeLHBTaERtJERqWDY5XyFZVUZET0huPiVzTzZlNjdRJ29WNkZCcE1WbmU7PmFRIXRIcmwsJz4oWik3LEMrI1Q8QklHLVdcLUxZLTtvXiRRRzo2WnFWajJFOyFlW2dxVV5iIj04NlhHPWE2ajU/amZOdUhINTJjUzwmUSlvXiE0XHFJZ2FObkVNZGQxNVdFUS02YC9acUxIVTAmPHI3bUVkZVwsbV9dPGJXaEsncUteSkAuXFgvcGYvR0Y3cDoiTDRZMWYxSzI5Ui9YZ2hrI2xWL1ExOUY9S0VQcUl0MjBcSk0uYGlkWzdYZkIrbipIYFwnQUcuK0RxPWUiSkhPUypMPEMmMmNGXElQSCRFLW9eRzw4cHBuSjVSSihvYktrJmpDQTcvP11ZaiRtbXNZI0wuNUdwW3FVX25JWl8tXCYmQ2xYWyVQXmZiXyRwOE5XOD5nYkItbEFrOCImL1NadFlAayo1MTU7Iy8iRm5wRTdGYyJOJEE0amQ3I3F1XDMkT0NrSiktN0JuJFFwZCpTZkU/ImNvLmVJP1NOVUktWjNlMCFmcW9qYTRxbGtKQD9VVllkNzJfQERtPmxZJDZkPjNQSDdEZyhmMV1Kb0ZmITdYXk5QK2xJM2xZUW0tUFMvaGhvU2lAZEJnSyovT2dxNE1DSilORytpKGtbWkNdLVgwP2UmaUVLTHFxQ2wjbVMtX3UsK0ppdSMsMS80dS9EWFMqRFRdLEIkVS45QWJHLjAlcy9dZUFYJGVeJ109TixBS01jO0wjJUwlOmkoTy88dEopKGFeTlVycyFkS1dVdDxGKGBmQCUyc0s+OydQJF1aUWltZVZkdE0vWi0uZm88RFkmWFhXJ1VFKiFxQStULzImT0VqbldKLk5Jc0pgJzdnSlssUisuKGdsIXFmLTJrKCRcNWJNZig0N01pXz4vMU9UXiNHaGhFYlVkLWZYPjY7OmJNO1A3IWIkZ1dGMywnUF5JaTBdKzwjMVdPNUJYSCtGVC4xXXBrZWJeMFUyJm8naj47PGZaOFw4RTBSNmw6SFcwWlFOa0lbbS1XUVo3Y0gyL2dIPFVuWlMkNmBtYSRjKHUtYmEzZF42Mi1CWFddPzdEZFpNKGI2YkBmKjhHWDRhSko4aGQnWmIiPChNL0RCUTtMMm9OcGEsUEc5dCVPJSJJUDM+MVVxXmhGdUo/JEBQTVlnJWAlXSI7O2Q7VCtFZjNZXj5JVWM/PSlAJGleO1VDPi9YSFdkO2k5Zm1JUCc3aDtdaWgpcGNjJmdNSk45UW46MXRvKEVlRzpRMDg6JSsjRHUwbkw1MCE5Sm0icz4ocykuL20xRUo8VDdDNz5CY2ZsKWpdWi9pVUFxak9fLjcqUSluMUEuKGV1Sjg5RDZiUlZjMUcoTFUpNSlqcSI8XDFZSlk3XilnNFUpRS1tIklNYmVFW2EiSCIqJEtFXF83UkM5cmszM0VsMVZLJ0xnaS4lKEB1Uyg1OGg/ZitGMDlhSjMqJCEtIzkjWiMrI01NbmYpfj5lbmRzdHJlYW0KZW5kb2JqCjE4IDAgb2JqCjw8Ci9GaWx0ZXIgWyAvQVNDSUk4NURlY29kZSAvRmxhdGVEZWNvZGUgXSAvTGVuZ3RoIDE0MjkKPj4Kc3RyZWFtCkdhdUk2PyNTSVUnU2MpVC8nY10nJVotb3VhazAlNUZcUlhiKE4jcUEobSNcK1UyO05HVzAxKzpzODBMKkFCME5JMyE1Kl5ZU0UpVzNKWXJWK3A3RSsoViZxPitvOG1GWDZZOmZPR1k9ZllucEAvUjZEQ21ULzFFRS1bP2JyUVkxUmAiYUpKKTpHWFojQEZlPHBHVGskVGhETE5DNStfMTQ5ZktDTUBWdT8lMFJdMks3N2lyRyZVRGJKJSRIUl4zNCVVOVhtQ1hJWkhBI2BAUD5SJ0w/O2lSSC1hYEo/RUxgM21pI1EqSDtYM1Y8O10sJlk/KCNIZypCQSkzNnE4YlpQQkJLRHRbN0tDU3JZN1dtJE1oQEoxPDowKzUnQkw5WDtpaSc2ZGFna1lqU041ZDVkcUpMcDpIVTFqVzRfYilRISlpYmNIIVY9PTtaQWBjSGtvYmMxWDJPYzk8O2shXkxhVD5acUlBOkFxWHRsQlBPQGVjISpROmgkZSklMzpVMkQkYkdYNSQsIUNKVWQ8TTxTJmZuI21GJTBKb25IVCNFTWEiXiheQDcyLmZMUF86L1lzJzFWWmsvSi1XXzcpYSIraEIjLERmU1s9cGdrX0MmVjcoXTFRLHMxTWUyQE1yST1yOiFMMVtHMCZXLEcsKiVCKl8rUS9baWgjaSR1UE1cLl5HOVFTQXQ2OElSI0cjRWxQaDZIT2JtcT0vNzJFUzlUQyI2Kl9aXi1RRzhlTXJrJGBAKVMmWmUyIW1FZTFFJUlVQDhmKXEoKGQ3OSEvT3JGLzNtPWxMZEklWUAvPjhxUWRxQTBDZCY+J2BEWEstMmNaRjF0KVw2MidbTkVdZyZGYydMaV4rJFpraClXUF4sTUtabSY/XFFLWiJicFw5O1VWX0VhS3M0TSc7UC1FUitsQCNXLi03UUVeTXNeKFdLNEFxaCIsJCNOS2YuUWNGVSExKEUmW3Q/Jj8zWztQaClLcDZEXSM3biZiT0IwZHBlSGViOVxqOTwsQCghRGlNTV4rWiRkPVxlKz0iYy0yWTxDbGE7cl0hKUQxOFMwXW1yPWJcOD81RUY/YFhrK080a0pybmshM1ZUJUwkSiNeOnJmcGFVb045NWVXNF0oVm51R1g9N1VSQWkoVkIpaC8ucyw5W21TKi46bTlzQnE0ZVJHW0FRJ1tKYEJGcFpCQFFcZ3Asb0ssRFBUJTYnVFctRj1SbW89QCF1KHVcW1dkN04oMUAvbiVeZT1OdDE0VkZgW25tOj5xI0VHUnRSMk5VO0MoYDAvMTwnPjlfKlNSI25LQFVHLjlqL1gxZzgubVhyYz0lVGdOV1FeY0dPSnBLQiUvVSxHUWJoY3EoYG0wYicpUzFmWUBCOj8qYjphbSxsWz9HalArN1w+QkhnbWl1Vyc7bl9jZDIyPktyIV0tQiM3bDpsXWMzSDFTLmgrOEhpVVo1IWg2KFhaInBBW29JPWo6XnRmZ0dHOzcrJSdPWUNkSyIuVVYrODsvXiI6aC9mbCRRSz5DNVEmPmk0NWshY1JPUlAzazUwNllGYDJfRj1zNzBUSm8qa2ctIXVFY11BYGFsNG5DMU1UIT1aTVwsKEE0XCltOGEmKDxnVUw/KzQxRj9HYlAjWlFjUSdPWGozbz8oQEhlcmRkQC9qWSRnNXFtVzlKSThKYCFzcTtYSTZTbz1bOHRJSE5CJTBNI0VCZzkiLzVOXFw2QCxPWjphbD1ARTAkbEpwLkt0QytHUThLQGgpPUI1bl1BNEgqJ1NLZE4kJTE4VC1SV1xcQ1tOcFs4QzxYaHJqO3Q0KjlrS0dJOyZja25SWDZNSGRIM19xSDVcckJjZydgaUYhayFhNGBdUCtaYl43KV5hZitHYzYjRSc7Iks2JVtxIzAhTTJjUUpjfj5lbmRzdHJlYW0KZW5kb2JqCnhyZWYKMCAxOQowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwNjEgMDAwMDAgbiAKMDAwMDAwMDEyMiAwMDAwMCBuIAowMDAwMDAwMjI5IDAwMDAwIG4gCjAwMDAwMDAzNDEgMDAwMDAgbiAKMDAwMDAwMDUzNiAwMDAwMCBuIAowMDAwMDAwNjEzIDAwMDAwIG4gCjAwMDAwMDA3MjggMDAwMDAgbiAKMDAwMDAwMDkyMyAwMDAwMCBuIAowMDAwMDAxMTE4IDAwMDAwIG4gCjAwMDAwMDEzMTMgMDAwMDAgbiAKMDAwMDAwMTUwOSAwMDAwMCBuIAowMDAwMDAxNTc5IDAwMDAwIG4gCjAwMDAwMDE4NjkgMDAwMDAgbiAKMDAwMDAwMTk1NCAwMDAwMCBuIAowMDAwMDAyOTY1IDAwMDAwIG4gCjAwMDAwMDUyMzggMDAwMDAgbiAKMDAwMDAwNzYyMSAwMDAwMCBuIAowMDAwMDA5ODQ3IDAwMDAwIG4gCnRyYWlsZXIKPDwKL0lEIApbPDhmYWQ2ZjBjYmQ1MTYzZDgyYjE0ZjdmY2ExMDEyNmE1Pjw4ZmFkNmYwY2JkNTE2M2Q4MmIxNGY3ZmNhMTAxMjZhNT5dCiUgUmVwb3J0TGFiIGdlbmVyYXRlZCBQREYgZG9jdW1lbnQgLS0gZGlnZXN0IChvcGVuc291cmNlKQoKL0luZm8gMTIgMCBSCi9Sb290IDExIDAgUgovU2l6ZSAxOQo+PgpzdGFydHhyZWYKMTEzNjgKJSVFT0YK';
 const dayMs = 86400000;
 
-// Pulls a single name + phone number from the device's own contact list, where supported
-// (Chrome on Android, mainly). Returns null if unsupported, cancelled, or the pick failed.
+// Picks a contact's name + phone from the device contact list, if supported.
 const contactPickerSupported = () => typeof navigator !== 'undefined' && 'contacts' in navigator && 'ContactsManager' in window;
 async function pickDeviceContact() {
   if (!contactPickerSupported()) return null;
@@ -86,11 +120,7 @@ async function pickDeviceContact() {
   }
 }
 
-// Fingerprint / biometric sign-in, via the browser's own WebAuthn platform authenticator
-// (Touch ID, Windows Hello, Android fingerprint, etc). PocketLedger keeps everything on
-// this device already, so there's no server to verify against — this registers a
-// device-bound credential that the OS/browser itself will only unlock with a matching
-// fingerprint or face, and we treat a successful unlock as proof of identity on this device.
+// WebAuthn-based fingerprint/biometric sign-in (device-only, no server).
 const webauthnSupported = () => typeof window !== 'undefined' && !!window.PublicKeyCredential && !!(navigator.credentials && navigator.credentials.create);
 
 function bufToBase64url(buf) {
@@ -112,8 +142,7 @@ function randomChallenge() {
   (window.crypto || window.msCrypto).getRandomValues(arr);
   return arr;
 }
-// Enrolls this device's fingerprint/biometric sensor for a user. Returns the new
-// credential id (to store on the user record) or null if unsupported/cancelled/failed.
+// Enrolls this device's fingerprint sensor; returns a credential id or null.
 async function registerFingerprintCredential(user) {
   if (!webauthnSupported()) return null;
   try {
@@ -134,9 +163,7 @@ async function registerFingerprintCredential(user) {
     return null;
   }
 }
-// Prompts the device's fingerprint/biometric sensor and, on a match, returns the
-// corresponding user from the given list. Returns null if unsupported, cancelled,
-// no enrolled users, or no match.
+// Prompts fingerprint sign-in; returns the matching user or null.
 async function verifyFingerprintCredential(users) {
   if (!webauthnSupported()) return null;
   const enrolled = users.filter((u) => u.webauthnCredentialId);
@@ -198,8 +225,7 @@ function monthsFromStart(startDate, cap) {
 }
 function periodsForPlan(plan) {
   const start = plan.startDate || todayISO();
-  // Anchored to the plan's own start date (not just "today"), so the grid always
-  // reflects the actual timeline the person picked when they set the plan up.
+  // Anchored to the plan's start date, not today.
   if (plan.frequency === 'daily') return periodsFromStart(start, 1, 45);
   if (plan.frequency === 'weekly') return periodsFromStart(start, 7, 26);
   return monthsFromStart(start, 24);
@@ -238,8 +264,7 @@ function loanStatus(item, key) {
   if (daysFromToday(item.dueDate) <= 7) return 'due-soon';
   return 'active';
 }
-// Running-tab loans: a flowing list of borrow/payment entries for one contact,
-// summed as they go rather than tracked against a fixed principal + due date.
+// Running-tab loans: a flowing borrow/payment list per contact, not fixed principal.
 function tabEntryTotal(entries, type) {
   return (entries || []).filter((e) => e.type === type).reduce((s, e) => s + Number(e.amount || 0), 0);
 }
@@ -259,10 +284,7 @@ const CATEGORY_META = {
 function cyclePot(plan) { return Number(plan.amount || 0) * (plan.memberIds || []).length; }
 function cycleRoundsDone(plan) { return (plan.payouts || []).length; }
 function cycleComplete(plan) { return (plan.memberIds || []).length > 0 && cycleRoundsDone(plan) >= plan.memberIds.length; }
-// The order members receive their cycle payout in. Falls back to the order they were
-// added to the plan (memberIds) for plans with no custom order set yet. Any member no
-// longer on the plan is dropped, and any current member missing from the saved order
-// (just added) is appended at the end, so this always stays in sync with membership.
+// Cycle payout order; falls back to join order and stays in sync with membership.
 function cyclePayoutOrder(plan) {
   const saved = (plan.payoutOrder && plan.payoutOrder.length) ? plan.payoutOrder : (plan.memberIds || []);
   const kept = saved.filter((id) => (plan.memberIds || []).includes(id));
@@ -271,9 +293,7 @@ function cyclePayoutOrder(plan) {
 }
 function cycleCurrentRecipientId(plan) {
   if (cycleComplete(plan)) return null;
-  // The next recipient is simply the earliest person in the order who hasn't been paid
-  // yet — not a fixed array index — so reordering upcoming turns never disturbs who has
-  // already been paid, however many times the order has since changed.
+  // Next recipient = earliest unpaid person in the order, not a fixed index.
   const paidIds = new Set((plan.payouts || []).map((p) => p.memberId));
   return cyclePayoutOrder(plan).find((id) => !paidIds.has(id)) || null;
 }
@@ -378,12 +398,7 @@ function seedLoanTabs() {
 }
 
 const EXPENSE_CATEGORIES = ['Food', 'Transport', 'Rent', 'Utilities', 'Health', 'Business', 'Airtime/Data', 'Other'];
-// Used only for expenses paid in a currency other than your default (settings.currencySymbol).
-// There's no live exchange-rate lookup here (this app has no server/network calls of its
-// own) — the person enters the equivalent amount in their own currency by hand, and that
-// equivalent is what everything else in the app (budgets, stats, totals) actually uses.
-// The original amount/currency is kept only for display, so nothing else needs to know
-// multi-currency exists.
+// Manual currency conversion for non-default-currency expenses (no live FX lookup).
 const FOREIGN_CURRENCIES = [
   { code: 'USD', label: 'US Dollar (USD)', symbol: '$' },
   { code: 'GBP', label: 'British Pound (GBP)', symbol: '£' },
@@ -464,9 +479,7 @@ const THEME_PRESETS = [
 ];
 
 /* ============================== tax: rules, categories, parsing ============================== */
-// Nigeria Tax Act 2025 (effective 1 Jan 2026). Bands/rates/reliefs are current as of this
-// build — the law and NRS guidance can change, so treat computed figures as an estimate to
-// review, not a substitute for a qualified tax adviser or the official NRS filing portal.
+// Nigeria Tax Act 2025 bands/rates — estimate only, not tax advice.
 const PIT_BANDS = [
   { upTo: 800000, rate: 0 },
   { upTo: 3000000, rate: 0.15 },
@@ -497,8 +510,7 @@ function calcPIT(chargeableIncome) {
 function calcRentRelief(rentPaidAnnual) {
   return Math.min(500000, 0.2 * (Number(rentPaidAnnual) || 0));
 }
-// Small companies (turnover ≤ ₦100m AND fixed assets ≤ ₦250m) are fully exempt from CIT,
-// CGT and the Development Levy. Standard rate is 30% CIT + 4% Development Levy on assessable profit.
+// Small companies are CIT/CGT/levy-exempt; standard rate is 30% CIT + 4% levy.
 function calcCIT({ turnover, fixedAssets, assessableProfit }) {
   const isSmall = (Number(turnover) || 0) <= 100000000 && (Number(fixedAssets) || 0) <= 250000000;
   const profit = Math.max(0, Number(assessableProfit) || 0);
@@ -512,7 +524,7 @@ const TAX_INCOME_CATEGORIES = ['Salary / Employment Income', 'Business / Trading
 const TAX_DEDUCTION_CATEGORIES = ['Business Expense (deductible)', 'Rent Paid', 'Pension Contribution', 'NHF Contribution', 'Life Assurance Premium', 'Other Relief', 'Personal (non-deductible)'];
 const TAX_CATEGORIES = [...TAX_INCOME_CATEGORIES, ...TAX_DEDUCTION_CATEGORIES];
 
-// Best-effort guess only — always shown as editable so the person can correct it.
+// Best-effort guess only, always editable.
 function guessTaxCategory(description, amount) {
   const d = (description || '').toLowerCase();
   const isIn = Number(amount) >= 0;
@@ -528,7 +540,7 @@ function guessTaxCategory(description, amount) {
   return isIn ? 'Other Income' : 'Personal (non-deductible)';
 }
 
-// Splits a CSV/TSV/semicolon-delimited line respecting double-quoted fields.
+// Splits a delimited line, respecting quoted fields.
 function splitDelimitedLine(line, delim) {
   const out = [];
   let cur = '';
@@ -590,14 +602,7 @@ function matchHeader(header) {
   }
   return null;
 }
-// Accepts CSV/TSV/semicolon-delimited text exported from any bank and normalises it into
-// { date, description, amount } rows, where amount is signed (+ credit / − debit). Handles
-// three common statement layouts: separate Debit & Credit columns, a single signed/typed
-// Amount column, or an Amount column paired with a Dr/Cr Type column.
-// Core parser shared by every import source (CSV/TXT text, Excel sheets, PDF-extracted
-// lines). Takes an array of already-split rows (each an array of cell strings), where the
-// first row is expected to be the header row, and returns normalised { date, description,
-// amount } rows.
+// Normalises bank statement rows into { date, description, amount }, handling common layouts.
 function parseBankStatementRows(rows) {
   if (rows.length < 2) return { rows: [], errors: ['File looks empty or has no data rows.'] };
   const headerCells = (rows[0] || []).map((c) => (c === undefined || c === null) ? '' : String(c));
@@ -635,10 +640,7 @@ function parseBankStatementRows(rows) {
   return { rows: out, errors };
 }
 
-// Some downloaded statement exports (Excel especially) have a few banner/title rows —
-// bank name, account holder, statement period — above the real header row. Scan the first
-// handful of rows for one that actually yields a usable header + data, trying each in turn
-// as row 0.
+// Scans the first few rows for the real header (some exports have banner rows above it).
 function parseBankStatementRowsWithHeaderScan(rows, maxScan) {
   const limit = Math.min(maxScan || 15, Math.max(rows.length - 1, 0));
   let lastResult = { rows: [], errors: ['Could not find a Date and Description/Narration column.'] };
@@ -650,8 +652,7 @@ function parseBankStatementRowsWithHeaderScan(rows, maxScan) {
   return lastResult;
 }
 
-// Splits raw CSV/TSV/semicolon-delimited text into an array-of-arrays (one array per line),
-// auto-detecting the delimiter from the first line.
+// Splits raw delimited text into rows, auto-detecting the delimiter.
 function toRowsFromText(text) {
   const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
   if (lines.length === 0) return [];
@@ -661,8 +662,7 @@ function toRowsFromText(text) {
   return lines.map((l) => splitDelimitedLine(l, delim));
 }
 
-// Reads an Excel workbook (.xlsx/.xls). Tries every sheet for one that auto-parses cleanly;
-// if none do, hands back the largest sheet's raw rows so the person can map columns by hand.
+// Reads an Excel workbook, trying each sheet until one auto-parses cleanly.
 function excelRowsForImport(workbook) {
   let autoResult = null;
   let rawRows = [];
@@ -679,10 +679,7 @@ function excelRowsForImport(workbook) {
   return { autoResult: autoResult ? autoResult.result : null, rawRows: autoResult ? autoResult.rawRows : rawRows };
 }
 
-// Extracts each page's text from a PDF and reconstructs rows from the text items' on-page
-// positions — grouping items into lines by y-coordinate, ordering left-to-right, and
-// inserting a column break wherever there's a wide horizontal gap. Best-effort only: scanned
-// (image-only) PDFs have no extractable text and will come back empty.
+// Reconstructs table rows from a PDF's text-item positions. Empty for scanned PDFs.
 async function pdfRowsFromArrayBuffer(arrayBuffer) {
   const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   const lines = [];
@@ -720,10 +717,7 @@ async function pdfRowsFromArrayBuffer(arrayBuffer) {
   return lines.map((l) => splitDelimitedLine(l, '\t'));
 }
 
-// Fallback for scanned/image-only PDFs, where pdf.js finds no extractable text at all.
-// Renders each page to a canvas and runs it through OCR, then reconstructs rows from the
-// recognised words' bounding boxes the same way pdfRowsFromArrayBuffer does from real text
-// positions. Slow (real OCR, page by page) so this only runs when the person asks for it.
+// OCR fallback for scanned PDFs; slow, so only runs when requested.
 async function ocrPdfRows(arrayBuffer, onPageProgress) {
   const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   const lines = [];
@@ -772,9 +766,7 @@ async function ocrPdfRows(arrayBuffer, onPageProgress) {
   return { rawRows, autoResult };
 }
 
-// Builds rows using columns the person picked by hand — the fallback for statements the
-// auto-detector couldn't read (unfamiliar headers, or a PDF whose header row didn't survive
-// extraction cleanly). dataRows excludes whichever row was treated as the header.
+// Builds rows from manually-picked columns, for statements the auto-detector couldn't read.
 function buildRowsFromManualMap(dataRows, colMap) {
   const out = [];
   const errors = [];
@@ -806,12 +798,10 @@ function buildRowsFromManualMap(dataRows, colMap) {
 }
 
 /* ============================== app configuration ============================== */
-// The demo account (below) is always view-only — no data it shows can be edited or saved.
-// This is the key someone must enter on the "Sign up" tab to create a real, writable
-// account. Change this string to whatever key you want to require.
+// Access key required to sign up for a real (non-demo) account.
 const SIGNUP_ACCESS_KEY = '12345678';
 const DEMO_EMAIL = 'demo@pocketledger.ng';
-// Shown on the "Contact developer" link on the sign-up screen, and in Settings — edit with your own details.
+// Contact-developer details shown on sign-up and in Settings.
 const DEVELOPER_CONTACT = {
   company: 'VersaX CS Global Services',
   developer: 'Morris Okereke',
@@ -835,10 +825,9 @@ function loadStoredData() {
     return null;
   }
 }
-// Sessions are intentionally NOT restored across refresh/close — login is always
-// required. Clear out any session saved by an older version of the app.
+// Sessions aren't restored across refresh/close; clear any old saved session.
 try { window.localStorage.removeItem(SESSION_KEY); } catch (err) {}
-// Read once when the script loads, avoids re-parsing localStorage on every render.
+// Read once at load, not on every render.
 const PERSISTED = loadStoredData();
 
 /* ============================== small components ============================== */
@@ -956,7 +945,7 @@ function AddTabEntryRow({ onAdd }) {
     </div>
   );
 }
-// Shared by every full-screen modal so Escape always closes whichever one is open.
+// Shared by every modal so Escape closes whichever is open.
 function useEscClose(onClose) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -968,8 +957,7 @@ function Modal({ title, onClose, children }) {
   useEscClose(onClose);
   const bodyRef = useRef(null);
   useEffect(() => {
-    // Move focus into the form as soon as it mounts, so keyboard users land
-    // straight in the first field instead of on the page behind the modal.
+    // Move focus into the form on mount, for keyboard users.
     const t = setTimeout(() => {
       const el = bodyRef.current && bodyRef.current.querySelector('input, select, textarea, button');
       if (el) el.focus();
@@ -989,8 +977,7 @@ function Modal({ title, onClose, children }) {
   );
 }
 
-// Self-styled so it renders correctly wherever it's used — the sign-up screen
-// (before the main stylesheet loads) or inside Settings (after login).
+// Self-styled so it renders correctly before the main stylesheet loads too.
 function ContactDeveloperCard() {
   const c = DEVELOPER_CONTACT;
   const cleanPhone = (c.phone || '').replace(/[^\d+]/g, '');
@@ -1452,7 +1439,7 @@ function TaxReturnDocModal({ taxReturn, settings, fmt, onClose, onMarkFiled }) {
                 <div className="receipt-row" style={{ fontWeight: 700 }}><span>Assessable profit</span><span className="kb-mono">{fmt(taxReturn.assessableProfit)}</span></div>
                 <div className="receipt-divider" />
                 {taxReturn.isSmallCompany ? (
-                  <div className="panel-sub">Small company (turnover ≤ ₦100,000,000 and fixed assets ≤ ₦250,000,000) — exempt from Companies Income Tax, Capital Gains Tax and the Development Levy.</div>
+                  <div className="panel-sub">Small company — exempt from CIT, CGT and the Development Levy.</div>
                 ) : (
                   <>
                     <div className="receipt-row"><span>Companies Income Tax (30%)</span><span className="kb-mono">{fmt(taxReturn.taxPayable)}</span></div>
@@ -1478,10 +1465,7 @@ function TaxReturnDocModal({ taxReturn, settings, fmt, onClose, onMarkFiled }) {
   );
 }
 
-// Each step optionally names a `module` and `tab` to navigate to before it is shown
-// (see the activeModule/activeTab sync effect in App), so the tour can walk all the
-// way into a section's individual screens and controls, not just point at the home
-// card. Steps with no `module` are shown on the home screen.
+// Each step can name a module/tab to navigate to before showing, for deep tour steps.
 const TOUR_STEPS = [
   // ---- Thrift ----
   { target: 'home-card-thrift', title: 'Thrift', body: 'Run daily, weekly, monthly, rotating-cycle or savings-target plans, and track every contributor on a simple tap grid. Let\u2019s look inside.' },
@@ -1539,21 +1523,12 @@ function TourOverlay({ step, onNext, onBack, onClose }) {
   useEffect(() => {
     let raf = null;
     lastRef.current = null;
-    // Reset per step, so every new target gets its own one-time scroll-into-view
-    // check below rather than reusing the previous step's result.
+    // Reset per step for a fresh scroll-into-view check.
     scrolledRef.current = false;
     const measure = () => {
-      // Re-queried fresh every time (never cached across steps or renders), so a
-      // highlight can never carry over to the wrong element — if the target for
-      // this step isn't in the DOM (e.g. mid re-render after data changes, or the
-      // module/tab switch for this step hasn't painted yet), we simply show no
-      // box rather than a stale one from a previous step; the loop below picks it
-      // up automatically on a later frame once it appears.
+      // Re-queried every time; shows no box if the target isn't in the DOM yet.
       const el = document.querySelector(`[data-tour="${info.target}"]`);
-      // A target can be scrolled inside a clipped, scrollable panel (the tap
-      // grid, a long settings page, a member list, ...) and sit outside the
-      // visible area. Bring it into view once per step instead of leaving the
-      // highlight box clipped or off-screen.
+      // Bring a scrolled-away target into view once per step.
       if (el && !scrolledRef.current) {
         scrolledRef.current = true;
         const r0 = el.getBoundingClientRect();
@@ -1643,11 +1618,15 @@ function AuthScreen({ users, onLogin, onSignup, flash }) {
   // (if this device has one enrolled) so the person can unlock without touching
   // the keyboard at all. Only tried once per screen visit — cancelling or failing
   // just leaves the normal email/password form and the button below available.
+  // WebAuthn is rejected outright if the document isn't focused yet, which is
+  // common right after opening a fresh tab/PWA — so wait for focus first instead
+  // of firing immediately (that's what made the prompt seem to vanish).
   useEffect(() => {
-    if (!autoFpTried.current && mode === 'login' && fingerprintAvailable) {
-      autoFpTried.current = true;
-      handleFingerprintLogin();
-    }
+    if (autoFpTried.current || mode !== 'login' || !fingerprintAvailable) return;
+    const tryNow = () => { if (!autoFpTried.current) { autoFpTried.current = true; handleFingerprintLogin(); } };
+    if (document.hasFocus()) { tryNow(); return; }
+    window.addEventListener('focus', tryNow, { once: true });
+    return () => window.removeEventListener('focus', tryNow);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, fingerprintAvailable]);
 
@@ -1732,7 +1711,7 @@ function AuthScreen({ users, onLogin, onSignup, flash }) {
             </div>
             <div className="auth-field"><label>Access key</label>
               <input className="auth-input" value={fields.accessKey} onChange={(e) => set('accessKey', e.target.value)} placeholder="Enter your access key" />
-              <div className="auth-field-hint">Required to create a new account. This clears the sample demo data and gives you a fresh, empty ledger.</div>
+              <div className="auth-field-hint">Required for signup. Clears demo data for a fresh ledger.</div>
             </div>
           </>
         )}
@@ -1958,8 +1937,7 @@ function App() {
   const [activeModule, setActiveModule] = useState('home');
   const [preAuthWelcomeSeen, setPreAuthWelcomeSeen] = useState(false);
 
-  // The signed-in user is browsing the built-in, view-only demo account: every write
-  // path below is blocked (see guardWrite) so the sample data can never be changed.
+  // Demo account is view-only; guardWrite blocks every write path below.
   const isReadOnly = currentUser?.isDemo === true;
   const guardWrite = () => {
     if (isReadOnly) {
@@ -1985,9 +1963,7 @@ function App() {
   const [taxImports, setTaxImportsRaw] = useState(() => (PERSISTED && PERSISTED.taxImports) || []);
   const [taxReturns, setTaxReturnsRaw] = useState(() => (PERSISTED && PERSISTED.taxReturns) || []);
 
-  // Guarded setters — every one of these is a no-op (with a flash message) while
-  // browsing the read-only demo account. All existing call sites below keep using
-  // these same names, so every write path is covered automatically.
+  // Guarded setters: no-op with a flash message on the read-only demo account.
   const setUsers = (updater) => { if (guardWrite()) return; setUsersRaw(updater); };
   const setMembers = (updater) => { if (guardWrite()) return; setMembersRaw(updater); };
   const setPlans = (updater) => { if (guardWrite()) return; setPlansRaw(updater); };
@@ -2034,6 +2010,7 @@ function App() {
   const [tabStatementDoc, setTabStatementDoc] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [toast, setToast] = useState('');
+  const [confirmDialog, setConfirmDialog] = useState(null); // { message, confirmLabel, danger, onConfirm }
   const [taxYearFilter, setTaxYearFilter] = useState(new Date().getFullYear());
   const [taxSourceFilter, setTaxSourceFilter] = useState('All');
   const [taxImportSourceName, setTaxImportSourceName] = useState('');
@@ -2053,7 +2030,7 @@ function App() {
     e.target.value = '';
   };
 
-  // ---------- auto-save to localStorage (survives refresh & PWA updates) ----------
+  // ---------- auto-save to localStorage ----------
   useEffect(() => {
     const payload = {
       savedAt: new Date().toISOString(),
@@ -2067,7 +2044,7 @@ function App() {
     }
   }, [users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs, expenses, budgets, clients, invoices, receipts, settings, taxTransactions, taxImports, taxReturns]);
 
-  // ---------- auto-log recurring expenses (rent, subscriptions, etc.) for the current month ----------
+  // ---------- auto-log recurring expenses for the current month ----------
   useEffect(() => {
     if (!currentUser || isReadOnly) return;
     const thisMonth = todayISO().slice(0, 7);
@@ -2103,6 +2080,10 @@ function App() {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     toastTimerRef.current = setTimeout(() => setToast(''), 3200);
   };
+  // In-app replacement for window.confirm; onConfirm runs only if confirmed.
+  const askConfirm = (message, onConfirm, opts) => {
+    setConfirmDialog({ message, onConfirm, confirmLabel: (opts && opts.confirmLabel) || 'Delete', danger: !opts || opts.danger !== false });
+  };
   const digitsOnly = (s) => (s || '').replace(/\D/g, '');
   const waHref = (phone, text) => {
     const digits = digitsOnly(phone);
@@ -2124,13 +2105,12 @@ function App() {
   const [form, setForm] = useState({});
   const modalInitialRef = useRef({});
   const openModal = (type, initial = {}) => { setModal(type); setForm(initial); modalInitialRef.current = initial; };
-  // Used right after a save succeeds — no need to ask, the data is already safe.
+  // Used right after a successful save; no need to ask.
   const closeModalSilently = () => { setModal(null); setForm({}); };
-  // Used when the person dismisses the modal themselves (X, backdrop, Escape, back
-  // button) — warns if they'd lose typed input that was never saved.
+  // Used on manual dismiss; warns about losing unsaved input.
   const closeModal = () => {
     const isDirty = modal && JSON.stringify(form) !== JSON.stringify(modalInitialRef.current);
-    if (isDirty && !window.confirm('Discard unsaved changes?')) return;
+    if (isDirty) { askConfirm('Discard unsaved changes?', closeModalSilently, { confirmLabel: 'Discard' }); return; }
     closeModalSilently();
   };
   const setField = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -2143,8 +2123,7 @@ function App() {
   const exitTimerRef = useRef(null);
   const pageSnapshot = (mod, tab, planId) => ({ kb: true, module: mod, tab, planId: planId || null });
 
-  // Establish (once per login) a base "Welcome" history entry so the very first
-  // back-press, once the user has drilled anywhere, has something to land on.
+  // One-time "Welcome" history entry so the first back-press has somewhere to land.
   useEffect(() => {
     if (currentUser && !historyInitedRef.current) {
       historyInitedRef.current = true;
@@ -2153,21 +2132,20 @@ function App() {
     if (!currentUser) historyInitedRef.current = false;
   }, [currentUser]);
 
-  // Push a new history entry for every page-level move (module, tab, or
-  // drilled-into plan), so back/swipe-back can step through them one at a time.
+  // Push a history entry per page-level move, for back/swipe-back.
   useEffect(() => {
     if (!currentUser || !historyInitedRef.current) return;
     if (isRestoringRef.current) { isRestoringRef.current = false; return; }
     window.history.pushState(pageSnapshot(activeModule, activeTab, selectedPlanId), '');
   }, [activeModule, activeTab, selectedPlanId]);
 
-  // Handle the hardware/gesture back button and browser back navigation.
+  // Handle hardware/gesture back and browser back navigation.
   useEffect(() => {
     const handlePopState = (e) => {
       if (!currentUser) return;
       const overlayOpen = !!(modal || invoiceDoc || receipt || paymentReceiptDoc);
       if (overlayOpen) {
-        // First priority: back closes whatever's open, without also leaving the page.
+        // Back closes whatever's open first, without leaving the page.
         closeAllOverlays();
         window.history.pushState(pageSnapshot(activeModule, activeTab, selectedPlanId), '');
         return;
@@ -2359,11 +2337,14 @@ function App() {
     if (guardWrite()) return;
     if (!form.name) { flash('Enter a name.'); return; }
     const dup = members.some((m) => m.name.trim().toLowerCase() === form.name.trim().toLowerCase());
-    if (dup && !window.confirm(`A contributor named "${form.name.trim()}" already exists. Add another one anyway?`)) return;
-    const member = { id: uid(), name: form.name, phone: form.phone || '' };
-    setMembers((m) => [...m, member]);
-    setSelectedMemberId(member.id);
-    closeModalSilently();
+    const finish = () => {
+      const member = { id: uid(), name: form.name, phone: form.phone || '' };
+      setMembers((m) => [...m, member]);
+      setSelectedMemberId(member.id);
+      closeModalSilently();
+    };
+    if (dup) { askConfirm(`A contributor named "${form.name.trim()}" already exists. Add another one anyway?`, finish, { confirmLabel: 'Add anyway', danger: false }); return; }
+    finish();
   };
   const submitNewLoanGiven = () => {
     if (guardWrite()) return;
@@ -2391,8 +2372,7 @@ function App() {
   };
   const handleLogin = (user) => { setCurrentUser(user); setActiveModule('home'); setActiveTab('home'); flash(`Welcome back, ${user.name.split(' ')[0]}.`); };
   const handleSignup = (user) => {
-    // Creating a real account replaces the demo account entirely and wipes every
-    // piece of sample/demo data, so the new account starts with a clean, empty ledger.
+    // Signup replaces the demo account and wipes all sample data.
     setUsersRaw([user]);
     setMembersRaw([]); setPlansRaw([]); setContributionsRaw([]);
     setLoansGivenRaw([]); setLoansReceivedRaw([]); setLoanContactsRaw([]); setLoanTabsRaw([]);
@@ -2451,15 +2431,16 @@ function App() {
     if (guardWrite()) return;
     if (!form.name) { flash('Enter a client name.'); return; }
     const dup = clients.some((c) => c.name.trim().toLowerCase() === form.name.trim().toLowerCase());
-    if (dup && !window.confirm(`A client named "${form.name.trim()}" already exists. Add another one anyway?`)) return;
-    const client = { id: uid(), name: form.name, phone: form.phone || '', email: form.email || '', address: form.address || '' };
-    setClients((c) => [...c, client]);
-    closeModalSilently();
-    flash('Client added.');
+    const finish = () => {
+      const client = { id: uid(), name: form.name, phone: form.phone || '', email: form.email || '', address: form.address || '' };
+      setClients((c) => [...c, client]);
+      closeModalSilently();
+      flash('Client added.');
+    };
+    if (dup) { askConfirm(`A client named "${form.name.trim()}" already exists. Add another one anyway?`, finish, { confirmLabel: 'Add anyway', danger: false }); return; }
+    finish();
   };
-  // Numbers are tracked against a persisted counter (settings.invoiceCounter), not just
-  // "highest number currently in the list" — otherwise deleting the newest invoice would
-  // free up its number and the next one created would collide with it.
+  // Tracked via a persisted counter, not "highest in list", to avoid number reuse.
   const nextInvoiceNumber = () => {
     const fromData = invoices.map((i) => Number((i.number || '').replace(/\D/g, '')) || 0);
     const base = Math.max(settings.invoiceCounter || 1000, fromData.length ? Math.max(...fromData) : 1000);
@@ -2518,26 +2499,29 @@ function App() {
   };
   const deleteReceipt = (receiptId) => {
     if (guardWrite()) return;
-    if (!window.confirm('Delete this receipt? This cannot be undone.')) return;
-    setReceipts((prev) => prev.filter((r) => r.id !== receiptId));
+    askConfirm('Delete this receipt? This cannot be undone.', () => {
+      setReceipts((prev) => prev.filter((r) => r.id !== receiptId));
+    });
   };
   const deleteInvoice = (invoiceId) => {
     if (guardWrite()) return;
-    if (!window.confirm('Delete this invoice? This cannot be undone.')) return;
-    setInvoices((prev) => prev.filter((i) => i.id !== invoiceId));
+    askConfirm('Delete this invoice? This cannot be undone.', () => {
+      setInvoices((prev) => prev.filter((i) => i.id !== invoiceId));
+    });
   };
   const deletePlan = (planId) => {
     if (guardWrite()) return;
     const plan = planById(planId);
     if (!plan) return;
-    if (!window.confirm(`Delete "${plan.name}"? This also removes its contribution history. This cannot be undone.`)) return;
-    setPlans((prev) => prev.filter((p) => p.id !== planId));
-    setContributions((prev) => prev.filter((c) => c.planId !== planId));
-    if (selectedPlanId === planId) {
-      const next = plans.find((p) => p.id !== planId);
-      setSelectedPlanId(next ? next.id : null);
-    }
-    flash('Plan deleted.');
+    askConfirm(`Delete "${plan.name}"? This also removes its contribution history. This cannot be undone.`, () => {
+      setPlans((prev) => prev.filter((p) => p.id !== planId));
+      setContributions((prev) => prev.filter((c) => c.planId !== planId));
+      if (selectedPlanId === planId) {
+        const next = plans.find((p) => p.id !== planId);
+        setSelectedPlanId(next ? next.id : null);
+      }
+      flash('Plan deleted.');
+    });
   };
   const deleteMember = (memberId) => {
     if (guardWrite()) return;
@@ -2549,15 +2533,16 @@ function App() {
     if (alreadyPaidOnCycle.length) {
       warning += ` Note: they already received a payout on "${alreadyPaidOnCycle[0].name}" — removing them shortens how many rounds that cycle needs to complete.`;
     }
-    if (!window.confirm(`Delete ${member.name}? This also removes their contribution history.${warning} This cannot be undone.`)) return;
-    setMembers((prev) => prev.filter((m) => m.id !== memberId));
-    setContributions((prev) => prev.filter((c) => c.memberId !== memberId));
-    setPlans((prev) => prev.map((p) => ({ ...p, memberIds: p.memberIds.filter((id) => id !== memberId) })));
-    if (selectedMemberId === memberId) {
-      const next = members.find((m) => m.id !== memberId);
-      setSelectedMemberId(next ? next.id : null);
-    }
-    flash('Contributor deleted.');
+    askConfirm(`Delete ${member.name}? This also removes their contribution history.${warning} This cannot be undone.`, () => {
+      setMembers((prev) => prev.filter((m) => m.id !== memberId));
+      setContributions((prev) => prev.filter((c) => c.memberId !== memberId));
+      setPlans((prev) => prev.map((p) => ({ ...p, memberIds: p.memberIds.filter((id) => id !== memberId) })));
+      if (selectedMemberId === memberId) {
+        const next = members.find((m) => m.id !== memberId);
+        setSelectedMemberId(next ? next.id : null);
+      }
+      flash('Contributor deleted.');
+    });
   };
   const deleteClient = (clientId) => {
     if (guardWrite()) return;
@@ -2565,21 +2550,24 @@ function App() {
     if (!client) return;
     const clientInvoices = invoices.filter((i) => i.clientId === clientId);
     const warning = clientInvoices.length ? ` They have ${clientInvoices.length} invoice(s) on file — those will stay, just no longer linked to a client.` : '';
-    if (!window.confirm(`Delete ${client.name}?${warning} This cannot be undone.`)) return;
-    setClients((prev) => prev.filter((c) => c.id !== clientId));
-    flash('Client deleted.');
+    askConfirm(`Delete ${client.name}?${warning} This cannot be undone.`, () => {
+      setClients((prev) => prev.filter((c) => c.id !== clientId));
+      flash('Client deleted.');
+    });
   };
   const deleteLoanGiven = (loanId) => {
     if (guardWrite()) return;
-    if (!window.confirm('Delete this loan record? This cannot be undone.')) return;
-    setLoansGiven((prev) => prev.filter((l) => l.id !== loanId));
-    flash('Loan record deleted.');
+    askConfirm('Delete this loan record? This cannot be undone.', () => {
+      setLoansGiven((prev) => prev.filter((l) => l.id !== loanId));
+      flash('Loan record deleted.');
+    });
   };
   const deleteLoanReceived = (loanId) => {
     if (guardWrite()) return;
-    if (!window.confirm('Delete this loan record? This cannot be undone.')) return;
-    setLoansReceived((prev) => prev.filter((l) => l.id !== loanId));
-    flash('Loan record deleted.');
+    askConfirm('Delete this loan record? This cannot be undone.', () => {
+      setLoansReceived((prev) => prev.filter((l) => l.id !== loanId));
+      flash('Loan record deleted.');
+    });
   };
 
   const recordCyclePayout = (planId) => {
@@ -2611,9 +2599,7 @@ function App() {
     } : p));
     flash(`${plan.name} — new cycle started. Round 1 of ${plan.memberIds.length} begins today.`);
   };
-  // Moves a member up/down within the cycle's payout order (dir: -1 up, +1 down). Safe
-  // to call regardless of whether that member has already been paid — position among
-  // already-paid members has no effect, since cycleCurrentRecipientId always skips them.
+  // Moves a member up/down in payout order (dir: -1 up, +1 down); safe if already paid.
   const movePayoutOrder = (planId, memberId, dir) => {
     if (guardWrite()) return;
     setPlans((prev) => prev.map((p) => {
@@ -2672,13 +2658,15 @@ function App() {
   };
   const deleteTabEntry = (tabId, entryId) => {
     if (guardWrite()) return;
-    if (!window.confirm('Delete this entry? This cannot be undone.')) return;
-    setLoanTabs((prev) => prev.map((t) => t.id === tabId ? { ...t, entries: t.entries.filter((e) => e.id !== entryId) } : t));
+    askConfirm('Delete this entry? This cannot be undone.', () => {
+      setLoanTabs((prev) => prev.map((t) => t.id === tabId ? { ...t, entries: t.entries.filter((e) => e.id !== entryId) } : t));
+    });
   };
   const deleteLoanTab = (tabId) => {
     if (guardWrite()) return;
-    if (!window.confirm('Delete this whole IOU and its entries? This cannot be undone.')) return;
-    setLoanTabs((prev) => prev.filter((t) => t.id !== tabId));
+    askConfirm('Delete this whole IOU and its entries? This cannot be undone.', () => {
+      setLoanTabs((prev) => prev.filter((t) => t.id !== tabId));
+    });
   };
   const loanContactById = (id) => loanContacts.find((c) => c.id === id);
   const submitEditLoanTab = () => {
@@ -2719,8 +2707,9 @@ function App() {
   };
   const deleteExpense = (expenseId) => {
     if (guardWrite()) return;
-    if (!window.confirm('Delete this expense? This cannot be undone.')) return;
-    setExpenses((prev) => prev.filter((e) => e.id !== expenseId));
+    askConfirm('Delete this expense? This cannot be undone.', () => {
+      setExpenses((prev) => prev.filter((e) => e.id !== expenseId));
+    });
   };
   const budgetForCategory = (category) => budgets.find((b) => b.category === category);
   const submitBudget = () => {
@@ -2736,18 +2725,15 @@ function App() {
   };
   const deleteBudget = (budgetId) => {
     if (guardWrite()) return;
-    if (!window.confirm('Remove this budget? This cannot be undone.')) return;
-    setBudgets((prev) => prev.filter((b) => b.id !== budgetId));
+    askConfirm('Remove this budget? This cannot be undone.', () => {
+      setBudgets((prev) => prev.filter((b) => b.id !== budgetId));
+    });
   };
 
   /* ---------- Tax: import, consolidate, edit, calculate, file ---------- */
   const triggerTaxImport = () => taxFileInputRef.current && taxFileInputRef.current.click();
   const emptyColMap = () => ({ date: '', description: '', mode: 'amount', amount: '', debit: '', credit: '', type: '' });
-  // Reads every selected file (CSV/TXT, Excel, or PDF), auto-detects its date/description/
-  // amount columns, and stages the result for review. Files the auto-detector can't read
-  // are kept with their raw rows so the person can map columns by hand instead of failing
-  // outright. Selecting several files at once (one per bank/month) all land in the same
-  // review list.
+  // Reads each file, auto-detects columns, and stages the result for review.
   const handleTaxFileSelected = async (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
@@ -2799,8 +2785,7 @@ function App() {
     e.target.value = '';
   };
   const removeTaxImportEntry = (id) => setTaxImportBatch((prev) => prev.filter((entry) => entry.id !== id));
-  // OCR is slow (real image recognition, page by page) so it only runs when the person
-  // explicitly asks for it on a specific file, rather than automatically for every PDF.
+  // OCR is slow, so it only runs when explicitly requested per file.
   const runOcrOnEntry = async (id) => {
     const entry = taxImportBatch.find((en) => en.id === id);
     if (!entry || !entry.sourceFile) return;
@@ -2828,8 +2813,7 @@ function App() {
   const updateEntryColMap = (id, field, value) => {
     setTaxImportBatch((prev) => prev.map((entry) => entry.id === id ? { ...entry, colMap: { ...entry.colMap, [field]: value } } : entry));
   };
-  // Recomputes an entry's rows using the columns the person picked by hand, for files the
-  // auto-detector couldn't read.
+  // Recomputes rows from manually-picked columns.
   const applyManualMapping = (id) => {
     setTaxImportBatch((prev) => prev.map((entry) => {
       if (entry.id !== id) return entry;
@@ -2849,9 +2833,7 @@ function App() {
       return { ...entry, rows, errors, needsMapping: rows.length === 0 };
     }));
   };
-  // Commits every entry in the review list that has readable rows into the ledger, each as
-  // its own import batch (so each file can still be removed individually afterwards).
-  // Entries still needing a column mapping, or with no readable rows, are left in the list.
+  // Commits readable entries into the ledger, one import batch per file.
   const confirmTaxImportBatch = () => {
     if (guardWrite()) return;
     const ready = taxImportBatch.filter((entry) => entry.rows.length > 0);
@@ -2876,9 +2858,7 @@ function App() {
     flash(`Imported ${totalAdded} transaction(s) from ${ready.length} file(s).`);
     setTaxImportSourceName('');
   };
-  // Brings expenses already logged in the Expense & Budgeting tracker into the tax ledger,
-  // so the two don't have to be kept in sync by hand. Re-running it only pulls in expenses
-  // that haven't been brought over yet, so it's safe to press again after logging more.
+  // Pulls expenses into the tax ledger; safe to re-run, only pulls in new ones.
   const importFromExpenseTracker = () => {
     if (guardWrite()) return;
     if (expenses.length === 0) { flash('No expenses logged yet in Expense & Budgeting.'); return; }
@@ -2900,12 +2880,12 @@ function App() {
   };
   const removeTaxImportRecord = (batchId) => {
     if (guardWrite()) return;
-    if (!window.confirm('Remove this import batch and every transaction it added? This cannot be undone.')) return;
-    setTaxTransactions((prev) => prev.filter((t) => t.batchId !== batchId));
-    setTaxImports((prev) => prev.filter((b) => b.id !== batchId));
+    askConfirm('Remove this import batch and every transaction it added? This cannot be undone.', () => {
+      setTaxTransactions((prev) => prev.filter((t) => t.batchId !== batchId));
+      setTaxImports((prev) => prev.filter((b) => b.id !== batchId));
+    });
   };
-  // Downloadable copies of the consolidated ledger — handy for handing to an accountant
-  // or for your own records alongside the in-app filing tools.
+  // Downloadable copies of the consolidated ledger.
   const exportTaxLedgerCsv = (rows, year) => {
     if (rows.length === 0) { flash('Nothing to export for this filter.'); return; }
     const header = ['Date', 'Source', 'Description', 'Category', 'Amount'].join(',');
@@ -2935,8 +2915,9 @@ function App() {
   };
   const deleteTaxTxn = (id) => {
     if (guardWrite()) return;
-    if (!window.confirm('Delete this transaction? This cannot be undone.')) return;
-    setTaxTransactions((prev) => prev.filter((t) => t.id !== id));
+    askConfirm('Delete this transaction? This cannot be undone.', () => {
+      setTaxTransactions((prev) => prev.filter((t) => t.id !== id));
+    });
   };
   const submitNewTaxTxn = () => {
     if (guardWrite()) return;
@@ -3021,8 +3002,9 @@ function App() {
   };
   const deleteTaxReturn = (id) => {
     if (guardWrite()) return;
-    if (!window.confirm('Delete this tax return? This cannot be undone.')) return;
-    setTaxReturns((prev) => prev.filter((r) => r.id !== id));
+    askConfirm('Delete this tax return? This cannot be undone.', () => {
+      setTaxReturns((prev) => prev.filter((r) => r.id !== id));
+    });
   };
 
   /* ---------- thrift member loans (from a plan's pool) ---------- */
@@ -3057,8 +3039,9 @@ function App() {
   };
   const deletePlanMemberLoan = (planId, loanId) => {
     if (guardWrite()) return;
-    if (!window.confirm('Delete this loan record? This cannot be undone.')) return;
-    setPlans((prev) => prev.map((p) => p.id === planId ? { ...p, memberLoans: (p.memberLoans || []).filter((ml) => ml.id !== loanId) } : p));
+    askConfirm('Delete this loan record? This cannot be undone.', () => {
+      setPlans((prev) => prev.map((p) => p.id === planId ? { ...p, memberLoans: (p.memberLoans || []).filter((ml) => ml.id !== loanId) } : p));
+    });
   };
 
   /* ---------- import / export ---------- */
@@ -3077,19 +3060,34 @@ function App() {
     flash('Backup downloaded.');
   };
   // ---------- backup folder (File System Access API) ----------
-  // Lets a person point PocketLedger at a folder on their machine that a cloud service
-  // (Google Drive for Desktop, Dropbox, OneDrive, etc.) keeps in sync — so backups land in
-  // the cloud automatically without any Anthropic/PocketLedger server or account in between.
-  // Only Chrome/Edge/Opera support this API today; the handle itself only lives for this
-  // browser tab, so it needs reconnecting after a refresh (the browser re-asks for
-  // permission rather than silently writing files on your disk).
+  // Folder handle is kept in IndexedDB (idbGetHandle/idbSetHandle, defined above) so it
+  // survives reloads/PWA updates — without this, backupDirHandle reset to null on every
+  // fresh load and writes silently no-op.
   const [backupDirHandle, setBackupDirHandle] = useState(null);
   const [backupDirName, setBackupDirName] = useState('');
   const backupFolderSupported = typeof window !== 'undefined' && !!window.showDirectoryPicker;
+  // On mount, reload any previously-connected folder and re-check its permission.
+  // queryPermission doesn't need a user gesture, so this can restore silently when
+  // still granted; if it's back to 'prompt' the panel shows a reconnect button instead.
+  useEffect(() => {
+    if (!backupFolderSupported) return;
+    (async () => {
+      try {
+        const handle = await idbGetHandle();
+        if (!handle) return;
+        const perm = await handle.queryPermission({ mode: 'readwrite' });
+        if (perm === 'granted') { setBackupDirHandle(handle); setBackupDirName(handle.name); }
+        else { setBackupDirName(handle.name); }
+      } catch (err) {
+        console.warn('PocketLedger: could not restore connected backup folder.', err);
+      }
+    })();
+  }, []);
   const connectBackupFolder = async () => {
     if (!backupFolderSupported) { flash('Your browser doesn\u2019t support connecting a folder — try Chrome, Edge or Opera, or use the manual export instead.'); return; }
     try {
       const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      await idbSetHandle(handle);
       setBackupDirHandle(handle);
       setBackupDirName(handle.name);
       flash(`Connected to "${handle.name}". Backups will be written here too.`);
@@ -3097,7 +3095,20 @@ function App() {
       if (err && err.name !== 'AbortError') { console.warn('PocketLedger: could not connect backup folder.', err); flash('Could not connect that folder.'); }
     }
   };
-  const disconnectBackupFolder = () => { setBackupDirHandle(null); setBackupDirName(''); };
+  const reconnectBackupFolder = async () => {
+    if (!backupDirName) return connectBackupFolder();
+    try {
+      const handle = await idbGetHandle();
+      if (!handle) return connectBackupFolder();
+      const req = await handle.requestPermission({ mode: 'readwrite' });
+      if (req === 'granted') { setBackupDirHandle(handle); setBackupDirName(handle.name); flash(`Reconnected to "${handle.name}".`); }
+      else { flash('Permission was not granted for that folder.'); }
+    } catch (err) {
+      console.warn('PocketLedger: could not reconnect backup folder.', err);
+      flash('Could not reconnect that folder — try connecting again.');
+    }
+  };
+  const disconnectBackupFolder = () => { setBackupDirHandle(null); setBackupDirName(''); idbClearHandle(); };
   const writeBackupToFolder = async (fileName, payload) => {
     if (!backupDirHandle) return false;
     try {
@@ -3175,24 +3186,25 @@ function App() {
       try {
         const data = JSON.parse(reader.result);
         if (!data.members || !data.plans) throw new Error('Not a recognised PocketLedger backup file.');
-        if (!window.confirm('Import this backup? This replaces all current data on this device with what\'s in the file.')) { e.target.value = ''; return; }
-        setMembers(data.members || []);
-        setPlans(data.plans || []);
-        setContributions(data.contributions || []);
-        setLoansGiven(data.loansGiven || []);
-        setLoansReceived(data.loansReceived || []);
-        setLoanContacts(data.loanContacts || []);
-        setLoanTabs(data.loanTabs || []);
-        setExpenses(data.expenses || []);
-        setBudgets(data.budgets || []);
-        setClients(data.clients || []);
-        setInvoices(data.invoices || []);
-        setReceipts(data.receipts || []);
-        setTaxTransactions(data.taxTransactions || []);
-        setTaxImports(data.taxImports || []);
-        setTaxReturns(data.taxReturns || []);
-        if (data.settings) setSettings((s) => ({ ...s, ...data.settings }));
-        flash('Backup imported successfully.');
+        askConfirm('Import this backup? This replaces all current data on this device with what\'s in the file.', () => {
+          setMembers(data.members || []);
+          setPlans(data.plans || []);
+          setContributions(data.contributions || []);
+          setLoansGiven(data.loansGiven || []);
+          setLoansReceived(data.loansReceived || []);
+          setLoanContacts(data.loanContacts || []);
+          setLoanTabs(data.loanTabs || []);
+          setExpenses(data.expenses || []);
+          setBudgets(data.budgets || []);
+          setClients(data.clients || []);
+          setInvoices(data.invoices || []);
+          setReceipts(data.receipts || []);
+          setTaxTransactions(data.taxTransactions || []);
+          setTaxImports(data.taxImports || []);
+          setTaxReturns(data.taxReturns || []);
+          if (data.settings) setSettings((s) => ({ ...s, ...data.settings }));
+          flash('Backup imported successfully.');
+        }, { confirmLabel: 'Import' });
       } catch (err) {
         flash('Could not read that file — is it a PocketLedger backup?');
       }
@@ -3202,28 +3214,30 @@ function App() {
   };
   const resetSampleData = () => {
     if (guardWrite()) return;
-    if (!window.confirm('This replaces everything with the original sample data. Continue?')) return;
-    const p = seedPlans();
-    setMembers(seedMembers());
-    setPlans(p);
-    setContributions(seedContributions(p));
-    setLoansGiven(seedLoansGiven());
-    setLoansReceived(seedLoansReceived());
-    setLoanContacts(seedLoanContacts());
-    setLoanTabs(seedLoanTabs());
-    setExpenses(seedExpenses());
-    setBudgets(seedBudgets());
-    setClients(seedClients());
-    setInvoices(seedInvoices());
-    setReceipts(seedReceipts());
-    setSettings((s) => { const { invoiceCounter, receiptCounter, ...rest } = s; return rest; });
-    flash('Sample data restored.');
+    askConfirm('This replaces everything with the original sample data. Continue?', () => {
+      const p = seedPlans();
+      setMembers(seedMembers());
+      setPlans(p);
+      setContributions(seedContributions(p));
+      setLoansGiven(seedLoansGiven());
+      setLoansReceived(seedLoansReceived());
+      setLoanContacts(seedLoanContacts());
+      setLoanTabs(seedLoanTabs());
+      setExpenses(seedExpenses());
+      setBudgets(seedBudgets());
+      setClients(seedClients());
+      setInvoices(seedInvoices());
+      setReceipts(seedReceipts());
+      setSettings((s) => { const { invoiceCounter, receiptCounter, ...rest } = s; return rest; });
+      flash('Sample data restored.');
+    }, { confirmLabel: 'Reset', danger: false });
   };
   const clearAllData = () => {
     if (guardWrite()) return;
-    if (!window.confirm('This deletes every plan, contributor, loan, client, invoice and receipt. This cannot be undone. Continue?')) return;
-    setMembers([]); setPlans([]); setContributions([]); setLoansGiven([]); setLoansReceived([]); setLoanContacts([]); setLoanTabs([]); setExpenses([]); setBudgets([]); setClients([]); setInvoices([]); setReceipts([]);
-    flash('All data cleared.');
+    askConfirm('This deletes every plan, contributor, loan, client, invoice and receipt. This cannot be undone. Continue?', () => {
+      setMembers([]); setPlans([]); setContributions([]); setLoansGiven([]); setLoansReceived([]); setLoanContacts([]); setLoanTabs([]); setExpenses([]); setBudgets([]); setClients([]); setInvoices([]); setReceipts([]);
+      flash('All data cleared.');
+    }, { confirmLabel: 'Clear everything' });
   };
 
   /* ---------- WhatsApp messages ---------- */
@@ -3716,9 +3730,7 @@ function App() {
     );
   };
 
-  // Groups every loan by the person's name, so someone with several concurrent
-  // loans (or loans taken at different times) shows as one person with a rolled-up
-  // total, and each individual loan keeps its own separate repayment trail.
+  // Groups loans by person, rolled up but keeping each loan's own repayment trail.
   const groupLoans = (list, personField, key) => {
     const dateField = personField === 'borrower' ? 'dateGiven' : 'dateReceived';
     const rank = { overdue: 0, 'due-soon': 1, active: 2, completed: 3 };
@@ -3872,7 +3884,7 @@ function App() {
         <SectionHeader eyebrow="IOUs" title="Running IOUs"
           action={<button className="btn btn-primary" data-tour="loans-tabs-new" onClick={() => openModal('newLoanTab', { contactMode: loanContacts.length ? 'existing' : 'new' })}><Plus size={16} /> New IOU</button>} />
         <div className="field-hint" style={{ marginBottom: 14 }}>
-          An IOU is for informal, back-and-forth borrowing with one person — money goes back and forth over time and the balance is just the running sum, rather than a single fixed loan with a due date.
+          Informal back-and-forth borrowing with one person — balance is just the running sum.
         </div>
         <SearchBox className="loan-search" placeholder="Search by name…" value={loanTabSearch} onChange={setLoanTabSearch} />
         {loanTabs.length === 0 ? <EmptyState text="No IOUs yet — start one for anyone you lend to or borrow from casually." /> : filtered.length === 0 ? <EmptyState text="No match found." /> : (
@@ -4256,10 +4268,10 @@ function App() {
         <div className="panel">
           <div className="panel-title">How this works</div>
           <div className="panel-sub" style={{ lineHeight: 1.6 }}>
-            1. Import statements from each of your banks in <strong>Import</strong> — CSV, Excel or PDF exports all work, we auto-detect the columns.<br />
-            1b. In the same tab, one tap brings in everything already logged in <strong>Expense &amp; Budgeting</strong>, so you don't have to re-enter it.<br />
-            2. Review and tag every line in <strong>Ledger</strong> — income, deductible expenses, or personal/non-taxable.<br />
-            3. Calculate a return in <strong>Returns</strong> for a personal (PIT) or company (CIT) filing, then download or print it.
+            1. Import bank statements in <strong>Import</strong> — CSV, Excel or PDF.<br />
+            2. Or pull in everything from <strong>Expense &amp; Budgeting</strong>, one tap.<br />
+            3. Tag each line in <strong>Ledger</strong> as income, deductible, or non-taxable.<br />
+            4. Calculate and file a return in <strong>Returns</strong>.
           </div>
         </div>
         <div className="panel" style={{ marginTop: 16 }}>
@@ -4291,8 +4303,7 @@ function App() {
       <div className="panel">
         <div className="panel-title">Add a statement</div>
         <div className="panel-sub" style={{ marginBottom: 12 }}>
-          Works with CSV, Excel (.xlsx/.xls) or PDF exports from any bank or fintech — GTBank, Access, Zenith, UBA, First Bank, Opay, Kuda, Moniepoint and more.
-          We auto-detect the date, description and amount columns, whatever the bank calls them. PDF statements are read from the text in the file; if a PDF turns out to be scanned/image-only, you'll get an option to try OCR instead (slower, but works page by page).
+          Works with CSV, Excel or PDF exports from any bank. Columns are auto-detected; scanned PDFs can use OCR instead.
         </div>
         <div className="field"><label>Bank / account name</label>
           <input className="kb-input" value={taxImportSourceName} onChange={(e) => setTaxImportSourceName(e.target.value)} placeholder="e.g. GTBank — Current Account" />
@@ -4333,7 +4344,7 @@ function App() {
                   ) : entry.isPdf && entry.looksScanned && !entry.ocrAttempted ? (
                     <>
                       <div className="field-hint" style={{ marginBottom: 10 }}>
-                        This looks like a scanned PDF — no text could be extracted directly. You can try reading it with OCR instead (slower, works through the file page by page).
+                        Scanned PDF, no extractable text. Try OCR instead (slower).
                       </div>
                       <button className="btn btn-secondary btn-small" onClick={() => runOcrOnEntry(entry.id)} disabled={entry.ocrRunning}>
                         <FileText size={14} /> {entry.ocrRunning ? (entry.ocrProgress || 'Reading with OCR…') : 'Try OCR'}
@@ -4587,8 +4598,8 @@ function App() {
             <label>Fingerprint sign-in (this device)</label>
             <div className="panel-sub">
               {currentUser.webauthnCredentialId
-                ? 'Enabled — unlock PocketLedger on this device with your fingerprint or face instead of typing your password.'
-                : 'Use this device\u2019s fingerprint or face sensor to sign in instead of typing your password. This only applies to this device.'}
+                ? 'Enabled on this device.'
+                : 'Sign in with this device\u2019s fingerprint or face sensor instead of a password.'}
             </div>
           </div>
           <div className="field" style={{ flex: '0 0 auto', alignSelf: 'flex-end' }}>
@@ -4606,7 +4617,7 @@ function App() {
           <div className="panel-title">Business & receipt details</div>
           <div className="field"><label>Business / ledger name</label>
             <input className="kb-input" value={settings.businessName} onChange={(e) => setSettings((s) => ({ ...s, businessName: e.target.value }))} placeholder="Only needed for Payments & Thrift receipts" />
-            <div className="field-hint">Only required if you use the Payment Portal (invoices/receipts) or share Thrift receipts — loan tracking works fine without it.</div>
+            <div className="field-hint">Only needed for the Payment Portal or Thrift receipts.</div>
           </div>
           <div className="field"><label>Your name (shown on receipts)</label>
             <input className="kb-input" value={settings.ownerName} onChange={(e) => setSettings((s) => ({ ...s, ownerName: e.target.value }))} placeholder="Optional" />
@@ -4619,7 +4630,7 @@ function App() {
               <input className="kb-input" value={settings.countryCode} onChange={(e) => setSettings((s) => ({ ...s, countryCode: e.target.value.replace(/\D/g, '') }))} placeholder="234" />
             </div>
           </div>
-          <div className="panel-sub">Used to normalise phone numbers (e.g. 0803… → {settings.countryCode}803…) when opening WhatsApp share links.</div>
+          <div className="panel-sub">Normalises phone numbers for WhatsApp share links.</div>
         </div>
 
         <div className="panel" data-tour="settings-theme">
@@ -4651,7 +4662,7 @@ function App() {
               <span className="dm-switch-knob"><Moon size={11} /></span>
             </button>
           </div>
-          <div className="panel-sub">Easier on the eyes at night — swaps the app to a dark background everywhere except printable receipts.</div>
+          <div className="panel-sub">Dark background everywhere except printable receipts.</div>
         </div>
       </div>
 
@@ -4693,14 +4704,14 @@ function App() {
             <div className="field"><label>Account name</label>
               <input className="kb-input" value={settings.accountName} onChange={(e) => setSettings((s) => ({ ...s, accountName: e.target.value }))} placeholder="Defaults to business name" />
             </div>
-            <div className="panel-sub">These bank details print on every invoice and shared receipt so clients know exactly where to pay.</div>
+            <div className="panel-sub">Prints on every invoice and shared receipt.</div>
           </div>
         </div>
       </div>
 
       <div className="panel" style={{ marginTop: 16 }} data-tour="settings-backup">
         <div className="panel-title">Data & backups</div>
-        <div className="panel-sub" style={{ marginBottom: 12 }}>Everything is saved automatically to this device's storage, so it's still here after you refresh, close the app, or install an update. Export a backup regularly to move data to another device or keep an extra copy.</div>
+        <div className="panel-sub" style={{ marginBottom: 12 }}>Saved automatically to this device. Export regularly to keep a copy elsewhere.</div>
         <div className="settings-actions">
           <button className="btn btn-primary" onClick={exportBackup}><Download size={15} /> Export full backup (JSON)</button>
           <button className="btn btn-secondary" onClick={triggerImport}><Upload size={15} /> Import backup</button>
@@ -4709,8 +4720,8 @@ function App() {
         <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--paper-line)' }}>
           <label>Back up to a synced folder</label>
           <div className="panel-sub" style={{ marginBottom: 10 }}>
-            Point this at a folder your computer already keeps in the cloud — a Google Drive, Dropbox or OneDrive sync folder — and backups write straight there instead of your Downloads folder. There's no PocketLedger account or server involved; the file only ever moves between this browser and the folder you pick.
-            {!backupFolderSupported && ' Your current browser doesn\u2019t support this — it works in Chrome, Edge and Opera.'}
+            Point this at a Google Drive, Dropbox or OneDrive sync folder, and backups write straight there.
+            {!backupFolderSupported && ' Needs Chrome, Edge or Opera.'}
           </div>
           {backupDirHandle ? (
             <div className="settings-actions">
@@ -4718,10 +4729,16 @@ function App() {
               <button className="btn btn-outline btn-small" onClick={backupNowToFolder}><Download size={13} /> Back up now</button>
               <button className="btn btn-ghost btn-small" onClick={disconnectBackupFolder}>Disconnect</button>
             </div>
+          ) : backupDirName ? (
+            <div className="settings-actions">
+              <span className="panel-sub" style={{ display: 'flex', alignItems: 'center', gap: 6 }}><AlertTriangle size={14} style={{ color: 'var(--gold)' }} /> <strong>{backupDirName}</strong> needs permission again</span>
+              <button className="btn btn-outline btn-small" onClick={reconnectBackupFolder}><Link2 size={13} /> Reconnect</button>
+              <button className="btn btn-ghost btn-small" onClick={disconnectBackupFolder}>Forget</button>
+            </div>
           ) : (
             <button className="btn btn-outline" onClick={connectBackupFolder} disabled={!backupFolderSupported}><Link2 size={15} /> Connect a folder</button>
           )}
-          <div className="field-hint" style={{ marginTop: 8 }}>The connection only lasts for this browser tab — reconnect after a refresh or a new session. Automatic backups below will use this folder whenever it's connected, and fall back to a normal download otherwise.</div>
+          <div className="field-hint" style={{ marginTop: 8 }}>Remembered across sessions; reconnect if the browser asks. Falls back to a normal download otherwise.</div>
         </div>
         <div className="settings-actions" style={{ marginTop: 18 }}>
           <button className="btn btn-outline" onClick={resetSampleData}><RotateCcw size={15} /> Restore sample data</button>
@@ -4732,8 +4749,8 @@ function App() {
             <label>Automatic backups</label>
             <div className="panel-sub">
               {settings.autoBackupEnabled
-                ? `On — a fresh backup file downloads automatically ${settings.autoBackupFrequency} when you open the app${settings.lastAutoBackupAt ? `. Last one: ${new Date(settings.lastAutoBackupAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}.`
-                : 'Off — turn this on to have a backup file download on its own on a schedule, without needing to remember.'}
+                ? `On — backs up ${settings.autoBackupFrequency}${settings.lastAutoBackupAt ? `. Last: ${new Date(settings.lastAutoBackupAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}.`
+                : 'Off — back up automatically on a schedule.'}
             </div>
           </div>
           <div className="field" style={{ flex: '0 0 auto', alignSelf: 'flex-end' }}>
@@ -4774,7 +4791,7 @@ function App() {
 
       <div className="panel" style={{ marginTop: 16 }}>
         <div className="panel-title">Session</div>
-        <div className="panel-sub" style={{ marginBottom: 12 }}>Signed in as <strong>{currentUser.email}</strong> on this device. Your data stays saved here — signing out just locks the app until you log back in.</div>
+        <div className="panel-sub" style={{ marginBottom: 12 }}>Signed in as <strong>{currentUser.email}</strong>. Signing out just locks the app.</div>
         <div className="settings-actions">
           <button className="btn btn-outline" onClick={handleLogout}><LogOut size={15} /> Sign out</button>
         </div>
@@ -4829,9 +4846,7 @@ function App() {
     thrift: ['Thrift contributions'], loans: ['Loans given', 'Loans received'], payments: ['Payments'], spending: ['Expense & Budgeting'], tax: [],
   };
 
-  // Drives the guided tour into each individual section instead of only pointing
-  // at the home cards: every time the tour step changes, jump the app to that
-  // step's module/tab first so TourOverlay's target can actually be on screen.
+  // Jumps to each tour step's module/tab first, so its target is on screen.
   useEffect(() => {
     if (tourStep === null) return;
     const info = TOUR_STEPS[tourStep];
@@ -5048,6 +5063,7 @@ function App() {
         .empty-state{padding:26px 10px;text-align:center;color:var(--ink-soft);font-size:13px;}
         .modal-backdrop{position:fixed;inset:0;background:rgba(27,42,74,0.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;}
         .modal-card{background:var(--paper);border-radius:14px;width:100%;max-width:460px;max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.25);}
+        .confirm-card{max-width:380px;}
         .modal-head{display:flex;justify-content:space-between;align-items:center;padding:18px 22px;border-bottom:1px solid var(--paper-line);}
         .modal-head h3{margin:0;font-size:18px;}
         .icon-btn{background:none;border:none;cursor:pointer;color:var(--ink-soft);}
@@ -5292,6 +5308,28 @@ function App() {
             <button type="button" className="toast-close" onClick={() => setToast('')} aria-label="Dismiss"><X size={13} /></button>
           </div>
         )}
+      {confirmDialog && (
+        <div className="modal-backdrop" onClick={() => setConfirmDialog(null)}>
+          <div className="modal-card confirm-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h3 className="kb-display">{confirmDialog.danger ? 'Are you sure?' : 'Please confirm'}</h3>
+              <button className="icon-btn" onClick={() => setConfirmDialog(null)} title="Close" aria-label="Close"><X size={18} /></button>
+            </div>
+            <div className="modal-body">
+              <p className="panel-sub" style={{ marginBottom: 22, lineHeight: 1.5 }}>{confirmDialog.message}</p>
+              <div className="settings-actions">
+                <button
+                  className={confirmDialog.danger ? 'btn btn-danger' : 'btn btn-primary'}
+                  onClick={() => { const fn = confirmDialog.onConfirm; setConfirmDialog(null); fn && fn(); }}
+                >
+                  {confirmDialog.danger ? <Trash2 size={15} /> : <CheckCircle2 size={15} />} {confirmDialog.confirmLabel}
+                </button>
+                <button className="btn btn-outline" onClick={() => setConfirmDialog(null)}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {tourStep !== null && (
         <TourOverlay step={tourStep} onNext={tourNext} onBack={tourBack} onClose={() => { setTourStep(null); goHome(); }} />
       )}
@@ -5909,9 +5947,7 @@ root.render(<App />);
 <script>
 if ('serviceWorker' in navigator) {
     let swRefreshing = false;
-    // When a new service worker takes control (after an update), reload once
-    // to pick up the new version. Your data lives in localStorage, not in the
-    // page, so this refresh never loses anything you've entered.
+    // Reload once when a new service worker takes control, to pick up the update.
     navigator.serviceWorker.addEventListener('controllerchange', () => {
         if (swRefreshing) return;
         swRefreshing = true;
@@ -5920,7 +5956,7 @@ if ('serviceWorker' in navigator) {
 
     window.addEventListener('load', () => {
         navigator.serviceWorker.register('./sw.js', { scope: './' }).then((reg) => {
-            // Check for a newer service worker right away, then periodically.
+            // Check for updates right away, then periodically.
             reg.update();
             setInterval(() => reg.update(), 60 * 60 * 1000);
         }).catch((err) => {
