@@ -1804,7 +1804,16 @@ function SplashScreen({ onFinish }) {
     <div className="splash-screen" onClick={onFinish} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onFinish(); }}>
       <style>{`
         .splash-screen{position:fixed;inset:0;background:#FFFFFF;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;cursor:pointer;overflow:hidden;}
-        .splash-bg-logo{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-6deg);opacity:0.05;pointer-events:none;}
+        .splash-bg-decor{position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none;}
+        .splash-bg-decor .decor-icon{position:absolute;animation:splashFloat 5s ease-in-out infinite;}
+        .splash-bg-logo-wrap{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);}
+        .splash-bg-logo{position:relative;top:0;left:0;--r:-6deg;transform:rotate(-6deg);opacity:0.05;animation-delay:0s;}
+        .splash-decor-thrift{top:8%;left:-30px;width:120px;height:120px;color:rgba(31,122,92,0.35);--r:-14deg;transform:rotate(-14deg);animation-delay:.2s;}
+        .splash-decor-loans{top:58%;right:-40px;width:140px;height:140px;color:rgba(47,75,124,0.32);--r:11deg;transform:rotate(11deg);animation-delay:.9s;}
+        .splash-decor-payment{bottom:-30px;left:8%;width:120px;height:120px;color:rgba(183,138,46,0.32);--r:9deg;transform:rotate(9deg);animation-delay:1.6s;}
+        .splash-decor-spending{top:-20px;right:12%;width:96px;height:96px;color:rgba(166,67,45,0.3);--r:-9deg;transform:rotate(-9deg);animation-delay:.5s;}
+        .splash-decor-tax{bottom:16%;right:6%;width:80px;height:80px;color:rgba(74,58,138,0.28);--r:12deg;transform:rotate(12deg);animation-delay:1.2s;}
+        @keyframes splashFloat{0%,100%{transform:translateY(0) rotate(var(--r,0deg));opacity:0.9;}50%{transform:translateY(-14px) rotate(var(--r,0deg));opacity:0.55;}}
         .splash-logo-mark{position:relative;width:160px;height:160px;display:flex;align-items:center;justify-content:center;}
         .splash-logo-mark svg{width:100%;height:100%;}
         .splash-logo-mark rect{animation:splashLoadBar 1.4s ease-in-out infinite;}
@@ -1817,7 +1826,14 @@ function SplashScreen({ onFinish }) {
         .splash-name{position:relative;font-family:'Fraunces',serif;font-size:24px;font-weight:600;color:#1B2A4A;letter-spacing:.01em;}
         .splash-desc{position:relative;margin-top:8px;font-size:11px;color:#8B8578;letter-spacing:.02em;text-align:center;padding:0 24px;}
       `}</style>
-      <div className="splash-bg-logo"><AppLogo size={420} iconOnly /></div>
+      <div className="splash-bg-decor" aria-hidden="true">
+        <div className="splash-bg-logo-wrap"><div className="decor-icon splash-bg-logo"><AppLogo size={420} iconOnly /></div></div>
+        <PiggyBank className="decor-icon splash-decor-thrift" strokeWidth={1} />
+        <HandCoins className="decor-icon splash-decor-loans" strokeWidth={1} />
+        <Wallet className="decor-icon splash-decor-payment" strokeWidth={1} />
+        <CreditCard className="decor-icon splash-decor-spending" strokeWidth={1} />
+        <Landmark className="decor-icon splash-decor-tax" strokeWidth={1} />
+      </div>
       <div className="splash-logo-mark"><AppLogo size={160} iconOnly barColor="var(--steel)" /></div>
       <div className="splash-bottom">
         <div className="splash-name">PocketLedger</div>
