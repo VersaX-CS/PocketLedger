@@ -484,11 +484,12 @@ function seedCreditNotes() {
   return [];
 }
 function invoiceStatusOf(inv) {
+  if (inv.status === 'void') return 'void';
   if (inv.status === 'paid') return 'paid';
   if (inv.status === 'draft') return 'draft';
   return daysFromToday(inv.dueDate) < 0 ? 'overdue' : 'sent';
 }
-const INVOICE_STATUS_LABEL = { paid: 'Paid', draft: 'Draft', overdue: 'Overdue', sent: 'Awaiting payment' };
+const INVOICE_STATUS_LABEL = { paid: 'Paid', draft: 'Draft', overdue: 'Overdue', sent: 'Awaiting payment', void: 'Void' };
 const THEME_PRESETS = [
   { id: 'navy', label: 'Navy', color: '#1B2A4A' },
   { id: 'forest', label: 'Forest', color: '#1F5C3F' },
@@ -1359,9 +1360,10 @@ function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, s
   );
 }
 
-function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, shareToWhatsApp, shareImageToWhatsApp, message, receipts, creditNotes, onIssueCreditNote, onOpenCreditNote }) {
+function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, shareToWhatsApp, shareImageToWhatsApp, message, receipts, creditNotes, onIssueCreditNote, onOpenCreditNote, onEditInvoice, onIssueInvoice, onVoidInvoice, onRestoreInvoice }) {
   useEscClose(onClose);
   const status = invoiceStatusOf(invoice);
+  const voided = status === 'void';
   const total = invoiceTotal(invoice);
   const issuedOn = new Date(invoice.issueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   const dueOn = new Date(invoice.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -1389,7 +1391,8 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
           <button className="icon-btn" onClick={onClose} title="Close" aria-label="Close"><X size={18} /></button>
         </div>
         <div className="modal-body">
-          <div className="receipt-sheet" id="receipt-print-area">
+          <div className="receipt-sheet" id="receipt-print-area" style={voided ? { position: 'relative' } : undefined}>
+            {voided && <div className="doc-void-watermark">VOID</div>}
             <DocHeader settings={settings} />
             <div className="doc-title-row">
               <div>
@@ -1402,6 +1405,12 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
                 {client?.address && <div className="doc-title-meta" style={{ textAlign: 'right' }}>{client.address}</div>}
               </div>
             </div>
+            {(status === 'draft' || voided) && (
+              <div className="doc-line" style={{ marginBottom: 4 }}>
+                <span><Stamp status={voided ? 'overdue' : 'due-soon'} label={voided ? 'Void' : 'Draft'} /></span>
+                {voided && <span className="kb-mono">{invoice.voidedAt ? new Date(invoice.voidedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}</span>}
+              </div>
+            )}
             <div>
               {invoice.items.map((it) => (
                 <div key={it.id} className="doc-line"><span>{it.desc || 'Item'} ({it.qty} &times; {fmt(it.price)})</span><span className="kb-mono">{fmt(it.qty * it.price)}</span></div>
@@ -1440,8 +1449,12 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
             </div>
           )}
           <div className="receipt-actions">
-            {status !== 'paid' && <button className="btn btn-secondary btn-small" onClick={() => onMarkPaid(invoice.id)}><CheckCircle2 size={14} /> Mark as paid</button>}
-            <button className="btn btn-outline btn-small" onClick={() => onIssueCreditNote(invoice)}><FileMinus size={14} /> Issue credit note</button>
+            {status === 'draft' && <button className="btn btn-outline btn-small" onClick={() => onEditInvoice(invoice)}><Edit3 size={14} /> Edit</button>}
+            {status === 'draft' && <button className="btn btn-secondary btn-small" onClick={() => onIssueInvoice(invoice.id)}><Send size={14} /> Issue invoice</button>}
+            {status !== 'paid' && status !== 'draft' && status !== 'void' && <button className="btn btn-secondary btn-small" onClick={() => onMarkPaid(invoice.id)}><CheckCircle2 size={14} /> Mark as paid</button>}
+            {(status === 'sent' || status === 'overdue') && <button className="btn btn-outline btn-small" onClick={() => onVoidInvoice(invoice.id)}><Ban size={14} /> Void invoice</button>}
+            {status === 'void' && <button className="btn btn-secondary btn-small" onClick={() => onRestoreInvoice(invoice.id)}><RotateCcw size={14} /> Restore</button>}
+            {status !== 'draft' && status !== 'void' && <button className="btn btn-outline btn-small" onClick={() => onIssueCreditNote(invoice)}><FileMinus size={14} /> Issue credit note</button>}
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
             <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(client?.phone, message, `${invoice.number}.png`)}><MessageCircle size={14} /> Share image on WhatsApp</button>
@@ -1452,12 +1465,13 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
   );
 }
 
-function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClose, shareToWhatsApp, shareImageToWhatsApp }) {
+function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClose, shareToWhatsApp, shareImageToWhatsApp, onEditReceipt, onIssueReceipt }) {
   useEscClose(onClose);
   const payerName = client ? client.name : (receiptDoc.clientName || 'Walk-in customer');
   const payerPhone = client ? client.phone : '';
   const issuedOn = new Date(receiptDoc.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   const voided = !!receiptDoc.voided;
+  const draft = !voided && receiptDoc.status === 'draft';
 
   const message = [
     `*${settings.businessName}*${settings.rcNumber ? ` (RC ${settings.rcNumber})` : ''}`, '',
@@ -1501,10 +1515,10 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
                 <div className="doc-billed-name">{payerName}</div>
               </div>
             </div>
-            {voided && (
+            {(voided || draft) && (
               <div className="doc-line" style={{ marginBottom: 4 }}>
-                <span><Stamp status="overdue" label="Voided" /></span>
-                <span className="kb-mono">{receiptDoc.voidedAt ? new Date(receiptDoc.voidedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}</span>
+                <span><Stamp status={voided ? 'overdue' : 'due-soon'} label={voided ? 'Voided' : 'Draft'} /></span>
+                {voided && <span className="kb-mono">{receiptDoc.voidedAt ? new Date(receiptDoc.voidedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}</span>}
               </div>
             )}
             <div>
@@ -1526,6 +1540,8 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
             <DocFooter settings={settings} />
           </div>
           <div className="receipt-actions">
+            {draft && <button className="btn btn-outline btn-small" onClick={() => onEditReceipt(receiptDoc)}><Edit3 size={14} /> Edit</button>}
+            {draft && <button className="btn btn-secondary btn-small" onClick={() => onIssueReceipt(receiptDoc.id)}><Send size={14} /> Issue receipt</button>}
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
             <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(payerPhone, message, `${receiptDoc.receiptNo}.png`)}><MessageCircle size={14} /> Share image on WhatsApp</button>
@@ -2793,7 +2809,7 @@ function App() {
   const cyclePlansCount = plans.filter((p) => p.category === 'Cycle' && !cycleComplete(p)).length;
   const totalInvoiced = invoices.reduce((s, i) => s + invoiceTotal(i), 0);
   const totalReceived = receipts.filter((r) => !r.voided).reduce((s, r) => s + r.amount, 0);
-  const totalOutstanding = invoices.filter((i) => i.status !== 'paid').reduce((s, i) => s + invoiceNetTotal(i), 0);
+  const totalOutstanding = invoices.filter((i) => i.status !== 'paid' && i.status !== 'draft' && i.status !== 'void').reduce((s, i) => s + invoiceNetTotal(i), 0);
   const totalSpent = expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
   const spentThisMonth = expenses.filter((e) => e.date.slice(0, 7) === todayISO().slice(0, 7)).reduce((s, e) => s + Number(e.amount || 0), 0);
   const spendByCategory = useMemo(() => {
@@ -3029,7 +3045,9 @@ function App() {
   const addInvoiceItem = () => setForm((f) => ({ ...f, items: [...(f.items || []), { id: uid(), desc: '', qty: 1, price: '' }] }));
   const updateInvoiceItem = (itemId, key, value) => setForm((f) => ({ ...f, items: (f.items || []).map((it) => it.id === itemId ? { ...it, [key]: value } : it) }));
   const removeInvoiceItem = (itemId) => setForm((f) => ({ ...f, items: (f.items || []).filter((it) => it.id !== itemId) }));
-  const submitNewInvoice = () => {
+  // asIssue=true issues the invoice immediately (status 'sent'); otherwise it's saved as
+  // an editable draft that hasn't gone out to the client yet.
+  const submitNewInvoice = (asIssue) => {
     if (guardWrite()) return;
     if (!form.clientId || !(form.items || []).length) { flash('Pick a client and add at least one item.'); return; }
     // "Add new client…" lets you invoice someone not yet in Clients without leaving the
@@ -3049,16 +3067,58 @@ function App() {
         newClientSaved = true;
       }
     }
+    // Editing an existing draft updates it in place instead of creating a new invoice.
+    if (form.editingInvoiceId) {
+      const updated = {
+        ...invoices.find((i) => i.id === form.editingInvoiceId),
+        clientId, issueDate: form.issueDate || todayISO(), dueDate: form.dueDate || todayISO(),
+        items: form.items, notes: form.notes || '',
+        status: asIssue ? 'sent' : 'draft',
+      };
+      setInvoices((prev) => prev.map((i) => i.id === form.editingInvoiceId ? updated : i));
+      closeModalSilently();
+      flash(asIssue ? 'Invoice issued.' : 'Draft invoice updated.');
+      setInvoiceDoc(updated);
+      return;
+    }
     const invoice = {
       id: uid(), number: form.number || nextInvoiceNumber(), clientId,
       issueDate: form.issueDate || todayISO(), dueDate: form.dueDate || todayISO(),
-      items: form.items, status: 'sent', notes: form.notes || '', paidDate: null,
+      items: form.items, status: asIssue ? 'sent' : 'draft', notes: form.notes || '', paidDate: null,
     };
     setInvoices((i) => [invoice, ...i]);
     setSettings((s) => ({ ...s, invoiceCounter: Math.max(s.invoiceCounter || 1000, Number((invoice.number || '').replace(/\D/g, '')) || 0) }));
     closeModalSilently();
-    flash(newClientSaved ? 'Invoice created — new client saved.' : 'Invoice created.');
+    flash(newClientSaved ? (asIssue ? 'Invoice issued — new client saved.' : 'Draft invoice saved — new client saved.') : (asIssue ? 'Invoice issued.' : 'Draft invoice saved.'));
     setInvoiceDoc(invoice);
+  };
+  // Opens the invoice modal pre-filled for editing — only ever offered while the
+  // invoice is still a draft, since issued invoices are locked.
+  const editInvoice = (inv) => {
+    openModal('newInvoice', {
+      editingInvoiceId: inv.id, number: inv.number, clientId: inv.clientId,
+      issueDate: inv.issueDate, dueDate: inv.dueDate,
+      items: (inv.items || []).map((it) => ({ ...it })), notes: inv.notes || '',
+    });
+  };
+  const issueInvoice = (invoiceId) => {
+    if (guardWrite()) return;
+    setInvoices((prev) => prev.map((i) => i.id === invoiceId ? { ...i, status: 'sent' } : i));
+    flash('Invoice issued.');
+  };
+  // Voiding keeps the invoice on record but marks it cancelled — nothing is edited or
+  // erased, so the original figures stay intact for audit purposes.
+  const voidInvoice = (invoiceId) => {
+    if (guardWrite()) return;
+    askConfirm('Void this invoice? It stays on record as cancelled — nothing is deleted, and you can restore it later.', () => {
+      setInvoices((prev) => prev.map((i) => i.id === invoiceId ? { ...i, status: 'void', voidedAt: todayISO() } : i));
+      flash('Invoice voided.');
+    }, { confirmLabel: 'Void invoice', danger: true });
+  };
+  const restoreInvoice = (invoiceId) => {
+    if (guardWrite()) return;
+    setInvoices((prev) => prev.map((i) => i.id === invoiceId ? { ...i, status: 'sent', voidedAt: null } : i));
+    flash('Invoice restored.');
   };
   const nextReceiptNumber = () => {
     const fromData = receipts.map((r) => Number((r.receiptNo || '').replace(/\D/g, '')) || 0);
@@ -3084,20 +3144,23 @@ function App() {
   const markInvoicePaid = (invoiceId) => {
     if (guardWrite()) return;
     const invoice = invoices.find((i) => i.id === invoiceId);
+    if (invoice && (invoice.status === 'draft' || invoice.status === 'void')) { flash(invoice.status === 'draft' ? 'Issue this invoice before marking it paid.' : 'This invoice is void.'); return; }
     setInvoices((prev) => prev.map((i) => i.id === invoiceId ? { ...i, status: 'paid', paidDate: todayISO() } : i));
     if (invoice) {
       const rcpt = {
         id: uid(), receiptNo: nextReceiptNumber(), invoiceId: invoice.id, clientId: invoice.clientId,
         clientName: '', amount: invoiceNetTotal(invoice),
         items: (invoice.items || []).map((it) => ({ id: uid(), desc: it.desc, qty: it.qty, price: it.price })),
-        date: todayISO(), note: `Payment for invoice ${invoice.number}`,
+        date: todayISO(), note: `Payment for invoice ${invoice.number}`, status: 'issued',
       };
       setReceipts((r) => [rcpt, ...r]);
       setSettings((s) => ({ ...s, receiptCounter: Math.max(s.receiptCounter || 2000, Number((rcpt.receiptNo || '').replace(/\D/g, '')) || 0) }));
     }
     flash('Invoice marked as paid — receipt generated.');
   };
-  const submitManualReceipt = () => {
+  // asIssue=true issues the receipt immediately (status 'issued'); otherwise it's saved
+  // as an editable draft that hasn't been handed to the payer yet.
+  const submitManualReceipt = (asIssue) => {
     if (guardWrite()) return;
     if (!form.clientId && !form.clientName) { flash('Pick a client or type a payer name.'); return; }
     const items = (form.items || []).filter((it) => it.desc || it.qty || it.price);
@@ -3120,16 +3183,45 @@ function App() {
         newClientSaved = true;
       }
     }
+    // Editing an existing draft updates it in place instead of creating a new receipt.
+    if (form.editingReceiptId) {
+      const updated = {
+        ...receipts.find((r) => r.id === form.editingReceiptId),
+        invoiceId: form.invoiceId || null, clientId, clientName: '',
+        amount, items, date: form.date || todayISO(), note: form.note || '',
+        status: asIssue ? 'issued' : 'draft',
+      };
+      setReceipts((prev) => prev.map((r) => r.id === form.editingReceiptId ? updated : r));
+      closeModalSilently();
+      flash(asIssue ? 'Receipt issued.' : 'Draft receipt updated.');
+      setPaymentReceiptDoc(updated);
+      return;
+    }
     const rcpt = {
       id: uid(), receiptNo: form.receiptNo || nextReceiptNumber(), invoiceId: form.invoiceId || null,
       clientId, clientName: '',
       amount, items, date: form.date || todayISO(), note: form.note || '',
+      status: asIssue ? 'issued' : 'draft',
     };
     setReceipts((r) => [rcpt, ...r]);
     setSettings((s) => ({ ...s, receiptCounter: Math.max(s.receiptCounter || 2000, Number((rcpt.receiptNo || '').replace(/\D/g, '')) || 0) }));
     closeModalSilently();
-    flash(newClientSaved ? 'Receipt issued — new client saved.' : 'Receipt issued.');
+    flash(newClientSaved ? (asIssue ? 'Receipt issued — new client saved.' : 'Draft receipt saved — new client saved.') : (asIssue ? 'Receipt issued.' : 'Draft receipt saved.'));
     setPaymentReceiptDoc(rcpt);
+  };
+  // Opens the receipt modal pre-filled for editing — only ever offered while the
+  // receipt is still a draft, since issued receipts are locked.
+  const editReceipt = (r) => {
+    openModal('newReceipt', {
+      editingReceiptId: r.id, receiptNo: r.receiptNo, invoiceId: r.invoiceId || '',
+      clientId: r.clientId || '', clientName: r.clientName || '',
+      items: (r.items || []).map((it) => ({ ...it })), amount: r.amount, date: r.date, note: r.note || '',
+    });
+  };
+  const issueReceipt = (receiptId) => {
+    if (guardWrite()) return;
+    setReceipts((prev) => prev.map((r) => r.id === receiptId ? { ...r, status: 'issued' } : r));
+    flash('Receipt issued.');
   };
   const deleteReceipt = (receiptId) => {
     if (guardWrite()) return;
@@ -3141,6 +3233,8 @@ function App() {
   // cancelled, so the original figures stay intact for audit purposes.
   const voidReceipt = (receiptId) => {
     if (guardWrite()) return;
+    const receipt = receipts.find((r) => r.id === receiptId);
+    if (receipt && receipt.status === 'draft') { flash('Issue this receipt before voiding it.'); return; }
     askConfirm('Void this receipt? It stays on record as cancelled — nothing is deleted, and you can restore it later.', () => {
       setReceipts((prev) => prev.map((r) => r.id === receiptId ? { ...r, voided: true, voidedAt: todayISO() } : r));
       flash('Receipt voided.');
@@ -4691,7 +4785,7 @@ function App() {
             {filtered.map((c) => {
               const clientInvoices = invoices.filter((i) => i.clientId === c.id).sort((a, b) => new Date(b.issueDate) - new Date(a.issueDate));
               const clientReceipts = receipts.filter((r) => r.clientId === c.id).sort((a, b) => new Date(b.date) - new Date(a.date));
-              const owed = clientInvoices.filter((i) => i.status !== 'paid').reduce((s, i) => s + invoiceNetTotal(i), 0);
+              const owed = clientInvoices.filter((i) => i.status !== 'paid' && i.status !== 'draft' && i.status !== 'void').reduce((s, i) => s + invoiceNetTotal(i), 0);
               const isOpen = expandedClient === c.id;
               return (
                 <div key={c.id} className="plan-card client-card" onClick={() => setExpandedClient(isOpen ? null : c.id)}>
@@ -4721,7 +4815,7 @@ function App() {
                                 <div className="loan-card-top" onClick={() => setInvoiceDoc(inv)}>
                                   <span className="loan-name">{inv.number}</span>
                                   <div className="loan-card-right">
-                                    <Stamp status={status === 'sent' ? 'active' : status === 'overdue' ? 'overdue' : status === 'paid' ? 'completed' : 'due-soon'} />
+                                    <Stamp status={status === 'sent' ? 'active' : status === 'overdue' ? 'overdue' : status === 'paid' ? 'completed' : status === 'void' ? 'overdue' : 'due-soon'} label={status === 'void' ? 'Void' : undefined} />
                                     <div className="outstanding kb-mono">{fmt(invoiceNetTotal(inv))}</div>
                                     <ChevronRight size={15} className="chev" />
                                   </div>
@@ -4741,7 +4835,7 @@ function App() {
                               <div className="loan-card-top" onClick={() => setPaymentReceiptDoc(r)}>
                                 <span className="loan-name">{r.receiptNo}</span>
                                 <div className="loan-card-right">
-                                  <Stamp status="completed" label="Paid" />
+                                  <Stamp status={r.voided ? 'overdue' : (!r.voided && r.status === 'draft') ? 'due-soon' : 'completed'} label={r.voided ? 'Voided' : (!r.voided && r.status === 'draft') ? 'Draft' : 'Paid'} />
                                   <div className="outstanding kb-mono">{fmt(r.amount)}</div>
                                   <ChevronRight size={15} className="chev" />
                                 </div>
@@ -4797,7 +4891,7 @@ function App() {
                       <div className="plan-card-meta">Due {new Date(inv.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
                     </div>
                     <div className="loan-card-right">
-                      <Stamp status={status === 'sent' ? 'active' : status === 'overdue' ? 'overdue' : status === 'paid' ? 'completed' : 'due-soon'} />
+                      <Stamp status={status === 'sent' ? 'active' : status === 'overdue' ? 'overdue' : status === 'paid' ? 'completed' : status === 'void' ? 'overdue' : 'due-soon'} label={status === 'void' ? 'Void' : undefined} />
                       <div className="outstanding kb-mono">{fmt(net)}<span>{credited > 0 ? 'net of credit' : 'total'}</span></div>
                       <ChevronRight size={15} className="chev" />
                     </div>
@@ -4805,15 +4899,19 @@ function App() {
                   <div className="loan-card-body">
                     <div className="loan-actions" style={{ marginTop: 12, flexWrap: 'wrap' }}>
                       <button className="btn btn-outline btn-small" onClick={() => setInvoiceDoc(inv)}><FileText size={13} /> View / share</button>
-                      {status !== 'paid' && <button className="btn btn-secondary btn-small" onClick={() => markInvoicePaid(inv.id)}><CheckCircle2 size={13} /> Mark paid</button>}
-                      {status !== 'paid' && client?.phone && <button className="btn btn-ghost btn-small" onClick={() => setReminderDoc({
+                      {status === 'draft' && <button className="btn btn-outline btn-small" onClick={() => editInvoice(inv)}><Edit3 size={13} /> Edit</button>}
+                      {status === 'draft' && <button className="btn btn-secondary btn-small" onClick={() => issueInvoice(inv.id)}><Send size={13} /> Issue</button>}
+                      {status !== 'paid' && status !== 'draft' && status !== 'void' && <button className="btn btn-secondary btn-small" onClick={() => markInvoicePaid(inv.id)}><CheckCircle2 size={13} /> Mark paid</button>}
+                      {status !== 'paid' && status !== 'draft' && status !== 'void' && client?.phone && <button className="btn btn-ghost btn-small" onClick={() => setReminderDoc({
                         title: 'Invoice Reminder',
                         personName: client.name, personPhone: client.phone,
                         message: invoiceReminderMessage(inv),
                         amountDue: net, dueDate: inv.dueDate,
                         filename: `reminder-${inv.number}.png`,
                       })}><Bell size={13} /> Send reminder</button>}
-                      <button className="btn btn-outline btn-small" onClick={() => openModal('newCreditNote', { invoiceId: inv.id, date: todayISO() })}><FileMinus size={13} /> Issue credit note</button>
+                      {(status === 'sent' || status === 'overdue') && <button className="btn btn-outline btn-small" onClick={() => voidInvoice(inv.id)}><Ban size={13} /> Void</button>}
+                      {status === 'void' && <button className="btn btn-secondary btn-small" onClick={() => restoreInvoice(inv.id)}><RotateCcw size={13} /> Restore</button>}
+                      {status !== 'draft' && status !== 'void' && <button className="btn btn-outline btn-small" onClick={() => openModal('newCreditNote', { invoiceId: inv.id, date: todayISO() })}><FileMinus size={13} /> Issue credit note</button>}
                       <button className="btn btn-danger btn-small" onClick={() => deleteInvoice(inv.id)}><Trash2 size={13} /> Delete</button>
                     </div>
                   </div>
@@ -4843,6 +4941,7 @@ function App() {
               const client = clientById(r.clientId);
               const invoice = r.invoiceId ? invoiceById(r.invoiceId) : null;
               const voided = !!r.voided;
+              const draft = !voided && r.status === 'draft';
               return (
                 <div key={r.id} className={`loan-card${voided ? ' receipt-voided' : ''}`}>
                   <div className="loan-card-top" onClick={() => setPaymentReceiptDoc(r)}>
@@ -4851,7 +4950,7 @@ function App() {
                       <div className="plan-card-meta">{new Date(r.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}{invoice ? ` · for ${invoice.number}` : ''}</div>
                     </div>
                     <div className="loan-card-right">
-                      {voided ? <Stamp status="overdue" label="Voided" /> : <Stamp status="completed" label="Paid" />}
+                      {voided ? <Stamp status="overdue" label="Voided" /> : draft ? <Stamp status="due-soon" label="Draft" /> : <Stamp status="completed" label="Paid" />}
                       <div className="outstanding kb-mono">{fmt(r.amount)}<span>received</span></div>
                       <ChevronRight size={15} className="chev" />
                     </div>
@@ -4859,11 +4958,13 @@ function App() {
                   <div className="loan-card-body">
                     <div className="loan-actions" style={{ marginTop: 12, flexWrap: 'wrap' }}>
                       <button className="btn btn-outline btn-small" onClick={() => setPaymentReceiptDoc(r)}><Receipt size={13} /> View / share</button>
-                      {voided ? (
+                      {draft && <button className="btn btn-outline btn-small" onClick={() => editReceipt(r)}><Edit3 size={13} /> Edit</button>}
+                      {draft && <button className="btn btn-secondary btn-small" onClick={() => issueReceipt(r.id)}><Send size={13} /> Issue</button>}
+                      {!draft && (voided ? (
                         <button className="btn btn-secondary btn-small" onClick={() => restoreReceipt(r.id)}><RotateCcw size={13} /> Restore</button>
                       ) : (
                         <button className="btn btn-outline btn-small" onClick={() => voidReceipt(r.id)}><Ban size={13} /> Void</button>
-                      )}
+                      ))}
                       <button className="btn btn-danger btn-small" onClick={() => deleteReceipt(r.id)}><Trash2 size={13} /> Delete</button>
                     </div>
                   </div>
@@ -6850,7 +6951,7 @@ function App() {
       )}
 
       {modal === 'newInvoice' && (
-        <Modal title="New invoice" onClose={closeModal}>
+        <Modal title={form.editingInvoiceId ? `Edit draft invoice` : 'New invoice'} onClose={closeModal}>
           <div className="field"><label>Client</label>
             <select className="kb-input" value={form.clientId || ''} onChange={(e) => setField('clientId', e.target.value)}>
               <option value="">Select a client</option>
@@ -6903,12 +7004,15 @@ function App() {
           <div className="field"><label>Notes (optional)</label>
             <input className="kb-input" value={form.notes || ''} onChange={(e) => setField('notes', e.target.value)} placeholder="Thank you for your business." />
           </div>
-          <button className="btn btn-primary" onClick={submitNewInvoice}>Create invoice</button>
+          <div className="settings-actions">
+            <button className="btn btn-outline" onClick={() => submitNewInvoice(false)}><FileText size={14} /> Save as draft</button>
+            <button className="btn btn-primary" onClick={() => submitNewInvoice(true)}><Send size={14} /> {form.editingInvoiceId ? 'Issue invoice' : 'Create & issue'}</button>
+          </div>
         </Modal>
       )}
 
       {modal === 'newReceipt' && (
-        <Modal title="Issue receipt" onClose={closeModal}>
+        <Modal title={form.editingReceiptId ? 'Edit draft receipt' : 'Issue receipt'} onClose={closeModal}>
           <div className="field"><label>Pull from invoice (optional)</label>
             <select className="kb-input" value={form.invoiceId || ''} onChange={(e) => applyInvoiceToReceipt(e.target.value)}>
               <option value="">None — enter details below</option>
@@ -6971,7 +7075,10 @@ function App() {
           <div className="field"><label>Note (optional)</label>
             <input className="kb-input" value={form.note || ''} onChange={(e) => setField('note', e.target.value)} placeholder="What was this payment for?" />
           </div>
-          <button className="btn btn-primary" onClick={submitManualReceipt}>Issue receipt</button>
+          <div className="settings-actions">
+            <button className="btn btn-outline" onClick={() => submitManualReceipt(false)}><Receipt size={14} /> Save as draft</button>
+            <button className="btn btn-primary" onClick={() => submitManualReceipt(true)}><Send size={14} /> {form.editingReceiptId ? 'Issue receipt' : 'Create & issue'}</button>
+          </div>
         </Modal>
       )}
 
@@ -7031,6 +7138,10 @@ function App() {
           creditNotes={creditNotes}
           onIssueCreditNote={(inv) => openModal('newCreditNote', { invoiceId: inv.id, date: todayISO() })}
           onOpenCreditNote={(cn) => setCreditNoteDoc(cn)}
+          onEditInvoice={(inv) => { setInvoiceDoc(null); editInvoice(inv); }}
+          onIssueInvoice={(id) => { issueInvoice(id); setInvoiceDoc((d) => d ? { ...d, status: 'sent' } : d); }}
+          onVoidInvoice={(id) => { setInvoiceDoc(null); voidInvoice(id); }}
+          onRestoreInvoice={(id) => { restoreInvoice(id); setInvoiceDoc((d) => d ? { ...d, status: 'sent', voidedAt: null } : d); }}
         />
       )}
       {paymentReceiptDoc && (
@@ -7043,6 +7154,8 @@ function App() {
           onClose={() => setPaymentReceiptDoc(null)}
           shareToWhatsApp={shareToWhatsApp}
           shareImageToWhatsApp={shareImageToWhatsApp}
+          onEditReceipt={(r) => { setPaymentReceiptDoc(null); editReceipt(r); }}
+          onIssueReceipt={(id) => { issueReceipt(id); setPaymentReceiptDoc((d) => d ? { ...d, status: 'issued' } : d); }}
         />
       )}
       {creditNoteDoc && (
