@@ -499,9 +499,9 @@ const NIGERIA_BANKS_GROUPED = {
   'Commercial Banks': [
     'Access Bank', 'Citibank Nigeria', 'Ecobank Nigeria', 'Fidelity Bank', 'First Bank of Nigeria',
     'First City Monument Bank (FCMB)', 'Globus Bank', 'Guaranty Trust Bank (GTBank)', 'Heritage Bank',
-    'Keystone Bank', 'Optimus Bank', 'Parallex Bank', 'Polaris Bank', 'Premium Trust Bank', 'Providus Bank',
+    'Keystone Bank', 'Optimus Bank', 'Parallex Bank', 'Polaris Bank', 'Premium Trust Bank', 'ProvidusUnity Bank',
     'Signature Bank', 'Stanbic IBTC Bank', 'Standard Chartered Bank', 'Sterling Bank', 'SunTrust Bank',
-    'Titan Trust Bank', 'Union Bank of Nigeria', 'United Bank for Africa (UBA)', 'Unity Bank', 'Wema Bank',
+    'Titan Trust Bank', 'Union Bank of Nigeria', 'United Bank for Africa (UBA)', 'Wema Bank',
     'Zenith Bank',
   ],
   'Non-Interest Banks': ['Alternative Bank', 'Jaiz Bank', 'Lotus Bank', 'TAJBank'],
@@ -516,7 +516,8 @@ const NIGERIA_BANKS_GROUPED = {
     'Rubies Bank', 'Sparkle', 'VBank (VFD Microfinance Bank)',
   ],
   'Microfinance Banks': [
-    'AB Microfinance Bank', 'Accion Microfinance Bank', 'Baobab Microfinance Bank', 'FairMoney Microfinance Bank',
+    'AB Microfinance Bank', 'Accion Microfinance Bank', 'Baobab Microfinance Bank', 'Berachah MFB',
+    'FairMoney Microfinance Bank',
     'Fina Trust Microfinance Bank', 'LAPO Microfinance Bank', 'Mainstreet Microfinance Bank',
     'NPF Microfinance Bank', 'Page Financials', 'Sparkle Microfinance Bank', 'Uhuru Microfinance Bank',
   ],
@@ -526,6 +527,7 @@ const NIGERIA_BANKS_GROUPED = {
   ],
 };
 const NIGERIA_BANK_NAMES = Object.values(NIGERIA_BANKS_GROUPED).flat();
+const NIGERIA_BANK_NAMES_SORTED = [...NIGERIA_BANK_NAMES].sort((a, b) => a.localeCompare(b));
 
 /* ============================== tax: rules, categories, parsing ============================== */
 // Nigeria Tax Act 2025 bands/rates — estimate only, not tax advice.
@@ -4914,11 +4916,7 @@ function App() {
                 }
               }}>
                 <option value="">Select your bank…</option>
-                {Object.entries(NIGERIA_BANKS_GROUPED).map(([group, banks]) => (
-                  <optgroup key={group} label={group}>
-                    {banks.map((b) => <option key={b} value={b}>{b}</option>)}
-                  </optgroup>
-                ))}
+                {NIGERIA_BANK_NAMES_SORTED.map((b) => <option key={b} value={b}>{b}</option>)}
                 <option value="__other__">Other / not listed…</option>
               </select>
               {bankOtherMode && (
