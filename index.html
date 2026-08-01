@@ -1111,6 +1111,59 @@ function ContactDeveloperCard() {
   );
 }
 
+// Shared header block for invoices/receipts — logo, business name, address, RC number, gold rule.
+function DocHeader({ settings }) {
+  const initials = (settings.businessName || 'B').trim().charAt(0).toUpperCase();
+  return (
+    <>
+      <div className="doc-head">
+        <div className="doc-head-left">
+          {settings.logoDataUrl ? (
+            <img src={settings.logoDataUrl} alt="logo" className="doc-logo" />
+          ) : (
+            <div className="doc-logo-fallback">{initials}</div>
+          )}
+          <div>
+            <div className="doc-brand">{settings.businessName}</div>
+            <div className="doc-brand-meta">
+              {settings.businessAddress && <div>{settings.businessAddress}</div>}
+              {(settings.businessPhone || settings.businessEmail) && <div>{[settings.businessPhone, settings.businessEmail].filter(Boolean).join(' · ')}</div>}
+            </div>
+          </div>
+        </div>
+        {settings.rcNumber && <div className="doc-rc">RC: {settings.rcNumber}</div>}
+      </div>
+      <hr className="doc-gold-rule" />
+    </>
+  );
+}
+// Bank details box — only shown when the business has account details saved in Settings.
+function DocPayBox({ settings }) {
+  if (!settings.accountNumber) return null;
+  return (
+    <div className="doc-pay-box">
+      <div className="doc-pay-label">Pay into</div>
+      <div>{settings.accountName || settings.businessName} · {settings.bankName} · {settings.accountNumber}</div>
+    </div>
+  );
+}
+// Script-style signature block, right-aligned.
+function DocSignature({ settings }) {
+  const name = settings.ownerName || settings.businessName;
+  return (
+    <div className="doc-sign">
+      <div className="doc-sign-name">{name}</div>
+      <div className="doc-sign-line" />
+      <div className="doc-sign-caption">Authorized signature</div>
+    </div>
+  );
+}
+// Centered "Powered by / generated" footer.
+function DocFooter({ settings }) {
+  const generated = new Date().toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return <div className="doc-footer">Powered by <strong>PocketLedger</strong><br />Generated {generated}</div>;
+}
+
 function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, shareToWhatsApp, shareImageToWhatsApp }) {
   useEscClose(onClose);
   const isLoan = receipt.kind === 'loan';
@@ -1119,7 +1172,7 @@ function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, s
     : isCycle ? receipt.payout.id.slice(0, 8).toUpperCase()
     : receipt.contribution.id.slice(0, 8).toUpperCase();
   const issuedOn = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
-  let title, personName, personPhone, lines, waText;
+  let title, personName, personPhone, billedLabel, lines, waText;
 
   if (isLoan) {
     const { loan, key, personField, payment } = receipt;
@@ -1129,10 +1182,8 @@ function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, s
     personName = loan[personField];
     personPhone = loan.phone;
     title = key === 'repayments' ? 'Loan Repayment Receipt' : 'Loan Refund Receipt';
+    billedLabel = key === 'repayments' ? 'Received from' : 'Paid to';
     lines = [
-      ['Receipt No.', receiptNo],
-      ['Date issued', issuedOn],
-      [key === 'repayments' ? 'Received from' : 'Paid to', personName],
       ['Payment date', new Date(payment.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })],
       ['This payment', fmt(payment.amount)],
       ['divider', ''],
@@ -1144,7 +1195,7 @@ function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, s
     waText = [
       `*${settings.businessName}* — ${title}`, '',
       `Receipt No: ${receiptNo}`,
-      `${key === 'repayments' ? 'Received from' : 'Paid to'}: ${personName}`,
+      `${billedLabel}: ${personName}`,
       `Amount: ${fmt(payment.amount)} on ${new Date(payment.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`,
       `Outstanding balance: ${fmt(outstanding)}`,
     ].join('\n');
@@ -1154,10 +1205,8 @@ function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, s
     personName = recipient ? recipient.name : 'Member';
     personPhone = recipient ? recipient.phone : '';
     title = 'Thrift Cycle Payout Receipt';
+    billedLabel = 'Paid to';
     lines = [
-      ['Receipt No.', receiptNo],
-      ['Date issued', issuedOn],
-      ['Paid out to', personName],
       ['Plan', plan.name],
       ['Round', `${(plan.payouts || []).findIndex((p) => p.id === payout.id) + 1} of ${plan.memberIds.length}`],
       ['Payout date', new Date(payout.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })],
@@ -1176,10 +1225,8 @@ function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, s
     personName = member.name;
     personPhone = member.phone;
     title = 'Thrift Contribution Receipt';
+    billedLabel = 'Contributor';
     lines = [
-      ['Receipt No.', receiptNo],
-      ['Date issued', issuedOn],
-      ['Contributor', personName],
       ['Plan', plan ? plan.name : 'N/A'],
       ['Category', plan ? plan.category : ''],
       ['Payment date', new Date(contribution.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })],
@@ -1213,14 +1260,26 @@ function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, s
         </div>
         <div className="modal-body">
           <div id="receipt-print-area" className="receipt-sheet">
-            <div className="receipt-brand kb-display">{settings.businessName}</div>
-            <div className="receipt-sub">{title}</div>
-            <div className="receipt-lines">
-              {lines.map(([label, value], i) => label === 'divider'
-                ? <div key={i} className="receipt-divider" />
-                : <div key={i} className="receipt-row"><span>{label}</span><span className="kb-mono">{value}</span></div>)}
+            <DocHeader settings={settings} />
+            <div className="doc-title-row">
+              <div>
+                <div className="doc-title">{title.replace(' Receipt', '')}</div>
+                <div className="doc-title-meta">Receipt No. {receiptNo} · {issuedOn}</div>
+              </div>
+              <div>
+                <div className="doc-billed-label">{billedLabel}</div>
+                <div className="doc-billed-name">{personName}</div>
+              </div>
             </div>
-            <div className="receipt-footer">Issued {issuedOn}{settings.ownerName ? ` · ${settings.ownerName}` : ''}</div>
+            <div>
+              {lines.map(([label, value], i) => label === 'divider'
+                ? <div key={i} className="doc-totals" />
+                : <div key={i} className="doc-line"><span>{label}</span><span className="kb-mono">{value}</span></div>)}
+            </div>
+            <DocPayBox settings={settings} />
+            <div className="doc-thanks">Thank you for your patronage!</div>
+            <DocSignature settings={settings} />
+            <DocFooter settings={settings} />
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
@@ -1233,12 +1292,14 @@ function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, s
   );
 }
 
-function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, shareToWhatsApp, shareImageToWhatsApp, message }) {
+function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, shareToWhatsApp, shareImageToWhatsApp, message, receipts }) {
   useEscClose(onClose);
   const status = invoiceStatusOf(invoice);
   const total = invoiceTotal(invoice);
-  const issuedOn = new Date(invoice.issueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
-  const dueOn = new Date(invoice.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const issuedOn = new Date(invoice.issueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const dueOn = new Date(invoice.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const paid = status === 'paid' ? total : (receipts || []).filter((r) => r.invoiceId === invoice.id).reduce((s, r) => s + r.amount, 0);
+  const balance = Math.max(0, total - paid);
 
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
@@ -1259,33 +1320,34 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
         </div>
         <div className="modal-body">
           <div className="receipt-sheet" id="receipt-print-area">
-            <div className="invoice-doc-head">
-              {settings.logoDataUrl && <img src={settings.logoDataUrl} alt="logo" className="invoice-logo" />}
+            <DocHeader settings={settings} />
+            <div className="doc-title-row">
               <div>
-                <div className="receipt-brand">{settings.businessName}</div>
-                <div className="panel-sub">{[settings.rcNumber && `RC ${settings.rcNumber}`, settings.businessPhone, settings.businessEmail].filter(Boolean).join(' · ')}</div>
+                <div className="doc-title">Invoice</div>
+                <div className="doc-title-meta">{invoice.number} · {issuedOn}</div>
+              </div>
+              <div>
+                <div className="doc-billed-label">Billed to</div>
+                <div className="doc-billed-name">{client ? client.name : ''}</div>
+                {client?.address && <div className="doc-title-meta" style={{ textAlign: 'right' }}>{client.address}</div>}
               </div>
             </div>
-            <div className="receipt-sub" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>INVOICE {invoice.number}</span>
-              <Stamp status={status === 'sent' ? 'active' : status === 'overdue' ? 'overdue' : status === 'paid' ? 'completed' : 'due-soon'} />
-            </div>
-            <div className="receipt-row"><span>Bill to</span><span className="kb-mono">{client ? client.name : ''}</span></div>
-            {client?.address && <div className="receipt-row"><span>Address</span><span className="kb-mono">{client.address}</span></div>}
-            <div className="receipt-row"><span>Issued</span><span className="kb-mono">{issuedOn}</span></div>
-            <div className="receipt-row"><span>Due</span><span className="kb-mono">{dueOn}</span></div>
-            <div className="receipt-divider" />
-            <div className="receipt-lines">
+            <div>
               {invoice.items.map((it) => (
-                <div key={it.id} className="receipt-row"><span>{it.desc || 'Item'} ({it.qty} &times; {fmt(it.price)})</span><span className="kb-mono">{fmt(it.qty * it.price)}</span></div>
+                <div key={it.id} className="doc-line"><span>{it.desc || 'Item'} ({it.qty} &times; {fmt(it.price)})</span><span className="kb-mono">{fmt(it.qty * it.price)}</span></div>
               ))}
             </div>
-            <div className="receipt-divider" />
-            <div className="receipt-row" style={{ fontWeight: 700, fontSize: 15 }}><span>Total</span><span className="kb-mono">{fmt(total)}</span></div>
-            {settings.accountNumber && (
-              <div className="receipt-footer">Pay to: {settings.bankName} {settings.accountNumber} ({settings.accountName || settings.businessName})</div>
-            )}
+            <div className="doc-totals">
+              <div className="doc-total-row"><span>Total</span><span className="kb-mono">{fmt(total)}</span></div>
+              <div className="doc-total-row"><span>Paid</span><span className="kb-mono">{fmt(paid)}</span></div>
+              <div className="doc-total-row balance"><span>Balance</span><span className="kb-mono">{fmt(balance)}</span></div>
+            </div>
+            <div className="doc-due">Due date: {dueOn}</div>
+            <DocPayBox settings={settings} />
             {invoice.notes && <div className="receipt-footer">{invoice.notes}</div>}
+            <div className="doc-thanks">Thank you for your patronage!</div>
+            <DocSignature settings={settings} />
+            <DocFooter settings={settings} />
           </div>
           <div className="receipt-actions">
             {status !== 'paid' && <button className="btn btn-secondary btn-small" onClick={() => onMarkPaid(invoice.id)}><CheckCircle2 size={14} /> Mark as paid</button>}
@@ -1334,26 +1396,27 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
         </div>
         <div className="modal-body">
           <div id="receipt-print-area" className="receipt-sheet">
-            <div className="invoice-doc-head">
-              {settings.logoDataUrl && <img src={settings.logoDataUrl} alt="logo" className="invoice-logo" />}
+            <DocHeader settings={settings} />
+            <div className="doc-title-row">
               <div>
-                <div className="receipt-brand">{settings.businessName}</div>
-                <div className="panel-sub">{[settings.rcNumber && `RC ${settings.rcNumber}`, settings.businessPhone, settings.businessEmail].filter(Boolean).join(' · ')}</div>
+                <div className="doc-title">Receipt</div>
+                <div className="doc-title-meta">{receiptDoc.receiptNo} · {issuedOn}</div>
+              </div>
+              <div>
+                <div className="doc-billed-label">Received from</div>
+                <div className="doc-billed-name">{payerName}</div>
               </div>
             </div>
-            <div className="receipt-sub" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>RECEIPT {receiptDoc.receiptNo}</span>
-              <Stamp status="completed" label="Paid" />
+            <div>
+              {invoice && <div className="doc-line"><span>For invoice</span><span className="kb-mono">{invoice.number}</span></div>}
+              {receiptDoc.note && <div className="doc-line"><span>Note</span><span className="kb-mono">{receiptDoc.note}</span></div>}
             </div>
-            <div className="receipt-row"><span>Received from</span><span className="kb-mono">{payerName}</span></div>
-            <div className="receipt-row"><span>Date</span><span className="kb-mono">{issuedOn}</span></div>
-            {invoice && <div className="receipt-row"><span>For invoice</span><span className="kb-mono">{invoice.number}</span></div>}
-            <div className="receipt-divider" />
-            <div className="receipt-row" style={{ fontWeight: 700, fontSize: 15 }}><span>Amount received</span><span className="kb-mono">{fmt(receiptDoc.amount)}</span></div>
-            {receiptDoc.note && <div className="receipt-footer">{receiptDoc.note}</div>}
-            {settings.accountNumber && (
-              <div className="receipt-footer">Pay to: {settings.bankName} {settings.accountNumber} ({settings.accountName || settings.businessName})</div>
-            )}
+            <div className="doc-totals">
+              <div className="doc-total-row balance"><span>Amount received</span><span className="kb-mono">{fmt(receiptDoc.amount)}</span></div>
+            </div>
+            <div className="doc-thanks">Thank you for your patronage!</div>
+            <DocSignature settings={settings} />
+            <DocFooter settings={settings} />
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
@@ -4638,7 +4701,7 @@ function App() {
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title={entry.fileName}>{entry.fileName}</span>
                     <button className="icon-btn" style={{ flex: '0 0 auto' }} onClick={() => removeTaxImportEntry(entry.id)} title="Remove" aria-label="Remove"><Trash2 size={14} /></button>
                   </div>
-                  <div className="field-row" style={{ marginBottom: 12 }}>
+                  <div style={{ marginBottom: 12 }}>
                     <div className="field"><label>Bank</label>
                       <select className="kb-input" value={entry.bankOtherMode ? '__other__' : (entry.bankName || '')} onChange={(e) => updateEntryBank(entry.id, e.target.value)}>
                         <option value="">Select the bank…</option>
@@ -4660,6 +4723,7 @@ function App() {
                       )}
                     </div>
                   </div>
+
                   {entry.rows.length > 0 ? (
                     <>
                       <div className="panel-sub" style={{ marginBottom: 10 }}>{entry.rows.length} transaction(s) found. Preview of the first 5:</div>
@@ -5260,7 +5324,7 @@ function App() {
   return (
     <div className={`kb-root ${settings.darkMode ? 'dark-mode' : ''}`} style={{ '--ink': settings.themeColor || '#1B2A4A' }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Mrs+Saint+Delafield&display=swap');
         .kb-root *{box-sizing:border-box;}
         .kb-root{font-family:'IBM Plex Sans',sans-serif;background:var(--paper);color:var(--ink);min-height:100vh;width:100%;}
         .kb-root.dark-mode{
@@ -5514,7 +5578,7 @@ function App() {
         .toast-close{background:none;border:none;color:rgba(255,255,255,0.7);cursor:pointer;padding:6px;display:flex;align-items:center;flex-shrink:0;border-radius:50%;}
         .toast-close:hover{color:#fff;background:rgba(255,255,255,0.15);}
         .receipt-card{max-width:420px;}
-        .receipt-sheet{background:#fff;border:1.5px dashed var(--paper-line);border-radius:10px;padding:20px;}
+        .receipt-sheet{background:#fff;border:1px solid var(--paper-line);border-radius:12px;padding:24px 22px;}
         .receipt-brand{font-size:19px;font-weight:600;}
         .receipt-sub{font-size:11.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-soft);margin-bottom:14px;}
         .receipt-lines{display:flex;flex-direction:column;gap:9px;}
@@ -5523,6 +5587,37 @@ function App() {
         .receipt-divider{border-top:1px dashed var(--paper-line);margin:2px 0;}
         .receipt-footer{margin-top:16px;padding-top:10px;border-top:1px solid var(--paper-line);font-size:11px;color:var(--ink-soft);font-style:italic;}
         .receipt-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;}
+        .doc-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}
+        .doc-head-left{display:flex;align-items:center;gap:12px;}
+        .doc-logo{width:48px;height:48px;border-radius:10px;object-fit:cover;flex-shrink:0;}
+        .doc-logo-fallback{width:48px;height:48px;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Fraunces',serif;font-weight:600;font-size:19px;flex-shrink:0;}
+        .doc-brand{font-family:'Fraunces',serif;font-weight:700;font-size:15.5px;letter-spacing:.02em;text-transform:uppercase;line-height:1.3;}
+        .doc-brand-meta{font-size:11px;color:var(--ink-soft);line-height:1.5;margin-top:2px;}
+        .doc-rc{font-size:10.5px;color:var(--ink-soft);white-space:nowrap;padding-top:2px;text-align:right;}
+        .doc-gold-rule{height:2px;background:var(--gold);margin:16px 0 18px;border:none;}
+        .doc-title-row{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:14px;}
+        .doc-title{font-family:'Fraunces',serif;font-weight:700;font-size:21px;color:var(--ink);}
+        .doc-title-meta{font-size:11.5px;color:var(--ink-soft);margin-top:2px;}
+        .doc-billed-label{font-size:10.5px;color:var(--ink-soft);text-align:right;text-transform:uppercase;letter-spacing:.04em;}
+        .doc-billed-name{font-family:'Fraunces',serif;font-weight:700;font-size:14.5px;text-align:right;margin-top:3px;}
+        .doc-category{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px;}
+        .doc-line{display:flex;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px solid var(--paper-line);font-size:13.5px;}
+        .doc-line span:first-child{color:var(--ink);}
+        .doc-totals{border-top:2px solid var(--ink);margin-top:4px;padding-top:10px;}
+        .doc-total-row{display:flex;justify-content:space-between;font-size:13.5px;padding:3px 0;color:var(--ink-soft);}
+        .doc-total-row .kb-mono{color:var(--ink);}
+        .doc-total-row.balance{font-weight:700;color:var(--brick);font-size:16px;padding-top:6px;}
+        .doc-total-row.balance .kb-mono{color:var(--brick);}
+        .doc-due{font-size:11.5px;color:var(--ink-soft);margin-top:4px;}
+        .doc-pay-box{border:1px solid var(--paper-line);background:var(--surface-2);border-radius:10px;padding:12px 14px;margin-top:18px;font-size:12.5px;}
+        .doc-pay-label{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:4px;}
+        .doc-thanks{text-align:center;font-style:italic;color:var(--ink-soft);font-size:13px;margin-top:22px;}
+        .doc-sign{display:flex;flex-direction:column;align-items:flex-end;margin-top:22px;}
+        .doc-sign-name{font-family:'Mrs Saint Delafield',cursive;font-size:30px;color:var(--ink);line-height:1;}
+        .doc-sign-line{width:170px;border-top:1px solid var(--paper-line);margin-top:4px;padding-top:4px;}
+        .doc-sign-caption{font-size:10.5px;color:var(--ink-soft);text-align:right;}
+        .doc-footer{text-align:center;border-top:1px solid var(--paper-line);margin-top:20px;padding-top:10px;font-size:10.5px;color:var(--ink-soft);}
+        .doc-footer strong{color:var(--ink);}
         @media print{
           body *{visibility:hidden;}
           #receipt-print-area, #receipt-print-area *{visibility:visible;}
@@ -6306,6 +6401,7 @@ function App() {
           shareToWhatsApp={shareToWhatsApp}
           shareImageToWhatsApp={shareImageToWhatsApp}
           message={invoiceMessage(invoiceDoc)}
+          receipts={receipts}
         />
       )}
       {paymentReceiptDoc && (
