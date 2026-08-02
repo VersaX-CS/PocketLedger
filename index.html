@@ -477,7 +477,7 @@ function seedInvoices() {
 }
 function seedReceipts() {
   return [
-    { id: 'r1', receiptNo: 'RCT-2001', invoiceId: 'inv2', clientId: 'c2', clientName: '', amount: 25000, date: '2026-06-27', note: 'Payment for invoice INV-1002' },
+    { id: 'r1', receiptNo: 'RCT-2001', invoiceId: 'inv2', clientId: 'c2', clientName: '', amount: 25000, date: '2026-06-27', note: '' },
   ];
 }
 function seedCreditNotes() {
@@ -488,6 +488,17 @@ function invoiceStatusOf(inv) {
   if (inv.status === 'paid') return 'paid';
   if (inv.status === 'draft') return 'draft';
   return daysFromToday(inv.dueDate) < 0 ? 'overdue' : 'sent';
+}
+// An invoice is only ever flipped to 'paid' from two places: markInvoicePaid (which always
+// records a cash receipt alongside it) or submitCreditNote (which deliberately does NOT
+// generate a receipt, since a credit note isn't proof of cash received). So a 'paid' invoice
+// with no linked, non-voided receipt was settled entirely via credit note(s) — no cash ever
+// changed hands for it — and the UI should say so instead of reusing the "Paid" label.
+function invoiceSettledByCreditOnly(inv, receipts, creditNotes) {
+  if (!inv || inv.status !== 'paid') return false;
+  const hasReceipt = (receipts || []).some((r) => r.invoiceId === inv.id && !r.voided);
+  if (hasReceipt) return false;
+  return (creditNotes || []).some((cn) => cn.invoiceId === inv.id && !cn.voided);
 }
 const INVOICE_STATUS_LABEL = { paid: 'Paid', draft: 'Draft', overdue: 'Overdue', sent: 'Awaiting payment', void: 'Void' };
 const THEME_PRESETS = [
@@ -995,12 +1006,14 @@ function AddTabEntryRow({ onAdd }) {
           <input type="number" min="0" inputMode="decimal" placeholder="Amount" value={amount}
             onChange={(e) => { setAmount(e.target.value); if (error) setError(''); }}
             onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-            className="kb-input kb-mono" style={{ width: 110 }} />
+            className="kb-input kb-mono add-tab-entry-amount" />
+        </div>
+        <div className="add-tab-entry-fields-bottom">
+          <input type="text" placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+            className="kb-input add-tab-entry-note" />
           <button className="btn btn-small btn-primary" onClick={submit}><Plus size={14} /> Add</button>
         </div>
-        <input type="text" placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-          className="kb-input add-tab-entry-note" />
       </div>
       {error && <div className="field-error">{error}</div>}
     </div>
@@ -1372,6 +1385,7 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
   const netTotal = Math.max(0, total - credited);
   const paid = status === 'paid' ? netTotal : (receipts || []).filter((r) => r.invoiceId === invoice.id && !r.voided).reduce((s, r) => s + r.amount, 0);
   const balance = Math.max(0, netTotal - paid);
+  const creditSettled = invoiceSettledByCreditOnly(invoice, receipts, creditNotes);
 
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
@@ -1405,9 +1419,9 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
                 {client?.address && <div className="doc-title-meta" style={{ textAlign: 'right' }}>{client.address}</div>}
               </div>
             </div>
-            {(status === 'draft' || voided) && (
+            {(status === 'draft' || voided || status === 'paid') && (
               <div className="doc-line" style={{ marginBottom: 4 }}>
-                <span><Stamp status={voided ? 'overdue' : 'due-soon'} label={voided ? 'Void' : 'Draft'} /></span>
+                <span><Stamp status={voided ? 'overdue' : status === 'paid' ? (creditSettled ? 'settled' : 'completed') : 'due-soon'} label={voided ? 'Void' : status === 'paid' ? (creditSettled ? 'Settled' : 'Paid') : 'Draft'} /></span>
                 {voided && <span className="kb-mono">{invoice.voidedAt ? new Date(invoice.voidedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}</span>}
               </div>
             )}
@@ -1426,7 +1440,7 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
             <div className="doc-totals">
               <div className="doc-total-row"><span>Subtotal</span><span className="kb-mono">{fmt(total)}</span></div>
               {credited > 0 && <div className="doc-total-row"><span>Credited</span><span className="kb-mono">−{fmt(credited)}</span></div>}
-              <div className="doc-total-row"><span>Paid</span><span className="kb-mono">{fmt(paid)}</span></div>
+              <div className="doc-total-row"><span>{creditSettled ? 'Settled (via credit)' : 'Paid'}</span><span className="kb-mono">{fmt(paid)}</span></div>
               <div className="doc-total-row balance"><span>Balance</span><span className="kb-mono">{fmt(balance)}</span></div>
             </div>
             <div className="doc-due">Due date: {dueOn}</div>
@@ -1535,6 +1549,7 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
             <div className="doc-totals">
               <div className="doc-total-row balance"><span>Amount received</span><span className="kb-mono">{fmt(receiptDoc.amount)}</span></div>
             </div>
+            <DocPayBox settings={settings} />
             <DocSignature settings={settings} />
             <div className="doc-thanks">{voided ? 'This receipt has been voided and is no longer valid.' : 'Thank you for your patronage!'}</div>
             <DocFooter settings={settings} />
@@ -1676,6 +1691,7 @@ function ReminderDocModal({ reminderDoc, settings, fmt, onClose, shareImageToWha
             <div className="reminder-message">
               {bodyLines.map((line, i) => <p key={i}>{line}</p>)}
             </div>
+            <DocPayBox settings={settings} />
             <DocFooter settings={settings} />
           </div>
           <div className="receipt-actions">
@@ -3152,7 +3168,6 @@ function App() {
     setForm((f) => ({
       ...f, invoiceId, clientId: inv.clientId,
       items: (inv.items || []).map((it) => ({ id: uid(), desc: it.desc, qty: it.qty, price: it.price })),
-      note: f.note || `Payment for invoice ${inv.number}`,
     }));
   };
   const markInvoicePaid = (invoiceId) => {
@@ -3165,7 +3180,7 @@ function App() {
         id: uid(), receiptNo: nextReceiptNumber(), invoiceId: invoice.id, clientId: invoice.clientId,
         clientName: '', amount: invoiceNetTotal(invoice),
         items: (invoice.items || []).map((it) => ({ id: uid(), desc: it.desc, qty: it.qty, price: it.price })),
-        date: todayISO(), note: `Payment for invoice ${invoice.number}`, status: 'issued',
+        date: todayISO(), note: '', status: 'issued',
       };
       setReceipts((r) => [rcpt, ...r]);
       setSettings((s) => ({ ...s, receiptCounter: Math.max(s.receiptCounter || 2000, Number((rcpt.receiptNo || '').replace(/\D/g, '')) || 0) }));
@@ -4854,12 +4869,13 @@ function App() {
                         <div className="loan-list client-doc-list">
                           {clientInvoices.map((inv) => {
                             const status = invoiceStatusOf(inv);
+                            const creditSettled = status === 'paid' && invoiceSettledByCreditOnly(inv, receipts, creditNotes);
                             return (
                               <div key={inv.id} className="loan-card">
                                 <div className="loan-card-top" onClick={() => setInvoiceDoc(inv)}>
                                   <span className="loan-name">{inv.number}</span>
                                   <div className="loan-card-right">
-                                    <Stamp status={status === 'sent' ? 'active' : status === 'overdue' ? 'overdue' : status === 'paid' ? 'completed' : status === 'void' ? 'overdue' : 'due-soon'} label={status === 'void' ? 'Void' : undefined} />
+                                    <Stamp status={status === 'sent' ? 'active' : status === 'overdue' ? 'overdue' : status === 'paid' ? (creditSettled ? 'settled' : 'completed') : status === 'void' ? 'overdue' : 'due-soon'} label={status === 'void' ? 'Void' : creditSettled ? 'Settled' : undefined} />
                                     <div className="outstanding kb-mono">{fmt(invoiceNetTotal(inv))}</div>
                                     <ChevronRight size={15} className="chev" />
                                   </div>
@@ -4927,6 +4943,7 @@ function App() {
               const total = invoiceTotal(inv);
               const net = invoiceNetTotal(inv);
               const credited = total - net;
+              const creditSettled = status === 'paid' && invoiceSettledByCreditOnly(inv, receipts, creditNotes);
               return (
                 <div key={inv.id} className="loan-card">
                   <div className="loan-card-top" onClick={() => setInvoiceDoc(inv)}>
@@ -4935,7 +4952,7 @@ function App() {
                       <div className="plan-card-meta">Due {new Date(inv.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
                     </div>
                     <div className="loan-card-right">
-                      <Stamp status={status === 'sent' ? 'active' : status === 'overdue' ? 'overdue' : status === 'paid' ? 'completed' : status === 'void' ? 'overdue' : 'due-soon'} label={status === 'void' ? 'Void' : undefined} />
+                      <Stamp status={status === 'sent' ? 'active' : status === 'overdue' ? 'overdue' : status === 'paid' ? (creditSettled ? 'settled' : 'completed') : status === 'void' ? 'overdue' : 'due-soon'} label={status === 'void' ? 'Void' : creditSettled ? 'Settled' : undefined} />
                       <div className="outstanding kb-mono">{fmt(net)}<span>{credited > 0 ? 'net of credit' : 'total'}</span></div>
                       <ChevronRight size={15} className="chev" />
                     </div>
@@ -6137,6 +6154,7 @@ function App() {
         .field-error{font-size:11.5px;color:var(--brick);margin-top:5px;font-weight:600;}
         .stamp{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border:1.5px solid;border-radius:4px;text-transform:uppercase;font-size:10.5px;letter-spacing:.07em;font-weight:700;transform:rotate(-2deg);font-family:'IBM Plex Mono',monospace;white-space:nowrap;}
         .stamp-completed{color:var(--green);border-color:var(--green);background:var(--green-bg);}
+        .stamp-settled{color:var(--navy);border-color:var(--navy);background:var(--navy-bg);}
         .stamp-overdue{color:var(--brick);border-color:var(--brick);background:var(--brick-bg);}
         .stamp-active{color:var(--steel);border-color:var(--steel);background:var(--steel-bg);}
         .stamp-due-soon{color:var(--gold);border-color:var(--gold);background:var(--gold-bg);}
@@ -6216,7 +6234,10 @@ function App() {
         .add-tab-entry-row{margin-top:12px;padding-top:12px;border-top:1px dashed var(--paper-line);}
         .add-tab-entry-fields{display:flex;flex-direction:column;gap:8px;}
         .add-tab-entry-fields-top{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
-        .add-tab-entry-note{width:100%;}
+        .add-tab-entry-amount{flex:1;min-width:90px;}
+        .add-tab-entry-fields-bottom{display:flex;gap:8px;align-items:center;}
+        .add-tab-entry-fields-bottom .btn{flex-shrink:0;}
+        .add-tab-entry-note{flex:1;min-width:0;}
         .receipt-link{margin-left:auto;font-size:11.5px;}
         .settings-actions{display:flex;gap:10px;flex-wrap:wrap;}
         .toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:16px 20px 16px 26px;border-radius:12px;font-size:14.5px;box-shadow:0 10px 30px rgba(0,0,0,0.25);z-index:100;display:flex;align-items:center;gap:18px;width:min(92vw,480px);line-height:1.45;}
@@ -7126,36 +7147,6 @@ function App() {
         </Modal>
       )}
 
-      {modal === 'newCreditNote' && (() => {
-        const inv = invoiceById(form.invoiceId);
-        const c = inv ? clientById(inv.clientId) : null;
-        const remaining = inv ? invoiceNetTotal(inv) : 0;
-        return (
-          <Modal title="Issue credit note" onClose={closeModal}>
-            {inv ? (
-              <div className="field-hint" style={{ marginBottom: 14 }}>
-                Against invoice <strong>{inv.number}</strong>{c ? ` — ${c.name}` : ''}. Currently {fmt(remaining)} outstanding.
-                This creates a separate document that reduces the balance owed — the invoice itself stays unchanged.
-              </div>
-            ) : (
-              <div className="field-hint" style={{ marginBottom: 14 }}>Could not find that invoice.</div>
-            )}
-            <div className="field-row">
-              <div className="field"><label>Amount to credit</label>
-                <input type="number" min="0" inputMode="decimal" className="kb-input" value={form.amount || ''} onChange={(e) => setField('amount', e.target.value)} placeholder="5000" />
-              </div>
-              <div className="field"><label>Date</label>
-                <input type="date" className="kb-input" value={form.date || todayISO()} onChange={(e) => setField('date', e.target.value)} />
-              </div>
-            </div>
-            <div className="field"><label>Reason</label>
-              <input className="kb-input" value={form.reason || ''} onChange={(e) => setField('reason', e.target.value)} placeholder="e.g. Returned item, billing error, goodwill discount" />
-            </div>
-            <button className="btn btn-primary" onClick={submitCreditNote} disabled={!inv}>Issue credit note</button>
-          </Modal>
-        );
-      })()}
-
       {receipt && <ReceiptModal receipt={receipt} onClose={() => setReceipt(null)} fmt={fmt} settings={settings} memberById={memberById} planById={planById} shareToWhatsApp={shareToWhatsApp} shareImageToWhatsApp={shareImageToWhatsApp} />}
       {tabStatementDoc && (
         <TabStatementModal
@@ -7188,6 +7179,35 @@ function App() {
           onRestoreInvoice={(id) => { restoreInvoice(id); setInvoiceDoc((d) => d ? { ...d, status: 'sent', voidedAt: null } : d); }}
         />
       )}
+      {modal === 'newCreditNote' && (() => {
+        const inv = invoiceById(form.invoiceId);
+        const c = inv ? clientById(inv.clientId) : null;
+        const remaining = inv ? invoiceNetTotal(inv) : 0;
+        return (
+          <Modal title="Issue credit note" onClose={closeModal}>
+            {inv ? (
+              <div className="field-hint" style={{ marginBottom: 14 }}>
+                Against invoice <strong>{inv.number}</strong>{c ? ` — ${c.name}` : ''}. Currently {fmt(remaining)} outstanding.
+                This creates a separate document that reduces the balance owed — the invoice itself stays unchanged.
+              </div>
+            ) : (
+              <div className="field-hint" style={{ marginBottom: 14 }}>Could not find that invoice.</div>
+            )}
+            <div className="field-row">
+              <div className="field"><label>Amount to credit</label>
+                <input type="number" min="0" inputMode="decimal" className="kb-input" value={form.amount || ''} onChange={(e) => setField('amount', e.target.value)} placeholder="5000" />
+              </div>
+              <div className="field"><label>Date</label>
+                <input type="date" className="kb-input" value={form.date || todayISO()} onChange={(e) => setField('date', e.target.value)} />
+              </div>
+            </div>
+            <div className="field"><label>Reason</label>
+              <input className="kb-input" value={form.reason || ''} onChange={(e) => setField('reason', e.target.value)} placeholder="e.g. Returned item, billing error, goodwill discount" />
+            </div>
+            <button className="btn btn-primary" onClick={submitCreditNote} disabled={!inv}>Issue credit note</button>
+          </Modal>
+        );
+      })()}
       {paymentReceiptDoc && (
         <PaymentReceiptModal
           receiptDoc={paymentReceiptDoc}
