@@ -1159,7 +1159,7 @@ function DocHeader({ settings }) {
 }
 // Bank details box — only shown when the business has account details saved in Settings.
 function DocPayBox({ settings }) {
-  if (!settings.accountNumber) return null;
+  if (!settings.accountNumber && !settings.bankName && !settings.accountName) return null;
   return (
     <div className="doc-pay-box">
       <div className="doc-pay-label">Pay into</div>
@@ -1357,7 +1357,6 @@ function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, s
                 ? <div key={i} className="doc-totals" />
                 : <div key={i} className="doc-line"><span>{label}</span><span className="kb-mono">{value}</span></div>)}
             </div>
-            <DocPayBox settings={settings} />
             <DocSignature settings={settings} />
             <div className="doc-thanks">Thank you for your patronage!</div>
             <DocFooter settings={settings} />
@@ -1549,7 +1548,6 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
             <div className="doc-totals">
               <div className="doc-total-row balance"><span>Amount received</span><span className="kb-mono">{fmt(receiptDoc.amount)}</span></div>
             </div>
-            <DocPayBox settings={settings} />
             <DocSignature settings={settings} />
             <div className="doc-thanks">{voided ? 'This receipt has been voided and is no longer valid.' : 'Thank you for your patronage!'}</div>
             <DocFooter settings={settings} />
@@ -4143,7 +4141,7 @@ function App() {
       `Total: ${fmt(total)}`,
       `Status: ${INVOICE_STATUS_LABEL[status]}`,
     ];
-    if (settings.accountNumber) lines.push('', `Pay to: ${settings.bankName || ''} ${settings.accountNumber} (${settings.accountName || settings.businessName})`);
+    if (settings.accountNumber || settings.bankName || settings.accountName) lines.push('', `Pay to: ${settings.bankName || ''} ${settings.accountNumber} (${settings.accountName || settings.businessName})`);
     return lines.join('\n');
   };
   const invoiceReminderMessage = (inv) => {
@@ -6462,28 +6460,6 @@ function App() {
             <button type="button" className="toast-close" onClick={() => setToast('')} aria-label="Dismiss"><X size={13} /></button>
           </div>
         )}
-      {confirmDialog && (
-        <div className="modal-backdrop" onClick={() => setConfirmDialog(null)}>
-          <div className="modal-card confirm-card" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head">
-              <h3 className="kb-display">{confirmDialog.danger ? 'Are you sure?' : 'Please confirm'}</h3>
-              <button className="icon-btn" onClick={() => setConfirmDialog(null)} title="Close" aria-label="Close"><X size={18} /></button>
-            </div>
-            <div className="modal-body">
-              <p className="panel-sub" style={{ marginBottom: 22, lineHeight: 1.5 }}>{confirmDialog.message}</p>
-              <div className="settings-actions">
-                <button
-                  className={confirmDialog.danger ? 'btn btn-danger' : 'btn btn-primary'}
-                  onClick={() => { const fn = confirmDialog.onConfirm; setConfirmDialog(null); fn && fn(); }}
-                >
-                  {confirmDialog.danger ? <Trash2 size={15} /> : <CheckCircle2 size={15} />} {confirmDialog.confirmLabel}
-                </button>
-                <button className="btn btn-outline" onClick={() => setConfirmDialog(null)}>Cancel</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
       {tourStep !== null && (
         <TourOverlay step={tourStep} onNext={tourNext} onBack={tourBack} onClose={() => { setTourStep(null); goHome(); }} />
       )}
@@ -7266,6 +7242,28 @@ function App() {
             <button className="btn btn-primary" onClick={() => setNewAccountKeyModal(null)}>I've saved it</button>
           </div>
         </Modal>
+      )}
+      {confirmDialog && (
+        <div className="modal-backdrop" onClick={() => setConfirmDialog(null)}>
+          <div className="modal-card confirm-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h3 className="kb-display">{confirmDialog.danger ? 'Are you sure?' : 'Please confirm'}</h3>
+              <button className="icon-btn" onClick={() => setConfirmDialog(null)} title="Close" aria-label="Close"><X size={18} /></button>
+            </div>
+            <div className="modal-body">
+              <p className="panel-sub" style={{ marginBottom: 22, lineHeight: 1.5 }}>{confirmDialog.message}</p>
+              <div className="settings-actions">
+                <button
+                  className={confirmDialog.danger ? 'btn btn-danger' : 'btn btn-primary'}
+                  onClick={() => { const fn = confirmDialog.onConfirm; setConfirmDialog(null); fn && fn(); }}
+                >
+                  {confirmDialog.danger ? <Trash2 size={15} /> : <CheckCircle2 size={15} />} {confirmDialog.confirmLabel}
+                </button>
+                <button className="btn btn-outline" onClick={() => setConfirmDialog(null)}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
