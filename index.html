@@ -297,7 +297,10 @@ const CATEGORY_META = {
   Target: { cls: 'tag-ink' },
   Cycle: { cls: 'tag-brick' },
 };
-function cyclePot(plan) { return Number(plan.amount || 0) * (plan.memberIds || []).length; }
+function cyclePot(plan) {
+  if (plan.perMemberAmounts) return (plan.memberIds || []).reduce((s, id) => s + Number((plan.memberAmounts || {})[id] ?? plan.amount ?? 0), 0);
+  return Number(plan.amount || 0) * (plan.memberIds || []).length;
+}
 function cycleRoundsDone(plan) { return (plan.payouts || []).length; }
 function cycleComplete(plan) { return (plan.memberIds || []).length > 0 && cycleRoundsDone(plan) >= plan.memberIds.length; }
 // Cycle payout order; falls back to join order and stays in sync with membership.
@@ -1902,6 +1905,64 @@ function ClientStatementModal({ client, invoices, receipts, creditNotes, setting
   );
 }
 
+// Reusable sorted summary report for the Invoices and Receipts lists — 'doc' is prebuilt
+// by the caller (who has access to client/invoice lookups) as { title, sortLabel, rows:
+// [{ primary, secondary, meta, amount }], totalLabel, total, count }.
+function SummaryReportModal({ doc, settings, fmt, onClose }) {
+  useEscClose(onClose);
+  const issuedOn = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const downloadImage = () => {
+    const node = document.getElementById('receipt-print-area');
+    if (!node || !window.html2canvas) return;
+    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+      const url = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = url; a.download = `${doc.title.replace(/\s+/g, '-').toLowerCase()}.png`; a.click();
+    });
+  };
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card receipt-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3 className="kb-display">{doc.title}</h3>
+          <button className="icon-btn" onClick={onClose} title="Close" aria-label="Close"><X size={18} /></button>
+        </div>
+        <div className="modal-body">
+          <div id="receipt-print-area" className="receipt-sheet">
+            <DocHeader settings={settings} />
+            <div className="doc-title-row">
+              <div>
+                <div className="doc-title">{doc.title}</div>
+                <div className="doc-title-meta">{doc.count} record{doc.count === 1 ? '' : 's'} · sorted by {doc.sortLabel} · generated {issuedOn}</div>
+              </div>
+            </div>
+            {doc.rows.length === 0 ? (
+              <div className="panel-sub" style={{ marginTop: 10 }}>Nothing matches the current filters.</div>
+            ) : (
+              <div>
+                {doc.rows.map((r, i) => (
+                  <div key={i} className="doc-line">
+                    <span>{r.primary}{r.secondary ? ` — ${r.secondary}` : ''}{r.meta ? <><br /><span style={{ fontSize: 11, color: 'var(--ink-soft)' }}>{r.meta}</span></> : null}</span>
+                    <span className="kb-mono">{fmt(r.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="doc-totals">
+              <div className="doc-total-row balance"><span>{doc.totalLabel}</span><span className="kb-mono">{fmt(doc.total)}</span></div>
+            </div>
+            <DocFooter settings={settings} />
+          </div>
+          <div className="receipt-actions">
+            <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
+            <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TaxReturnDocModal({ taxReturn, settings, fmt, onClose, onMarkFiled }) {
   useEscClose(onClose);
   const isIndividual = taxReturn.taxpayerType === 'individual';
@@ -2663,6 +2724,8 @@ function App() {
   const [clientSearch, setClientSearch] = useState('');
   const [invoiceSearch, setInvoiceSearch] = useState('');
   const [receiptSearch, setReceiptSearch] = useState('');
+  const [invoiceSort, setInvoiceSort] = useState({ key: 'date', dir: 'desc' });
+  const [receiptSort, setReceiptSort] = useState({ key: 'date', dir: 'desc' });
   const [invoiceDoc, setInvoiceDoc] = useState(null);
   const [paymentReceiptDoc, setPaymentReceiptDoc] = useState(null);
   const [creditNoteDoc, setCreditNoteDoc] = useState(null);
@@ -2678,6 +2741,8 @@ function App() {
   const [loanReceivedSearch, setLoanReceivedSearch] = useState('');
   const [loanTabSearch, setLoanTabSearch] = useState('');
   const [expandedTab, setExpandedTab] = useState(null);
+  const [contribPrompt, setContribPrompt] = useState(null);
+  const [contribAmountInput, setContribAmountInput] = useState('');
   const [expenseCategoryFilter, setExpenseCategoryFilter] = useState('All');
   const [expenseSearch, setExpenseSearch] = useState('');
   const [invoiceStatusFilter, setInvoiceStatusFilter] = useState('All');
@@ -2695,6 +2760,8 @@ function App() {
   const [tourStep, setTourStep] = useState(null);
   const [tabStatementDoc, setTabStatementDoc] = useState(null);
   const [clientStatementDoc, setClientStatementDoc] = useState(null);
+  const [invoiceSummaryDoc, setInvoiceSummaryDoc] = useState(null);
+  const [receiptSummaryDoc, setReceiptSummaryDoc] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [toast, setToast] = useState('');
   const [confirmDialog, setConfirmDialog] = useState(null); // { message, confirmLabel, danger, onConfirm }
@@ -3074,11 +3141,17 @@ function App() {
       : category === 'Daily' ? 'daily'
       : category === 'Target' ? (form.targetDateMode || 'daily')
       : 'monthly';
+    const memberAmounts = {};
+    if (form.perMemberAmounts) {
+      (form.memberIds || []).forEach((id) => { memberAmounts[id] = Number((form.memberAmounts || {})[id] || form.amount); });
+    }
     const plan = {
       id: uid(), name: form.name, category, frequency, amount: Number(form.amount),
       targetAmount: category === 'Target' ? Number(form.targetAmount || 0) : undefined,
       payouts: category === 'Cycle' ? [] : undefined,
       startDate: form.startDate || todayISO(), memberIds: form.memberIds || [],
+      perMemberAmounts: !!form.perMemberAmounts, memberAmounts,
+      fixedDueDay: form.fixedDueDay !== false,
     };
     setPlans((p) => [...p, plan]);
     setSelectedPlanId(plan.id);
@@ -4248,7 +4321,7 @@ function App() {
     const periods = periodsForPlan(plan);
     const header = ['Contributor', ...periods.map((p) => periodLabel(p, plan.frequency))].join(',');
     const rows = plan.memberIds.map((memberId) => {
-      const cells = periods.map((period) => findContribution(plan.id, memberId, period) ? plan.amount : 0);
+      const cells = periods.map((period) => { const c = findContribution(plan.id, memberId, period); return c ? c.amount : 0; });
       const name = (memberById(memberId)?.name || '').replace(/"/g, '""');
       return [`"${name}"`, ...cells].join(',');
     });
@@ -4272,21 +4345,33 @@ function App() {
     a.href = url; a.download = filename; a.click();
     URL.revokeObjectURL(url);
   };
-  const exportInvoicesCsv = (rows) => {
-    downloadCsv('invoices.csv', ['Number', 'Client', 'Issue date', 'Due date', 'Status', 'Subtotal', 'Discount %', 'VAT %', 'Total', 'Credited', 'Net total', 'Recurring'], rows.map((inv) => {
-      const client = clientById(inv.clientId);
-      const total = invoiceTotal(inv);
-      const net = invoiceNetTotal(inv);
-      return [inv.number, client ? client.name : '', inv.issueDate, inv.dueDate, INVOICE_STATUS_LABEL[invoiceStatusOf(inv)] || invoiceStatusOf(inv), invoiceSubtotal(inv), inv.discountPercent || 0, inv.vatPercent || 0, total, total - net, net, inv.recurring ? 'Yes' : 'No'];
-    }));
+  // Generic Excel (.xlsx) download, matching the pattern already used for the tax ledger export.
+  const downloadXlsx = (filename, headers, rows, sheetName) => {
+    if (rows.length === 0) { flash('Nothing to export for this filter.'); return; }
+    if (!window.XLSX) { flash('Excel export isn\u2019t available right now.'); return; }
+    const aoa = [headers, ...rows];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, sheetName || 'Sheet1');
+    XLSX.writeFile(wb, filename);
   };
-  const exportReceiptsCsv = (rows) => {
-    downloadCsv('receipts.csv', ['Receipt No.', 'Client', 'Invoice', 'Date', 'Amount', 'Status', 'Note'], rows.map((r) => {
-      const client = clientById(r.clientId);
-      const inv = r.invoiceId ? invoiceById(r.invoiceId) : null;
-      return [r.receiptNo, client ? client.name : (r.clientName || ''), inv ? inv.number : '', r.date, r.amount, r.voided ? 'Void' : r.status === 'draft' ? 'Draft' : 'Paid', r.note || ''];
-    }));
-  };
+  const invoiceTableHeaders = ['Number', 'Client', 'Issue date', 'Due date', 'Status', 'Subtotal', 'Discount %', 'VAT %', 'Total', 'Credited', 'Net total', 'Recurring'];
+  const invoiceTableRows = (rows) => rows.map((inv) => {
+    const client = clientById(inv.clientId);
+    const total = invoiceTotal(inv);
+    const net = invoiceNetTotal(inv);
+    return [inv.number, client ? client.name : '', inv.issueDate, inv.dueDate, INVOICE_STATUS_LABEL[invoiceStatusOf(inv)] || invoiceStatusOf(inv), invoiceSubtotal(inv), inv.discountPercent || 0, inv.vatPercent || 0, total, total - net, net, inv.recurring ? 'Yes' : 'No'];
+  });
+  const exportInvoicesCsv = (rows) => downloadCsv('invoices.csv', invoiceTableHeaders, invoiceTableRows(rows));
+  const exportInvoicesXlsx = (rows) => downloadXlsx('invoices.xlsx', invoiceTableHeaders, invoiceTableRows(rows), 'Invoices');
+  const receiptTableHeaders = ['Receipt No.', 'Client', 'Invoice', 'Date', 'Amount', 'Status', 'Note'];
+  const receiptTableRows = (rows) => rows.map((r) => {
+    const client = clientById(r.clientId);
+    const inv = r.invoiceId ? invoiceById(r.invoiceId) : null;
+    return [r.receiptNo, client ? client.name : (r.clientName || ''), inv ? inv.number : '', r.date, r.amount, r.voided ? 'Void' : r.status === 'draft' ? 'Draft' : 'Paid', r.note || ''];
+  });
+  const exportReceiptsCsv = (rows) => downloadCsv('receipts.csv', receiptTableHeaders, receiptTableRows(rows));
+  const exportReceiptsXlsx = (rows) => downloadXlsx('receipts.xlsx', receiptTableHeaders, receiptTableRows(rows), 'Receipts');
   const exportExpensesCsv = (rows) => {
     downloadCsv('expenses.csv', ['Date', 'Category', 'Note', 'Amount', 'Recurring'], rows.map((e) => [e.date, e.category, e.note || '', e.amount, e.recurring ? 'Yes' : 'No']));
   };
@@ -4640,7 +4725,7 @@ function App() {
             <div className="panel-title-row">
               <div>
                 <div className="panel-title">{plan.name}</div>
-                <div className="panel-sub">Tap a cell to mark a round as paid · {fmt(plan.amount)} per round</div>
+                <div className="panel-sub">Tap a cell to mark a round as paid · {plan.perMemberAmounts ? 'amount varies per member' : `${fmt(plan.amount)} per round`}</div>
               </div>
               <div className="inline-add">
                 <select className="kb-input" defaultValue="" onChange={(e) => { addMemberToPlan(plan.id, e.target.value); e.target.value = ''; }}>
@@ -4667,7 +4752,7 @@ function App() {
               <div className="cycle-panel">
                 <div className="cycle-panel-top">
                   <div>
-                    <div className="panel-sub">Round pot ({plan.memberIds.length} members &times; {fmt(plan.amount)})</div>
+                    <div className="panel-sub">Round pot ({plan.perMemberAmounts ? `${plan.memberIds.length} members, varying amounts` : `${plan.memberIds.length} members × ${fmt(plan.amount)}`})</div>
                     <div className="cycle-pot kb-mono">{fmt(cyclePot(plan))}</div>
                   </div>
                   {cycleComplete(plan) ? (
@@ -4758,16 +4843,25 @@ function App() {
                     <tr key={memberId}>
                       <td className="member-col">{memberById(memberId)?.name}</td>
                       {periods.map((period) => {
-                        const paid = !!findContribution(plan.id, memberId, period);
+                        const contribution = findContribution(plan.id, memberId, period);
+                        const paid = !!contribution;
                         const isToday = period === periods[periods.length - 1];
+                        const isFixed = plan.fixedDueDay !== false;
+                        const overdueUnpaid = isFixed && !paid && !isToday && new Date(period) < new Date(todayISO());
+                        const memberAmount = plan.perMemberAmounts ? (plan.memberAmounts || {})[memberId] ?? plan.amount : plan.amount;
+                        const paidOn = paid ? new Date(contribution.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : null;
                         return (
                           <td key={period}>
                             <button
-                              className={`cell-dot ${paid ? 'cell-paid' : 'cell-unpaid'} ${isToday ? 'cell-today' : ''}`}
-                              title={paid ? 'Paid — tap to undo' : 'Tap to mark paid'}
-                              onClick={() => toggleContribution(plan.id, memberId, period, plan.amount)}
+                              className={`cell-dot ${paid ? 'cell-paid' : 'cell-unpaid'} ${isToday ? 'cell-today' : ''} ${overdueUnpaid ? 'cell-overdue' : ''}`}
+                              title={paid ? `Paid ${fmt(contribution.amount)} on ${paidOn} — tap to undo` : overdueUnpaid ? 'Overdue — tap to enter amount paid' : 'Tap to enter amount paid'}
+                              onClick={() => {
+                                if (paid) { toggleContribution(plan.id, memberId, period); return; }
+                                setContribAmountInput(memberAmount ? String(memberAmount) : '');
+                                setContribPrompt({ planId: plan.id, memberId, period, frequency: plan.frequency, defaultAmount: memberAmount });
+                              }}
                             >
-                              {paid ? <CheckCircle2 size={15} /> : null}
+                              {paid ? (isFixed ? <span className="cell-paid-stamp">{new Date(contribution.date).getDate()}</span> : <CheckCircle2 size={15} />) : null}
                             </button>
                           </td>
                         );
@@ -5219,14 +5313,40 @@ function App() {
       const matchesSearch = name.includes(invoiceSearch.toLowerCase()) || i.number.toLowerCase().includes(invoiceSearch.toLowerCase());
       const matchesStatus = invoiceStatusFilter === 'All' || invoiceStatusOf(i) === invoiceStatusFilter;
       return matchesSearch && matchesStatus;
-    }).sort((a, b) => new Date(b.issueDate) - new Date(a.issueDate));
+    }).sort((a, b) => {
+      const { key, dir } = invoiceSort;
+      const mul = dir === 'asc' ? 1 : -1;
+      if (key === 'client') return mul * (clientById(a.clientId)?.name || '').localeCompare(clientById(b.clientId)?.name || '');
+      if (key === 'total') return mul * (invoiceTotal(a) - invoiceTotal(b));
+      if (key === 'status') return mul * invoiceStatusOf(a).localeCompare(invoiceStatusOf(b));
+      return mul * (new Date(a.issueDate) - new Date(b.issueDate));
+    });
     const overdueInvoices = invoices.filter((i) => invoiceStatusOf(i) === 'overdue');
     const overdueTotal = overdueInvoices.reduce((s, i) => s + invoiceNetTotal(i), 0);
     return (
       <>
         <SectionHeader eyebrow="Bill your clients" title="Invoices"
-          action={<div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-outline" onClick={() => exportInvoicesCsv(filtered)}><Download size={16} /> Export CSV</button>
+          action={<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn btn-outline" onClick={() => exportInvoicesCsv(filtered)}><Download size={16} /> CSV</button>
+            <button className="btn btn-outline" onClick={() => exportInvoicesXlsx(filtered)}><Download size={16} /> Excel</button>
+            <button className="btn btn-outline" onClick={() => {
+              const sortLabels = { 'date:desc': 'date (newest first)', 'date:asc': 'date (oldest first)', 'client:asc': 'client (A–Z)', 'client:desc': 'client (Z–A)', 'total:desc': 'total (highest first)', 'total:asc': 'total (lowest first)', 'status:asc': 'status' };
+              setInvoiceSummaryDoc({
+                title: 'Invoice Summary',
+                sortLabel: sortLabels[`${invoiceSort.key}:${invoiceSort.dir}`] || 'date',
+                count: filtered.length,
+                rows: filtered.map((inv) => {
+                  const client = clientById(inv.clientId);
+                  return {
+                    primary: inv.number, secondary: client ? client.name : 'Unknown client',
+                    meta: `${new Date(inv.issueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} · ${INVOICE_STATUS_LABEL[invoiceStatusOf(inv)] || invoiceStatusOf(inv)}`,
+                    amount: invoiceTotal(inv),
+                  };
+                }),
+                totalLabel: 'Total (all invoices shown)',
+                total: filtered.reduce((s, inv) => s + invoiceTotal(inv), 0),
+              });
+            }}><FileText size={16} /> PDF summary</button>
             <button className="btn btn-primary" data-tour="invoices-new" onClick={() => openModal('newInvoice', { items: [{ id: uid(), desc: '', qty: 1, price: '' }], issueDate: todayISO() })}><Plus size={16} /> New invoice</button>
           </div>} />
         {overdueInvoices.length > 0 && (
@@ -5240,6 +5360,15 @@ function App() {
           <select className="kb-input" value={invoiceStatusFilter} onChange={(e) => setInvoiceStatusFilter(e.target.value)}>
             <option value="All">All statuses</option>
             {Object.entries(INVOICE_STATUS_LABEL).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+          </select>
+          <select className="kb-input" value={`${invoiceSort.key}:${invoiceSort.dir}`} onChange={(e) => { const [key, dir] = e.target.value.split(':'); setInvoiceSort({ key, dir }); }}>
+            <option value="date:desc">Date (newest first)</option>
+            <option value="date:asc">Date (oldest first)</option>
+            <option value="client:asc">Client (A–Z)</option>
+            <option value="client:desc">Client (Z–A)</option>
+            <option value="total:desc">Total (highest first)</option>
+            <option value="total:asc">Total (lowest first)</option>
+            <option value="status:asc">Status</option>
           </select>
         </div>
         {clients.length === 0 && <div className="panel-sub" style={{ marginBottom: 12 }}>Add a client first, then create an invoice for them.</div>}
@@ -5298,15 +5427,53 @@ function App() {
       const client = clientById(r.clientId);
       const name = (client ? client.name : r.clientName || '').toLowerCase();
       return name.includes(receiptSearch.toLowerCase()) || r.receiptNo.toLowerCase().includes(receiptSearch.toLowerCase());
-    }).sort((a, b) => new Date(b.date) - new Date(a.date));
+    }).sort((a, b) => {
+      const { key, dir } = receiptSort;
+      const mul = dir === 'asc' ? 1 : -1;
+      if (key === 'client') {
+        const nameOf = (r) => clientById(r.clientId)?.name || r.clientName || '';
+        return mul * nameOf(a).localeCompare(nameOf(b));
+      }
+      if (key === 'amount') return mul * (Number(a.amount) - Number(b.amount));
+      return mul * (new Date(a.date) - new Date(b.date));
+    });
     return (
       <>
         <SectionHeader eyebrow="Proof of payment" title="Receipts"
-          action={<div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-outline" onClick={() => exportReceiptsCsv(filtered)}><Download size={16} /> Export CSV</button>
+          action={<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn btn-outline" onClick={() => exportReceiptsCsv(filtered)}><Download size={16} /> CSV</button>
+            <button className="btn btn-outline" onClick={() => exportReceiptsXlsx(filtered)}><Download size={16} /> Excel</button>
+            <button className="btn btn-outline" onClick={() => {
+              const sortLabels = { 'date:desc': 'date (newest first)', 'date:asc': 'date (oldest first)', 'client:asc': 'payer (A–Z)', 'client:desc': 'payer (Z–A)', 'amount:desc': 'amount (highest first)', 'amount:asc': 'amount (lowest first)' };
+              setReceiptSummaryDoc({
+                title: 'Receipt Summary',
+                sortLabel: sortLabels[`${receiptSort.key}:${receiptSort.dir}`] || 'date',
+                count: filtered.length,
+                rows: filtered.map((r) => {
+                  const client = clientById(r.clientId);
+                  return {
+                    primary: r.receiptNo, secondary: client ? client.name : (r.clientName || 'Unknown payer'),
+                    meta: `${new Date(r.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} · ${r.voided ? 'Void' : r.status === 'draft' ? 'Draft' : 'Paid'}`,
+                    amount: Number(r.amount || 0),
+                  };
+                }),
+                totalLabel: 'Total (all receipts shown)',
+                total: filtered.reduce((s, r) => s + Number(r.amount || 0), 0),
+              });
+            }}><FileText size={16} /> PDF summary</button>
             <button className="btn btn-primary" data-tour="receipts-new" onClick={() => openModal('newReceipt', { date: todayISO() })}><Plus size={16} /> Issue receipt</button>
           </div>} />
         <SearchBox className="loan-search" placeholder="Search by payer or receipt number…" value={receiptSearch} onChange={setReceiptSearch} />
+        <div className="field-row" style={{ marginBottom: 14 }}>
+          <select className="kb-input" value={`${receiptSort.key}:${receiptSort.dir}`} onChange={(e) => { const [key, dir] = e.target.value.split(':'); setReceiptSort({ key, dir }); }}>
+            <option value="date:desc">Date (newest first)</option>
+            <option value="date:asc">Date (oldest first)</option>
+            <option value="client:asc">Payer (A–Z)</option>
+            <option value="client:desc">Payer (Z–A)</option>
+            <option value="amount:desc">Amount (highest first)</option>
+            <option value="amount:asc">Amount (lowest first)</option>
+          </select>
+        </div>
         {filtered.length === 0 ? <EmptyState text={receipts.length === 0 ? "No receipts yet — they're generated automatically when you mark an invoice paid, or issue one directly." : 'No receipts match your search.'} /> : (
           <div className="loan-list">
             {filtered.map((r) => {
@@ -6411,6 +6578,8 @@ function App() {
         .cell-paid{background:var(--green-bg);border-color:var(--green);}
         .cell-unpaid:hover{border-color:var(--steel);}
         .cell-today{box-shadow:0 0 0 2px var(--gold-bg);}
+        .cell-overdue{background:var(--surface-2);border-style:dashed;opacity:0.55;}
+        .cell-paid-stamp{font-size:10px;font-weight:700;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;}
         .kb-input{border:1px solid var(--paper-line);border-radius:8px;padding:8px 11px;font-size:13px;font-family:inherit;background:var(--surface);color:var(--ink);}
         .master-detail{display:grid;grid-template-columns:300px 1fr;gap:16px;align-items:start;}
         .master-list{padding:14px;}
@@ -6800,9 +6969,21 @@ function App() {
               </select>
             </div>
             <div className="field">
-              <label>Amount per round</label>
+              <label>{form.perMemberAmounts ? 'Default amount' : 'Amount per round'}</label>
               <input type="number" min="0" inputMode="decimal" className="kb-input" placeholder="500" value={form.amount || ''} onChange={(e) => setField('amount', e.target.value)} />
             </div>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+            <input type="checkbox" checked={!!form.perMemberAmounts} onChange={(e) => setField('perMemberAmounts', e.target.checked)} />
+            Members contribute different amounts
+          </label>
+          <div className="field">
+            <label>Contribution schedule</label>
+            <select className="kb-input" value={form.fixedDueDay === false ? 'random' : 'fixed'} onChange={(e) => setField('fixedDueDay', e.target.value === 'fixed')}>
+              <option value="fixed">Fixed day due (same day each round)</option>
+              <option value="random">Random days (whenever works for each member)</option>
+            </select>
+            <div className="field-hint">Fixed shows a greyed-out cell once a round's due date passes unpaid, and stamps the day a member actually paid.</div>
           </div>
           {form.category === 'Target' && (
             <div className="field">
@@ -6836,16 +7017,26 @@ function App() {
           <div className="field">
             <label>Contributors</label>
             <div className="checkbox-list">
-              {members.map((m) => (
-                <label key={m.id}>
-                  <input type="checkbox" checked={(form.memberIds || []).includes(m.id)}
-                    onChange={(e) => {
-                      const ids = form.memberIds || [];
-                      setField('memberIds', e.target.checked ? [...ids, m.id] : ids.filter((id) => id !== m.id));
-                    }} />
-                  {m.name}
-                </label>
-              ))}
+              {members.map((m) => {
+                const checked = (form.memberIds || []).includes(m.id);
+                return (
+                  <label key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input type="checkbox" checked={checked}
+                      onChange={(e) => {
+                        const ids = form.memberIds || [];
+                        setField('memberIds', e.target.checked ? [...ids, m.id] : ids.filter((id) => id !== m.id));
+                      }} />
+                    <span style={{ flex: 1 }}>{m.name}</span>
+                    {form.perMemberAmounts && checked && (
+                      <input type="number" min="0" inputMode="decimal" className="kb-input kb-mono" style={{ width: 90 }}
+                        placeholder={form.amount || '0'}
+                        value={(form.memberAmounts || {})[m.id] || ''}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => setField('memberAmounts', { ...(form.memberAmounts || {}), [m.id]: e.target.value })} />
+                    )}
+                  </label>
+                );
+              })}
             </div>
           </div>
           <button className="btn btn-primary" onClick={submitNewPlan}>Create plan</button>
@@ -7492,6 +7683,12 @@ function App() {
           shareImageToWhatsApp={shareImageToWhatsApp}
         />
       )}
+      {invoiceSummaryDoc && (
+        <SummaryReportModal doc={invoiceSummaryDoc} settings={settings} fmt={fmt} onClose={() => setInvoiceSummaryDoc(null)} />
+      )}
+      {receiptSummaryDoc && (
+        <SummaryReportModal doc={receiptSummaryDoc} settings={settings} fmt={fmt} onClose={() => setReceiptSummaryDoc(null)} />
+      )}
       {invoiceDoc && (
         <InvoiceDocModal
           invoice={invoiceDoc}
@@ -7600,6 +7797,26 @@ function App() {
             }}><Copy size={14} /> Copy key</button>
             <button className="btn btn-primary" onClick={() => setNewAccountKeyModal(null)}>I've saved it</button>
           </div>
+        </Modal>
+      )}
+      {contribPrompt && (
+        <Modal title="Enter amount paid" onClose={() => setContribPrompt(null)}>
+          <div className="field-hint" style={{ marginBottom: 14 }}>
+            {memberById(contribPrompt.memberId)?.name} — {periodLabel(contribPrompt.period, contribPrompt.frequency)}
+          </div>
+          <div className="field">
+            <label>Amount</label>
+            <input type="number" min="0" inputMode="decimal" className="kb-input" autoFocus
+              value={contribAmountInput} onChange={(e) => setContribAmountInput(e.target.value)}
+              placeholder={contribPrompt.defaultAmount ? String(contribPrompt.defaultAmount) : '500'}
+              onKeyDown={(e) => { if (e.key === 'Enter') document.getElementById('contrib-prompt-submit')?.click(); }} />
+          </div>
+          <button id="contrib-prompt-submit" className="btn btn-primary" onClick={() => {
+            const amt = Number(contribAmountInput || contribPrompt.defaultAmount || 0);
+            if (!amt) { flash('Enter an amount.'); return; }
+            toggleContribution(contribPrompt.planId, contribPrompt.memberId, contribPrompt.period, amt);
+            setContribPrompt(null);
+          }}>Mark paid</button>
         </Modal>
       )}
       {confirmDialog && (
