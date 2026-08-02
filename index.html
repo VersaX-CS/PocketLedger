@@ -1516,7 +1516,7 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
         </div>
         <div className="modal-body">
           <div id="receipt-print-area" className="receipt-sheet" style={voided ? { position: 'relative' } : undefined}>
-            {voided && <div className="doc-void-watermark">VOIDED</div>}
+            {voided && <div className="doc-void-watermark">VOID</div>}
             <DocHeader settings={settings} />
             <div className="doc-title-row">
               <div>
@@ -1530,7 +1530,7 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
             </div>
             {(voided || draft) && (
               <div className="doc-line" style={{ marginBottom: 4 }}>
-                <span><Stamp status={voided ? 'overdue' : 'due-soon'} label={voided ? 'Voided' : 'Draft'} /></span>
+                <span><Stamp status={voided ? 'overdue' : 'due-soon'} label={voided ? 'Void' : 'Draft'} /></span>
                 {voided && <span className="kb-mono">{receiptDoc.voidedAt ? new Date(receiptDoc.voidedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}</span>}
               </div>
             )}
@@ -1614,7 +1614,7 @@ function CreditNoteDocModal({ creditNoteDoc, client, invoice, settings, fmt, onC
             </div>
             {voided && (
               <div className="doc-line" style={{ marginBottom: 4 }}>
-                <span><Stamp status="overdue" label="Voided" /></span>
+                <span><Stamp status="overdue" label="Void" /></span>
                 <span className="kb-mono">{creditNoteDoc.voidedAt ? new Date(creditNoteDoc.voidedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}</span>
               </div>
             )}
@@ -1747,32 +1747,40 @@ function TabStatementModal({ tab, contact, settings, fmt, onClose, shareImageToW
         </div>
         <div className="modal-body">
           <div id="receipt-print-area" className="receipt-sheet">
-            <div className="receipt-brand kb-display">{settings.businessName}</div>
-            <div className="receipt-sub">IOU Statement — {personName}</div>
-            <div className="receipt-lines">
-              <div className="receipt-row"><span>Statement No.</span><span className="kb-mono">{statementNo}</span></div>
-              <div className="receipt-row"><span>Date issued</span><span className="kb-mono">{issuedOn}</span></div>
-              {personPhone && <div className="receipt-row"><span>Phone</span><span className="kb-mono">{personPhone}</span></div>}
-              {tab.note && <div className="receipt-row"><span>Note</span><span className="kb-mono">{tab.note}</span></div>}
+            <DocHeader settings={settings} />
+            <div className="doc-title-row">
+              <div>
+                <div className="doc-title">IOU Statement</div>
+                <div className="doc-title-meta">{statementNo} · {issuedOn}</div>
+              </div>
+              <div>
+                <div className="doc-billed-label">Statement for</div>
+                <div className="doc-billed-name">{personName}</div>
+              </div>
             </div>
-            <div className="receipt-divider" />
+            <div>
+              {personPhone && <div className="doc-line"><span>Phone</span><span className="kb-mono">{personPhone}</span></div>}
+              {tab.note && <div className="doc-line"><span>Note</span><span className="kb-mono">{tab.note}</span></div>}
+            </div>
             {rows.length === 0 ? (
-              <div className="panel-sub">No transactions recorded yet.</div>
+              <div className="panel-sub" style={{ marginTop: 10 }}>No transactions recorded yet.</div>
             ) : (
-              <div className="receipt-lines">
+              <div>
                 {rows.map((r) => (
-                  <div key={r.id} className="receipt-row">
+                  <div key={r.id} className="doc-line">
                     <span>{new Date(r.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} — {r.type === 'borrow' ? 'Borrowed' : 'Paid back'}{r.note ? ` (${r.note})` : ''}</span>
                     <span className="kb-mono">{r.type === 'borrow' ? '+' : '−'}{fmt(r.amount)} · bal {fmt(Math.abs(r.running))}</span>
                   </div>
                 ))}
               </div>
             )}
-            <div className="receipt-divider" />
-            <div className="receipt-row"><span>Total borrowed</span><span className="kb-mono">{fmt(totalBorrowed)}</span></div>
-            <div className="receipt-row"><span>Total paid back</span><span className="kb-mono">{fmt(totalPaid)}</span></div>
-            <div className="receipt-row" style={{ fontWeight: 700, fontSize: 15 }}><span>{balanceLabel}</span><span className="kb-mono">{fmt(Math.abs(balance))}</span></div>
-            <div className="receipt-footer">Issued {issuedOn}{settings.ownerName ? ` · ${settings.ownerName}` : ''}</div>
+            <div className="doc-totals">
+              <div className="doc-total-row"><span>Total borrowed</span><span className="kb-mono">{fmt(totalBorrowed)}</span></div>
+              <div className="doc-total-row"><span>Total paid back</span><span className="kb-mono">{fmt(totalPaid)}</span></div>
+              <div className="doc-total-row balance"><span>{balanceLabel}</span><span className="kb-mono">{fmt(Math.abs(balance))}</span></div>
+            </div>
+            <DocSignature settings={settings} />
+            <DocFooter settings={settings} />
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
@@ -1809,59 +1817,72 @@ function TaxReturnDocModal({ taxReturn, settings, fmt, onClose, onMarkFiled }) {
         </div>
         <div className="modal-body">
           <div id="receipt-print-area" className="receipt-sheet">
-            <div className="invoice-doc-head">
-              {settings.logoDataUrl && <img src={settings.logoDataUrl} alt="logo" className="invoice-logo" />}
+            <DocHeader settings={settings} />
+            <div className="doc-title-row">
               <div>
-                <div className="receipt-brand">{settings.businessName}</div>
-                <div className="panel-sub">{isIndividual ? 'Personal Income Tax Return' : 'Companies Income Tax Return'} — Year {taxReturn.year}</div>
+                <div className="doc-title">{isIndividual ? 'Personal Income Tax Return' : 'Companies Income Tax Return'}</div>
+                <div className="doc-title-meta">Year {taxReturn.year} · {issuedOn}</div>
+              </div>
+              <div>
+                <div className="doc-billed-label">Taxpayer</div>
+                <div className="doc-billed-name">{taxReturn.taxpayerName}</div>
               </div>
             </div>
-            <div className="receipt-sub" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>{taxReturn.taxpayerName}{taxReturn.tin ? ` · TIN ${taxReturn.tin}` : ''}</span>
-              <Stamp status={taxReturn.status === 'filed' ? 'completed' : 'due-soon'} label={taxReturn.status === 'filed' ? 'Filed' : 'Draft'} />
+            <div>
+              {taxReturn.tin && <div className="doc-line"><span>TIN</span><span className="kb-mono">{taxReturn.tin}</span></div>}
+              <div className="doc-line"><span>Status</span><span><Stamp status={taxReturn.status === 'filed' ? 'completed' : 'due-soon'} label={taxReturn.status === 'filed' ? 'Filed' : 'Draft'} /></span></div>
             </div>
-            <div className="receipt-divider" />
             {isIndividual ? (
-              <div className="receipt-lines">
-                <div className="receipt-row"><span>Gross income</span><span className="kb-mono">{fmt(taxReturn.grossIncome)}</span></div>
-                <div className="receipt-row"><span>Pension contribution</span><span className="kb-mono">−{fmt(taxReturn.pension)}</span></div>
-                <div className="receipt-row"><span>NHF contribution</span><span className="kb-mono">−{fmt(taxReturn.nhf)}</span></div>
-                <div className="receipt-row"><span>Life assurance premium</span><span className="kb-mono">−{fmt(taxReturn.life)}</span></div>
-                <div className="receipt-row"><span>Rent relief (20% of rent, capped ₦500,000)</span><span className="kb-mono">−{fmt(taxReturn.rentRelief)}</span></div>
-                {taxReturn.otherReliefs > 0 && <div className="receipt-row"><span>Other reliefs</span><span className="kb-mono">−{fmt(taxReturn.otherReliefs)}</span></div>}
-                <div className="receipt-divider" />
-                <div className="receipt-row" style={{ fontWeight: 700 }}><span>Chargeable income</span><span className="kb-mono">{fmt(taxReturn.chargeableIncome)}</span></div>
-                <div className="receipt-divider" />
-                {(taxReturn.breakdown || []).map((b, i) => (
-                  <div key={i} className="receipt-row" style={{ fontSize: 11.5, color: 'var(--ink-soft)' }}>
-                    <span>{fmt(b.from)} – {b.to ? fmt(b.to) : 'above'} @ {Math.round(b.rate * 100)}%</span>
-                    <span className="kb-mono">{fmt(b.tax)}</span>
-                  </div>
-                ))}
-                <div className="receipt-divider" />
-                <div className="receipt-row" style={{ fontWeight: 700, fontSize: 15 }}><span>Total tax payable</span><span className="kb-mono">{fmt(taxReturn.taxPayable)}</span></div>
-              </div>
+              <>
+                <div>
+                  <div className="doc-line"><span>Gross income</span><span className="kb-mono">{fmt(taxReturn.grossIncome)}</span></div>
+                  <div className="doc-line"><span>Pension contribution</span><span className="kb-mono">−{fmt(taxReturn.pension)}</span></div>
+                  <div className="doc-line"><span>NHF contribution</span><span className="kb-mono">−{fmt(taxReturn.nhf)}</span></div>
+                  <div className="doc-line"><span>Life assurance premium</span><span className="kb-mono">−{fmt(taxReturn.life)}</span></div>
+                  <div className="doc-line"><span>Rent relief (20% of rent, capped ₦500,000)</span><span className="kb-mono">−{fmt(taxReturn.rentRelief)}</span></div>
+                  {taxReturn.otherReliefs > 0 && <div className="doc-line"><span>Other reliefs</span><span className="kb-mono">−{fmt(taxReturn.otherReliefs)}</span></div>}
+                </div>
+                <div className="doc-totals">
+                  <div className="doc-total-row"><span>Chargeable income</span><span className="kb-mono">{fmt(taxReturn.chargeableIncome)}</span></div>
+                </div>
+                <div>
+                  {(taxReturn.breakdown || []).map((b, i) => (
+                    <div key={i} className="doc-line" style={{ fontSize: 11, color: 'var(--ink-soft)' }}>
+                      <span>{fmt(b.from)} – {b.to ? fmt(b.to) : 'above'} @ {Math.round(b.rate * 100)}%</span>
+                      <span className="kb-mono">{fmt(b.tax)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="doc-totals">
+                  <div className="doc-total-row balance"><span>Total tax payable</span><span className="kb-mono">{fmt(taxReturn.taxPayable)}</span></div>
+                </div>
+              </>
             ) : (
-              <div className="receipt-lines">
-                <div className="receipt-row"><span>Annual turnover</span><span className="kb-mono">{fmt(taxReturn.turnover)}</span></div>
-                <div className="receipt-row"><span>Total fixed assets</span><span className="kb-mono">{fmt(taxReturn.fixedAssets)}</span></div>
-                <div className="receipt-row"><span>Allowable expenses</span><span className="kb-mono">−{fmt(taxReturn.allowableExpenses)}</span></div>
-                <div className="receipt-divider" />
-                <div className="receipt-row" style={{ fontWeight: 700 }}><span>Assessable profit</span><span className="kb-mono">{fmt(taxReturn.assessableProfit)}</span></div>
-                <div className="receipt-divider" />
+              <>
+                <div>
+                  <div className="doc-line"><span>Annual turnover</span><span className="kb-mono">{fmt(taxReturn.turnover)}</span></div>
+                  <div className="doc-line"><span>Total fixed assets</span><span className="kb-mono">{fmt(taxReturn.fixedAssets)}</span></div>
+                  <div className="doc-line"><span>Allowable expenses</span><span className="kb-mono">−{fmt(taxReturn.allowableExpenses)}</span></div>
+                </div>
+                <div className="doc-totals">
+                  <div className="doc-total-row"><span>Assessable profit</span><span className="kb-mono">{fmt(taxReturn.assessableProfit)}</span></div>
+                </div>
                 {taxReturn.isSmallCompany ? (
-                  <div className="panel-sub">Small company — exempt from CIT, CGT and the Development Levy.</div>
+                  <div className="panel-sub" style={{ marginTop: 10 }}>Small company — exempt from CIT, CGT and the Development Levy.</div>
                 ) : (
-                  <>
-                    <div className="receipt-row"><span>Companies Income Tax (30%)</span><span className="kb-mono">{fmt(taxReturn.taxPayable)}</span></div>
-                    <div className="receipt-row"><span>Development Levy (4%)</span><span className="kb-mono">{fmt(taxReturn.developmentLevy)}</span></div>
-                  </>
+                  <div>
+                    <div className="doc-line"><span>Companies Income Tax (30%)</span><span className="kb-mono">{fmt(taxReturn.taxPayable)}</span></div>
+                    <div className="doc-line"><span>Development Levy (4%)</span><span className="kb-mono">{fmt(taxReturn.developmentLevy)}</span></div>
+                  </div>
                 )}
-                <div className="receipt-divider" />
-                <div className="receipt-row" style={{ fontWeight: 700, fontSize: 15 }}><span>Total payable</span><span className="kb-mono">{fmt(taxReturn.taxPayable + taxReturn.developmentLevy)}</span></div>
-              </div>
+                <div className="doc-totals">
+                  <div className="doc-total-row balance"><span>Total payable</span><span className="kb-mono">{fmt(taxReturn.taxPayable + taxReturn.developmentLevy)}</span></div>
+                </div>
+              </>
             )}
-            <div className="receipt-footer">Computed {issuedOn} under the Nigeria Tax Act, 2025 (effective 1 January 2026). This is an estimate for filing preparation — confirm figures against your NRS assessment before submission.</div>
+            <div className="receipt-footer">Computed under the Nigeria Tax Act, 2025 (effective 1 January 2026). This is an estimate for filing preparation — confirm figures against your NRS assessment before submission.</div>
+            <DocSignature settings={settings} />
+            <DocFooter settings={settings} />
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
@@ -4893,7 +4914,7 @@ function App() {
                               <div className="loan-card-top" onClick={() => setPaymentReceiptDoc(r)}>
                                 <span className="loan-name">{r.receiptNo}</span>
                                 <div className="loan-card-right">
-                                  <Stamp status={r.voided ? 'overdue' : (!r.voided && r.status === 'draft') ? 'due-soon' : 'completed'} label={r.voided ? 'Voided' : (!r.voided && r.status === 'draft') ? 'Draft' : 'Paid'} />
+                                  <Stamp status={r.voided ? 'overdue' : (!r.voided && r.status === 'draft') ? 'due-soon' : 'completed'} label={r.voided ? 'Void' : (!r.voided && r.status === 'draft') ? 'Draft' : 'Paid'} />
                                   <div className="outstanding kb-mono">{fmt(r.amount)}</div>
                                   <ChevronRight size={15} className="chev" />
                                 </div>
@@ -5009,7 +5030,7 @@ function App() {
                       <div className="plan-card-meta">{new Date(r.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}{invoice ? ` · for ${invoice.number}` : ''}</div>
                     </div>
                     <div className="loan-card-right">
-                      {voided ? <Stamp status="overdue" label="Voided" /> : draft ? <Stamp status="due-soon" label="Draft" /> : <Stamp status="completed" label="Paid" />}
+                      {voided ? <Stamp status="overdue" label="Void" /> : draft ? <Stamp status="due-soon" label="Draft" /> : <Stamp status="completed" label="Paid" />}
                       <div className="outstanding kb-mono">{fmt(r.amount)}<span>received</span></div>
                       <ChevronRight size={15} className="chev" />
                     </div>
