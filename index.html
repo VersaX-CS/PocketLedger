@@ -14,6 +14,8 @@
 <script src="https://unpkg.com/lucide-react@0.383.0/dist/umd/lucide-react.js"></script>
 <script src="https://unpkg.com/recharts@2/umd/Recharts.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<!-- Used to generate true downloadable .pdf files (invoice/receipt summaries) instead of relying only on the browser print dialog -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <!-- Used by the Tax import to read Excel (.xlsx/.xls) bank statement exports -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <!-- Used by the Tax import to read PDF bank statement exports -->
@@ -241,9 +243,11 @@ function monthsFromStart(startDate, cap) {
 }
 function periodsForPlan(plan) {
   const start = plan.startDate || todayISO();
-  // Anchored to the plan's start date, not today.
-  if (plan.frequency === 'daily') return periodsFromStart(start, 1, 45);
-  if (plan.frequency === 'weekly') return periodsFromStart(start, 7, 26);
+  // Anchored to the plan's start date, not today. Caps are generous ceilings (roughly
+  // 2 years of columns), not intended durations — a plan simply stops growing new
+  // columns once it reaches its cap, however long that takes at its cadence.
+  if (plan.frequency === 'daily') return periodsFromStart(start, 1, 400);
+  if (plan.frequency === 'weekly') return periodsFromStart(start, 7, 104);
   return monthsFromStart(start, 24);
 }
 function periodLabel(period, frequency) {
@@ -997,11 +1001,11 @@ function EmptyState({ text }) {
 function SectionHeader({ eyebrow, title, action }) {
   return (
     <div className="section-header">
-      <div>
+      <div className="section-header-top">
         <div className="eyebrow">{eyebrow}</div>
         <h2 className="kb-display">{title}</h2>
       </div>
-      {action}
+      {action && <div className="section-header-actions">{action}</div>}
     </div>
   );
 }
@@ -1960,16 +1964,17 @@ function ClientStatementModal({ client, invoices, receipts, creditNotes, setting
 // Reusable sorted summary report for the Invoices and Receipts lists — 'doc' is prebuilt
 // by the caller (who has access to client/invoice lookups) as { title, sortLabel, rows:
 // [{ primary, secondary, meta, amount }], totalLabel, total, count }.
-function SummaryReportModal({ doc, settings, fmt, onClose }) {
+function SummaryReportModal({ doc, settings, fmt, onClose, downloadNodeAsPdf }) {
   useEscClose(onClose);
   const issuedOn = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const slug = doc.title.replace(/\s+/g, '-').toLowerCase();
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
     window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
-      a.href = url; a.download = `${doc.title.replace(/\s+/g, '-').toLowerCase()}.png`; a.click();
+      a.href = url; a.download = `${slug}.png`; a.click();
     });
   };
   return (
@@ -2007,6 +2012,7 @@ function SummaryReportModal({ doc, settings, fmt, onClose }) {
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
+            <button className="btn btn-outline btn-small" onClick={() => downloadNodeAsPdf('receipt-print-area', `${slug}.pdf`)}><FileText size={14} /> Download PDF</button>
             <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
           </div>
         </div>
@@ -2015,6 +2021,63 @@ function SummaryReportModal({ doc, settings, fmt, onClose }) {
   );
 }
 
+function BiodataDocModal({ doc, settings, fmt, onClose, shareImageToWhatsApp }) {
+  useEscClose(onClose);
+  const { name, phone, photoDataUrl, fields = [], filename } = doc;
+  const issuedOn = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+
+  const downloadImage = () => {
+    const node = document.getElementById('receipt-print-area');
+    if (!node || !window.html2canvas) return;
+    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+      const url = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = url; a.download = filename || 'biodata.png'; a.click();
+    });
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card receipt-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3 className="kb-display">Biodata</h3>
+          <button className="icon-btn" onClick={onClose} title="Close" aria-label="Close"><X size={18} /></button>
+        </div>
+        <div className="modal-body">
+          <div id="receipt-print-area" className="receipt-sheet">
+            <DocHeader settings={settings} />
+            <div className="doc-title-row">
+              <div>
+                <div className="doc-title">Contributor Biodata</div>
+                <div className="doc-title-meta">{issuedOn}</div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                {photoDataUrl ? (
+                  <img src={photoDataUrl} alt={name} style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', border: '1px solid var(--paper-line)' }} />
+                ) : (
+                  <div className="member-avatar-lg kb-display" style={{ margin: '0 auto' }}>{(name || '?').charAt(0)}</div>
+                )}
+              </div>
+            </div>
+            <div>
+              <div className="doc-line"><span>Name</span><span className="kb-mono">{name}</span></div>
+              {phone && <div className="doc-line"><span>Phone</span><span className="kb-mono">{phone}</span></div>}
+              {fields.map((f, i) => (
+                <div key={i} className="doc-line"><span>{f.label}</span><span className="kb-mono">{f.value}</span></div>
+              ))}
+            </div>
+            <DocFooter settings={settings} />
+          </div>
+          <div className="receipt-actions">
+            <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
+            <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
+            <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(phone, '', filename || 'biodata.png')}><MessageCircle size={14} /> Share image on WhatsApp</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 function TaxReturnDocModal({ taxReturn, settings, fmt, onClose, onMarkFiled }) {
   useEscClose(onClose);
   const isIndividual = taxReturn.taxpayerType === 'individual';
@@ -2785,8 +2848,10 @@ function App() {
   const [activeTab, setActiveTab] = useState('home');
   const [selectedPlanId, setSelectedPlanId] = useState('tp1');
   const [selectedMemberId, setSelectedMemberId] = useState('m1');
+  const [checkedMemberIds, setCheckedMemberIds] = useState([]);
   const [expandedLoan, setExpandedLoan] = useState(null);
   const [expandedClient, setExpandedClient] = useState(null);
+  const [checkedClientIds, setCheckedClientIds] = useState([]);
   const [dismissed, setDismissed] = useState([]);
   const [memberSearch, setMemberSearch] = useState('');
   const [loanGivenSearch, setLoanGivenSearch] = useState('');
@@ -2798,6 +2863,10 @@ function App() {
   const [expenseCategoryFilter, setExpenseCategoryFilter] = useState('All');
   const [expenseSearch, setExpenseSearch] = useState('');
   const [invoiceStatusFilter, setInvoiceStatusFilter] = useState('All');
+  const [invoiceDateFrom, setInvoiceDateFrom] = useState('');
+  const [invoiceDateTo, setInvoiceDateTo] = useState('');
+  const [receiptDateFrom, setReceiptDateFrom] = useState('');
+  const [receiptDateTo, setReceiptDateTo] = useState('');
   const [expenseSort, setExpenseSort] = useState({ key: 'date', dir: 'desc' });
   const [expenseShowCount, setExpenseShowCount] = useState(20);
   const [memberHistoryShowCount, setMemberHistoryShowCount] = useState(12);
@@ -2814,6 +2883,7 @@ function App() {
   const [clientStatementDoc, setClientStatementDoc] = useState(null);
   const [invoiceSummaryDoc, setInvoiceSummaryDoc] = useState(null);
   const [receiptSummaryDoc, setReceiptSummaryDoc] = useState(null);
+  const [biodataDoc, setBiodataDoc] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [toast, setToast] = useState('');
   const [confirmDialog, setConfirmDialog] = useState(null); // { message, confirmLabel, danger, onConfirm }
@@ -2937,6 +3007,46 @@ function App() {
       setInvoices((prev) => [...additions, ...prev]);
       setSettings((s) => ({ ...s, invoiceCounter: counter }));
       flash(`${additions.length} recurring invoice${additions.length === 1 ? '' : 's'} drafted for this month — review and issue when ready.`);
+    }
+  }, [currentUser]);
+
+  // ---------- auto-draft recurring receipts for the current month ----------
+  // Same idea as the recurring-invoice engine above: a recurring receipt (e.g. a
+  // monthly retainer payment) gets a fresh draft each month rather than being
+  // auto-issued, so you still get to confirm the payment actually came in.
+  useEffect(() => {
+    if (!currentUser || isReadOnly) return;
+    const thisMonth = todayISO().slice(0, 7);
+    const groups = {};
+    receipts.forEach((r) => {
+      if (!r.recurring || r.voided) return;
+      const key = r.recurringId || r.id;
+      (groups[key] = groups[key] || []).push(r);
+    });
+    const fromData = receipts.map((r) => Number((r.receiptNo || '').replace(/\D/g, '')) || 0);
+    let counter = Math.max(settings.receiptCounter || 2000, fromData.length ? Math.max(...fromData) : 2000);
+    const additions = [];
+    Object.values(groups).forEach((entries) => {
+      const latest = entries.slice().sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+      if (latest.date.slice(0, 7) === thisMonth) return; // already generated this month
+      const originalDay = new Date(latest.date).getDate();
+      const [yy, mm] = thisMonth.split('-').map(Number);
+      const daysInMonth = new Date(yy, mm, 0).getDate();
+      const day = Math.min(originalDay, daysInMonth);
+      counter += 1;
+      additions.push({
+        id: uid(), receiptNo: `RCT-${counter}`, invoiceId: latest.invoiceId || null,
+        clientId: latest.clientId || null, clientName: latest.clientName || '',
+        items: (latest.items || []).map((it) => ({ ...it, id: uid() })),
+        amount: latest.amount, date: `${thisMonth}-${String(day).padStart(2, '0')}`,
+        note: latest.note || '', discountPercent: latest.discountPercent || 0, vatPercent: latest.vatPercent || 0,
+        status: 'draft', recurring: true, recurringId: latest.recurringId || latest.id,
+      });
+    });
+    if (additions.length) {
+      setReceipts((prev) => [...additions, ...prev]);
+      setSettings((s) => ({ ...s, receiptCounter: counter }));
+      flash(`${additions.length} recurring receipt${additions.length === 1 ? '' : 's'} drafted for this month — review and issue when ready.`);
     }
   }, [currentUser]);
 
@@ -3263,7 +3373,7 @@ function App() {
     if (includedRows.length === 0) { flash('Select at least one contributor to import.'); return; }
     const frequency = form.frequency || 'monthly';
     const category = frequency === 'daily' ? 'Daily' : frequency === 'weekly' ? 'Weekly' : 'Monthly';
-    const cap = frequency === 'daily' ? 45 : frequency === 'weekly' ? 26 : 24;
+    const cap = frequency === 'daily' ? 400 : frequency === 'weekly' ? 104 : 24;
     const count = Math.min(form.periodCount || 0, cap);
     const periods = periodsForCount(form.startDate || todayISO(), frequency, count);
     const newMembers = [];
@@ -3618,12 +3728,14 @@ function App() {
     }
     // Editing an existing draft updates it in place instead of creating a new receipt.
     if (form.editingReceiptId) {
+      const existing = receipts.find((r) => r.id === form.editingReceiptId);
       const updated = {
-        ...receipts.find((r) => r.id === form.editingReceiptId),
+        ...existing,
         invoiceId: form.invoiceId || null, clientId, clientName: '',
         amount, items, date: form.date || todayISO(), note: form.note || '',
         discountPercent: Number(form.discountPercent || 0), vatPercent: Number(form.vatPercent || 0),
         status: asIssue ? 'issued' : 'draft',
+        recurring: !!form.recurring, recurringId: form.recurring ? (existing.recurringId || existing.id) : null,
       };
       setReceipts((prev) => prev.map((r) => r.id === form.editingReceiptId ? updated : r));
       closeModalSilently();
@@ -3637,7 +3749,9 @@ function App() {
       amount, items, date: form.date || todayISO(), note: form.note || '',
       discountPercent: Number(form.discountPercent || 0), vatPercent: Number(form.vatPercent || 0),
       status: asIssue ? 'issued' : 'draft',
+      recurring: !!form.recurring, recurringId: null,
     };
+    rcpt.recurringId = form.recurring ? rcpt.id : null;
     setReceipts((r) => [rcpt, ...r]);
     setSettings((s) => ({ ...s, receiptCounter: Math.max(s.receiptCounter || 2000, Number((rcpt.receiptNo || '').replace(/\D/g, '')) || 0) }));
     closeModalSilently();
@@ -3652,6 +3766,7 @@ function App() {
       clientId: r.clientId || '', clientName: r.clientName || '',
       items: (r.items || []).map((it) => ({ ...it })), amount: r.amount, date: r.date, note: r.note || '',
       discountPercent: r.discountPercent || '', vatPercent: r.vatPercent || '',
+      recurring: !!r.recurring,
     });
   };
   const issueReceipt = (receiptId) => {
@@ -3659,17 +3774,20 @@ function App() {
     setReceipts((prev) => prev.map((r) => r.id === receiptId ? { ...r, status: 'issued' } : r));
     flash('Receipt issued.');
   };
-  // Only drafts can be deleted outright — once a receipt has been issued (or voided),
-  // it's kept on record for audit purposes; "delete" at that point means voiding it,
-  // or wiping everything via Settings > Clear all data.
+  // Drafts can always be deleted outright. Issued/voided receipts are normally kept on
+  // record for audit purposes ("delete" there means voiding instead) — unless the
+  // person has explicitly turned on unrestricted delete in Settings, in which case any
+  // receipt can be removed regardless of status.
   const deleteReceipt = (receiptId) => {
     if (guardWrite()) return;
     const receipt = receipts.find((r) => r.id === receiptId);
-    if (receipt && receipt.status !== 'draft') { flash('Issued receipts can\u2019t be deleted — void it instead to keep the record intact.'); return; }
-    askConfirm('Delete this draft receipt?', () => {
+    const unrestricted = settings.allowDocDelete === true;
+    if (receipt && receipt.status !== 'draft' && !unrestricted) { flash('Issued receipts can\u2019t be deleted \u2014 void it instead, or turn on unrestricted delete in Settings.'); return; }
+    const label = receipt && receipt.status !== 'draft' ? `${receipt.voided ? 'voided' : 'issued'} receipt ${receipt.receiptNo}` : 'this draft receipt';
+    askConfirm(`Delete ${label}?${receipt && receipt.status !== 'draft' ? ' This permanently removes it from your records.' : ''}`, () => {
       setReceipts((prev) => prev.filter((r) => r.id !== receiptId));
-      flash('Draft receipt deleted.', receipt ? () => setReceipts((prev) => [receipt, ...prev]) : undefined);
-    });
+      flash('Receipt deleted.', receipt ? () => setReceipts((prev) => [receipt, ...prev]) : undefined);
+    }, receipt && receipt.status !== 'draft' ? { confirmLabel: 'Delete permanently', danger: true } : undefined);
   };
   // Voiding keeps the receipt on record (nothing is edited or erased) but marks it
   // cancelled, so the original figures stay intact for audit purposes.
@@ -3744,17 +3862,20 @@ function App() {
     setCreditNotes((prev) => prev.map((cn) => cn.id === creditNoteId ? { ...cn, voided: false, voidedAt: null } : cn));
     flash('Credit note restored.');
   };
-  // Only drafts can be deleted outright — once an invoice has been issued, paid, or
-  // voided, it's kept on record for audit purposes; "delete" at that point means voiding
-  // it instead, or wiping everything via Settings > Clear all data.
+  // Drafts can always be deleted outright. Issued/paid/voided invoices are normally kept
+  // on record for audit purposes ("delete" there means voiding instead) — unless the
+  // person has explicitly turned on unrestricted delete in Settings, in which case any
+  // invoice can be removed regardless of status.
   const deleteInvoice = (invoiceId) => {
     if (guardWrite()) return;
     const invoice = invoices.find((i) => i.id === invoiceId);
-    if (invoice && invoice.status !== 'draft') { flash('Issued invoices can\u2019t be deleted — void it instead to keep the record intact.'); return; }
-    askConfirm('Delete this draft invoice?', () => {
+    const unrestricted = settings.allowDocDelete === true;
+    if (invoice && invoice.status !== 'draft' && !unrestricted) { flash('Issued invoices can\u2019t be deleted \u2014 void it instead, or turn on unrestricted delete in Settings.'); return; }
+    const label = invoice && invoice.status !== 'draft' ? `${invoice.status} invoice ${invoice.number}` : 'this draft invoice';
+    askConfirm(`Delete ${label}?${invoice && invoice.status !== 'draft' ? ' This permanently removes it from your records, including any linked receipts or credit notes staying on file pointing to it.' : ''}`, () => {
       setInvoices((prev) => prev.filter((i) => i.id !== invoiceId));
-      flash('Draft invoice deleted.', invoice ? () => setInvoices((prev) => [invoice, ...prev]) : undefined);
-    });
+      flash('Invoice deleted.', invoice ? () => setInvoices((prev) => [invoice, ...prev]) : undefined);
+    }, invoice && invoice.status !== 'draft' ? { confirmLabel: 'Delete permanently', danger: true } : undefined);
   };
   const deletePlan = (planId) => {
     if (guardWrite()) return;
@@ -3803,6 +3924,37 @@ function App() {
       });
     });
   };
+  const toggleMemberChecked = (memberId) => {
+    setCheckedMemberIds((prev) => prev.includes(memberId) ? prev.filter((id) => id !== memberId) : [...prev, memberId]);
+  };
+  const deleteMembersBatch = (memberIds) => {
+    if (guardWrite()) return;
+    if (!memberIds.length) return;
+    const removedMembers = members.filter((m) => memberIds.includes(m.id));
+    if (!removedMembers.length) return;
+    const onPlans = plans.filter((p) => p.memberIds.some((id) => memberIds.includes(id)));
+    const warning = onPlans.length ? ` They'll also be removed from ${onPlans.length} plan${onPlans.length > 1 ? 's' : ''}.` : '';
+    askConfirm(`Delete ${removedMembers.length} contributor${removedMembers.length > 1 ? 's' : ''}? This also removes their contribution history.${warning}`, () => {
+      const removedContributions = contributions.filter((c) => memberIds.includes(c.memberId));
+      const memberPlanMap = onPlans.map((p) => ({ id: p.id, memberIds: p.memberIds.filter((id) => memberIds.includes(id)) }));
+      setMembers((prev) => prev.filter((m) => !memberIds.includes(m.id)));
+      setContributions((prev) => prev.filter((c) => !memberIds.includes(c.memberId)));
+      setPlans((prev) => prev.map((p) => ({ ...p, memberIds: p.memberIds.filter((id) => !memberIds.includes(id)) })));
+      if (memberIds.includes(selectedMemberId)) {
+        const next = members.find((m) => !memberIds.includes(m.id));
+        setSelectedMemberId(next ? next.id : null);
+      }
+      setCheckedMemberIds([]);
+      flash(`${removedMembers.length} contributor${removedMembers.length > 1 ? 's' : ''} deleted.`, () => {
+        setMembers((prev) => [...removedMembers, ...prev]);
+        setContributions((prev) => [...removedContributions, ...prev]);
+        setPlans((prev) => prev.map((p) => {
+          const restore = memberPlanMap.find((mp) => mp.id === p.id);
+          return restore ? { ...p, memberIds: [...p.memberIds, ...restore.memberIds] } : p;
+        }));
+      });
+    }, { confirmLabel: 'Delete', danger: true });
+  };
   const deleteClient = (clientId) => {
     if (guardWrite()) return;
     const client = clientById(clientId);
@@ -3817,6 +3969,30 @@ function App() {
       setClients((prev) => prev.filter((c) => c.id !== clientId));
       flash('Client deleted.', () => setClients((prev) => [client, ...prev]));
     });
+  };
+  const toggleClientChecked = (clientId) => {
+    setCheckedClientIds((prev) => prev.includes(clientId) ? prev.filter((id) => id !== clientId) : [...prev, clientId]);
+  };
+  const deleteClientsBatch = (clientIds) => {
+    if (guardWrite()) return;
+    if (!clientIds.length) return;
+    const candidates = clients.filter((c) => clientIds.includes(c.id));
+    const blocked = candidates.filter((c) => {
+      const hasIssuedInvoice = invoices.some((i) => i.clientId === c.id && i.status !== 'draft' && i.status !== 'void');
+      const hasIssuedReceipt = receipts.some((r) => r.clientId === c.id && r.status === 'issued' && !r.voided);
+      return hasIssuedInvoice || hasIssuedReceipt;
+    });
+    const deletable = candidates.filter((c) => !blocked.includes(c));
+    if (!deletable.length) { flash('All selected clients have an issued invoice or receipt on file, so none can be deleted.'); return; }
+    const blockedNote = blocked.length ? ` ${blocked.length} of the selected client${blocked.length > 1 ? 's have' : ' has'} an issued invoice or receipt and will be skipped.` : '';
+    askConfirm(`Delete ${deletable.length} client${deletable.length > 1 ? 's' : ''}?${blockedNote}`, () => {
+      const deletableIds = deletable.map((c) => c.id);
+      setClients((prev) => prev.filter((c) => !deletableIds.includes(c.id)));
+      setCheckedClientIds([]);
+      flash(`${deletable.length} client${deletable.length > 1 ? 's' : ''} deleted.`, () => {
+        setClients((prev) => [...deletable, ...prev]);
+      });
+    }, { confirmLabel: 'Delete', danger: true });
   };
   const deleteLoanGiven = (loanId) => {
     if (guardWrite()) return;
@@ -4495,6 +4671,23 @@ function App() {
     XLSX.utils.book_append_sheet(wb, ws, sheetName || 'Sheet1');
     XLSX.writeFile(wb, filename);
   };
+  // Renders a doc node (e.g. #receipt-print-area) to a genuine downloadable .pdf file,
+  // rather than relying on the browser's print dialog. Falls back quietly if either
+  // library failed to load (e.g. offline on first load).
+  const downloadNodeAsPdf = (nodeId, filename) => {
+    const node = document.getElementById(nodeId);
+    const JsPdf = window.jspdf && window.jspdf.jsPDF;
+    if (!node || !window.html2canvas || !JsPdf) { flash('PDF export isn\u2019t available right now.'); return; }
+    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 3 }).then((canvas) => {
+      const imgData = canvas.toDataURL('image/png');
+      const pxToMm = 0.264583;
+      const wMm = canvas.width * pxToMm;
+      const hMm = canvas.height * pxToMm;
+      const pdf = new JsPdf({ orientation: wMm > hMm ? 'landscape' : 'portrait', unit: 'mm', format: [wMm, hMm] });
+      pdf.addImage(imgData, 'PNG', 0, 0, wMm, hMm);
+      pdf.save(filename);
+    });
+  };
   const invoiceTableHeaders = ['Number', 'Client', 'Issue date', 'Due date', 'Status', 'Subtotal', 'Discount %', 'VAT %', 'Total', 'Credited', 'Net total', 'Recurring'];
   const invoiceTableRows = (rows) => rows.map((inv) => {
     const client = clientById(inv.clientId);
@@ -4504,11 +4697,11 @@ function App() {
   });
   const exportInvoicesCsv = (rows) => downloadCsv('invoices.csv', invoiceTableHeaders, invoiceTableRows(rows));
   const exportInvoicesXlsx = (rows) => downloadXlsx('invoices.xlsx', invoiceTableHeaders, invoiceTableRows(rows), 'Invoices');
-  const receiptTableHeaders = ['Receipt No.', 'Client', 'Invoice', 'Date', 'Amount', 'Status', 'Note'];
+  const receiptTableHeaders = ['Receipt No.', 'Client', 'Invoice', 'Date', 'Amount', 'Status', 'Note', 'Recurring'];
   const receiptTableRows = (rows) => rows.map((r) => {
     const client = clientById(r.clientId);
     const inv = r.invoiceId ? invoiceById(r.invoiceId) : null;
-    return [r.receiptNo, client ? client.name : (r.clientName || ''), inv ? inv.number : '', r.date, r.amount, r.voided ? 'Void' : r.status === 'draft' ? 'Draft' : 'Paid', r.note || ''];
+    return [r.receiptNo, client ? client.name : (r.clientName || ''), inv ? inv.number : '', r.date, r.amount, r.voided ? 'Void' : r.status === 'draft' ? 'Draft' : 'Paid', r.note || '', r.recurring ? 'Yes' : 'No'];
   });
   const exportReceiptsCsv = (rows) => downloadCsv('receipts.csv', receiptTableHeaders, receiptTableRows(rows));
   const exportReceiptsXlsx = (rows) => downloadXlsx('receipts.xlsx', receiptTableHeaders, receiptTableRows(rows), 'Receipts');
@@ -5048,16 +5241,30 @@ function App() {
     return (
       <>
         <SectionHeader eyebrow="Everyone in the book" title="Contributors"
-          action={<button className="btn btn-primary" data-tour="contributors-new" onClick={() => openModal('newMember')}><Plus size={16} /> Add contributor</button>} />
+          action={<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {checkedMemberIds.length > 0 && (
+              <button className="btn btn-danger" onClick={() => deleteMembersBatch(checkedMemberIds)}><Trash2 size={16} /> Delete selected ({checkedMemberIds.length})</button>
+            )}
+            <button className="btn btn-primary" data-tour="contributors-new" onClick={() => openModal('newMember')}><Plus size={16} /> Add contributor</button>
+          </div>} />
         <div className="master-detail">
           <div className="panel master-list">
             <SearchBox placeholder="Search contributors…" value={memberSearch} onChange={setMemberSearch} />
+            {filtered.length > 0 && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px', fontSize: 13, color: 'var(--ink-soft)' }}>
+                <input type="checkbox"
+                  checked={filtered.every((m) => checkedMemberIds.includes(m.id))}
+                  onChange={(e) => setCheckedMemberIds(e.target.checked ? filtered.map((m) => m.id) : [])} />
+                Select all
+              </label>
+            )}
             {filtered.length === 0 ? (
               <EmptyState text={members.length === 0 ? 'No contributors yet — add your first one.' : 'No contributors match your search.'} />
             ) : (
             <ul className="member-list">
               {filtered.map((m) => (
                 <li key={m.id} className={m.id === selected?.id ? 'member-row-active' : ''} onClick={() => { setSelectedMemberId(m.id); setMemberHistoryShowCount(12); }}>
+                  <input type="checkbox" checked={checkedMemberIds.includes(m.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleMemberChecked(m.id)} style={{ marginRight: 4 }} />
                   <div className="member-avatar kb-display">{m.name.charAt(0)}</div>
                   <div>
                     <div className="member-name">{m.name}</div>
@@ -5078,8 +5285,16 @@ function App() {
                   <div className="kb-display detail-name">{selected.name}</div>
                   <div className="panel-sub"><Phone size={12} style={{ verticalAlign: '-2px' }} /> {selected.phone ? <a className="tel-link" href={`tel:${selected.phone.replace(/[^0-9+]/g, '')}`}>{selected.phone}</a> : 'No phone on file'}</div>
                 </div>
-                <button className="btn btn-small btn-ghost" onClick={() => shareToWhatsApp(selected.phone, biodataMessage(selected))}>
-                  <MessageCircle size={13} /> Share biodata
+                <button className="btn btn-small btn-ghost" onClick={() => setBiodataDoc({
+                  name: selected.name, phone: selected.phone,
+                  fields: [
+                    { label: 'Total contributed', value: fmt(memberTotal(selected.id)) },
+                    { label: 'Payment consistency', value: `${memberConsistency(selected.id)}%` },
+                    { label: 'Plans joined', value: memberPlans.length ? memberPlans.map((p) => p.name).join(', ') : 'None yet' },
+                  ],
+                  filename: `biodata-${selected.name.replace(/\s+/g, '-').toLowerCase()}.png`,
+                })}>
+                  <ImageIcon size={13} /> Share biodata
                 </button>
                 <button className="icon-btn" onClick={() => deleteMember(selected.id)} title="Delete contributor" aria-label="Delete contributor"><Trash2 size={15} /></button>
               </div>
@@ -5160,8 +5375,16 @@ function App() {
                     <div className="person-group-name kb-display">{g.name}</div>
                     <div className="panel-sub">{g.loans.length} loan{g.loans.length > 1 ? 's' : ''} · {fmt(g.totalPrincipal)} total principal given{personField === 'lender' ? ' to you' : ''}</div>
                   </div>
-                  <button className="btn btn-small btn-ghost" onClick={() => shareToWhatsApp(g.loans[0].phone, biodataMessageForLoanPerson(g))}>
-                    <MessageCircle size={13} /> Biodata
+                  <button className="btn btn-small btn-ghost" onClick={() => setBiodataDoc({
+                    name: g.name, phone: g.loans[0].phone,
+                    fields: [
+                      { label: 'Loans on record', value: String(g.loans.length) },
+                      { label: 'Total principal', value: fmt(g.totalPrincipal) },
+                      { label: 'Total outstanding', value: fmt(g.totalOutstanding) },
+                    ],
+                    filename: `biodata-${g.name.replace(/\s+/g, '-').toLowerCase()}.png`,
+                  })}>
+                    <ImageIcon size={13} /> Biodata
                   </button>
                   <div className="kb-mono outstanding"><span>total outstanding</span>{fmt(g.totalOutstanding)}</div>
                 </div>
@@ -5367,11 +5590,22 @@ function App() {
     return (
       <>
         <SectionHeader eyebrow="Who you invoice" title="Clients"
-          action={<div style={{ display: 'flex', gap: 8 }}>
+          action={<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {checkedClientIds.length > 0 && (
+              <button className="btn btn-danger" onClick={() => deleteClientsBatch(checkedClientIds)}><Trash2 size={16} /> Delete selected ({checkedClientIds.length})</button>
+            )}
             <button className="btn btn-outline" onClick={() => exportClientsCsv(filtered)}><Download size={16} /> Export CSV</button>
             <button className="btn btn-primary" data-tour="clients-new" onClick={() => openModal('newClient')}><Plus size={16} /> Add client</button>
           </div>} />
         <SearchBox className="loan-search" placeholder="Search clients…" value={clientSearch} onChange={setClientSearch} />
+        {filtered.length > 0 && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, fontSize: 13, color: 'var(--ink-soft)' }}>
+            <input type="checkbox"
+              checked={filtered.every((c) => checkedClientIds.includes(c.id))}
+              onChange={(e) => setCheckedClientIds(e.target.checked ? filtered.map((c) => c.id) : [])} />
+            Select all
+          </label>
+        )}
         {filtered.length === 0 ? <EmptyState text={clients.length === 0 ? 'No clients yet — add your first one.' : 'No clients match your search.'} /> : (
           <div className="plan-card-grid">
             {filtered.map((c) => {
@@ -5383,7 +5617,10 @@ function App() {
               return (
                 <div key={c.id} className="plan-card client-card" onClick={() => setExpandedClient(isOpen ? null : c.id)}>
                   <div className="plan-card-top">
-                    <span className="plan-card-name">{c.name}</span>
+                    <span className="plan-card-name" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input type="checkbox" checked={checkedClientIds.includes(c.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleClientChecked(c.id)} />
+                      {c.name}
+                    </span>
                     <div className="client-card-top-right">
                       <button className="icon-btn" onClick={(e) => { e.stopPropagation(); setClientStatementDoc(c); }} title="Statement" aria-label="Statement"><Receipt size={14} /></button>
                       <button className="icon-btn" onClick={(e) => { e.stopPropagation(); openModal('editClient', { clientId: c.id, name: c.name, phone: c.phone || '', email: c.email || '', address: c.address || '' }); }} title="Edit client" aria-label="Edit client"><Edit3 size={14} /></button>
@@ -5456,7 +5693,9 @@ function App() {
       const name = (client ? client.name : '').toLowerCase();
       const matchesSearch = name.includes(invoiceSearch.toLowerCase()) || i.number.toLowerCase().includes(invoiceSearch.toLowerCase());
       const matchesStatus = invoiceStatusFilter === 'All' || invoiceStatusOf(i) === invoiceStatusFilter;
-      return matchesSearch && matchesStatus;
+      const matchesFrom = !invoiceDateFrom || i.issueDate >= invoiceDateFrom;
+      const matchesTo = !invoiceDateTo || i.issueDate <= invoiceDateTo;
+      return matchesSearch && matchesStatus && matchesFrom && matchesTo;
     }).sort((a, b) => {
       const { key, dir } = invoiceSort;
       const mul = dir === 'asc' ? 1 : -1;
@@ -5515,6 +5754,17 @@ function App() {
             <option value="status:asc">Status</option>
           </select>
         </div>
+        <div className="field-row" style={{ marginBottom: 14 }}>
+          <div className="field"><label>Issued from</label>
+            <input type="date" className="kb-input" value={invoiceDateFrom} onChange={(e) => setInvoiceDateFrom(e.target.value)} />
+          </div>
+          <div className="field"><label>Issued to</label>
+            <input type="date" className="kb-input" value={invoiceDateTo} onChange={(e) => setInvoiceDateTo(e.target.value)} />
+          </div>
+          {(invoiceDateFrom || invoiceDateTo) && (
+            <button className="btn btn-outline btn-small" style={{ alignSelf: 'flex-end', marginBottom: 2 }} onClick={() => { setInvoiceDateFrom(''); setInvoiceDateTo(''); }}>Clear dates</button>
+          )}
+        </div>
         {clients.length === 0 && <div className="panel-sub" style={{ marginBottom: 12 }}>Add a client first, then create an invoice for them.</div>}
         {filtered.length === 0 ? <EmptyState text={invoices.length === 0 ? 'No invoices yet.' : 'No invoices match your filters.'} /> : (
           <div className="loan-list">
@@ -5554,7 +5804,7 @@ function App() {
                       {(status === 'sent' || status === 'overdue') && <button className="btn btn-outline btn-small" onClick={() => voidInvoice(inv.id)}><Ban size={13} /> Void</button>}
                       {status === 'void' && <button className="btn btn-secondary btn-small" onClick={() => restoreInvoice(inv.id)}><RotateCcw size={13} /> Restore</button>}
                       {status !== 'draft' && status !== 'void' && <button className="btn btn-outline btn-small" onClick={() => openModal('newCreditNote', { invoiceId: inv.id, date: todayISO() })}><FileMinus size={13} /> Issue credit note</button>}
-                      {status === 'draft' && <button className="btn btn-danger btn-small" onClick={() => deleteInvoice(inv.id)}><Trash2 size={13} /> Delete</button>}
+                      {(status === 'draft' || settings.allowDocDelete === true) && <button className="btn btn-danger btn-small" onClick={() => deleteInvoice(inv.id)}><Trash2 size={13} /> Delete</button>}
                     </div>
                   </div>
                 </div>
@@ -5570,7 +5820,10 @@ function App() {
     const filtered = receipts.filter((r) => {
       const client = clientById(r.clientId);
       const name = (client ? client.name : r.clientName || '').toLowerCase();
-      return name.includes(receiptSearch.toLowerCase()) || r.receiptNo.toLowerCase().includes(receiptSearch.toLowerCase());
+      const matchesSearch = name.includes(receiptSearch.toLowerCase()) || r.receiptNo.toLowerCase().includes(receiptSearch.toLowerCase());
+      const matchesFrom = !receiptDateFrom || r.date >= receiptDateFrom;
+      const matchesTo = !receiptDateTo || r.date <= receiptDateTo;
+      return matchesSearch && matchesFrom && matchesTo;
     }).sort((a, b) => {
       const { key, dir } = receiptSort;
       const mul = dir === 'asc' ? 1 : -1;
@@ -5618,6 +5871,17 @@ function App() {
             <option value="amount:asc">Amount (lowest first)</option>
           </select>
         </div>
+        <div className="field-row" style={{ marginBottom: 14 }}>
+          <div className="field"><label>Date from</label>
+            <input type="date" className="kb-input" value={receiptDateFrom} onChange={(e) => setReceiptDateFrom(e.target.value)} />
+          </div>
+          <div className="field"><label>Date to</label>
+            <input type="date" className="kb-input" value={receiptDateTo} onChange={(e) => setReceiptDateTo(e.target.value)} />
+          </div>
+          {(receiptDateFrom || receiptDateTo) && (
+            <button className="btn btn-outline btn-small" style={{ alignSelf: 'flex-end', marginBottom: 2 }} onClick={() => { setReceiptDateFrom(''); setReceiptDateTo(''); }}>Clear dates</button>
+          )}
+        </div>
         {filtered.length === 0 ? <EmptyState text={receipts.length === 0 ? "No receipts yet — they're generated automatically when you mark an invoice paid, or issue one directly." : 'No receipts match your search.'} /> : (
           <div className="loan-list">
             {filtered.map((r) => {
@@ -5629,7 +5893,7 @@ function App() {
                 <div key={r.id} className={`loan-card${voided ? ' receipt-voided' : ''}`}>
                   <div className="loan-card-top" onClick={() => setPaymentReceiptDoc(r)}>
                     <div>
-                      <span className="loan-name">{r.receiptNo} &middot; {client ? client.name : (r.clientName || 'Walk-in customer')}</span>
+                      <span className="loan-name">{r.receiptNo} &middot; {client ? client.name : (r.clientName || 'Walk-in customer')}{r.recurring && <span title="Repeats monthly"><Repeat size={12} style={{ marginLeft: 6, verticalAlign: '-1px', opacity: 0.6 }} /></span>}</span>
                       <div className="plan-card-meta">{new Date(r.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}{invoice ? ` · for ${invoice.number}` : ''}</div>
                     </div>
                     <div className="loan-card-right">
@@ -5648,7 +5912,7 @@ function App() {
                       ) : (
                         <button className="btn btn-outline btn-small" onClick={() => voidReceipt(r.id)}><Ban size={13} /> Void</button>
                       ))}
-                      {draft && <button className="btn btn-danger btn-small" onClick={() => deleteReceipt(r.id)}><Trash2 size={13} /> Delete</button>}
+                      {(draft || settings.allowDocDelete === true) && <button className="btn btn-danger btn-small" onClick={() => deleteReceipt(r.id)}><Trash2 size={13} /> Delete</button>}
                     </div>
                   </div>
                 </div>
@@ -6437,6 +6701,36 @@ function App() {
         </div>
       </div>
 
+      <div className="panel" style={{ marginTop: 16 }} data-tour="settings-doc-delete">
+        <div className="panel-title">Invoice & receipt controls</div>
+        <div className="field-row">
+          <div className="field">
+            <label>Unrestricted delete for invoices & receipts</label>
+            <div className="panel-sub">
+              {settings.allowDocDelete === true
+                ? 'On — any invoice or receipt can be permanently deleted, including issued, paid and voided ones. Use with care; this bypasses the usual audit trail.'
+                : 'Off (default) — only drafts can be deleted outright. Issued, paid and voided documents can only be voided, keeping the record intact for audit purposes.'}
+            </div>
+          </div>
+          <div className="field" style={{ flex: '0 0 auto', alignSelf: 'flex-end' }}>
+            <button
+              type="button"
+              className={`dm-switch ${settings.allowDocDelete === true ? 'dm-switch-on' : ''}`}
+              onClick={() => setSettings((s) => ({ ...s, allowDocDelete: s.allowDocDelete === true ? false : true }))}
+              aria-pressed={settings.allowDocDelete === true}
+            >
+              <span className="dm-switch-knob"><Trash2 size={11} /></span>
+            </button>
+          </div>
+        </div>
+        {settings.allowDocDelete === true && (
+          <div className="field-hint" style={{ marginTop: 10, display: 'flex', alignItems: 'flex-start', gap: 6, color: 'var(--brick)' }}>
+            <AlertTriangle size={13} style={{ marginTop: 2, flexShrink: 0 }} />
+            Deleted issued documents can’t be recovered once you navigate away from the undo toast — export a backup first if you’re unsure.
+          </div>
+        )}
+      </div>
+
       <div className="panel" style={{ marginTop: 16 }} data-tour="settings-backup">
         <div className="panel-title">Data & backups</div>
         <div className="panel-sub" style={{ marginBottom: 12 }}>Saved automatically to this device. Export regularly to keep a copy elsewhere.</div>
@@ -6650,8 +6944,11 @@ function App() {
         .bell-dot{position:absolute;top:-4px;right:-4px;background:var(--brick);color:#fff;font-size:10px;font-weight:700;border-radius:9px;min-width:16px;height:16px;display:flex;align-items:center;justify-content:center;padding:0 4px;}
         .content{flex:1;padding:28px 36px 60px;background-image:repeating-linear-gradient(to bottom,transparent,transparent 37px,var(--paper-line) 38px);}
         .eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-soft);font-weight:600;margin-bottom:2px;}
-        .section-header{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:20px;}
+        .section-header{display:flex;flex-direction:column;margin-bottom:20px;}
+        .section-header-top{display:flex;flex-direction:column;}
         .section-header h2{font-size:24px;margin:0;font-weight:600;}
+        .section-header-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;margin-top:14px;}
+        .section-header-actions>*{flex:0 0 auto;}
         .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:22px;}
         .stat-card{background:var(--surface);border:1px solid var(--paper-line);border-radius:12px;padding:16px 18px;position:relative;}
         .stat-icon{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;margin-bottom:10px;}
@@ -7844,6 +8141,10 @@ function App() {
           <div className="field"><label>Note (optional)</label>
             <input className="kb-input" value={form.note || ''} onChange={(e) => setField('note', e.target.value)} placeholder="What was this payment for?" />
           </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+            <input type="checkbox" checked={!!form.recurring} onChange={(e) => setField('recurring', e.target.checked)} />
+            Repeats every month (e.g. rent, subscriptions, retainer payments)
+          </label>
           <div className="settings-actions">
             <button className="btn btn-outline" onClick={() => submitManualReceipt(false)}><Receipt size={14} /> Save as draft</button>
             <button className="btn btn-primary" onClick={() => submitManualReceipt(true)}><Send size={14} /> {form.editingReceiptId ? 'Issue receipt' : 'Create & issue'}</button>
@@ -7875,10 +8176,13 @@ function App() {
         />
       )}
       {invoiceSummaryDoc && (
-        <SummaryReportModal doc={invoiceSummaryDoc} settings={settings} fmt={fmt} onClose={() => setInvoiceSummaryDoc(null)} />
+        <SummaryReportModal doc={invoiceSummaryDoc} settings={settings} fmt={fmt} onClose={() => setInvoiceSummaryDoc(null)} downloadNodeAsPdf={downloadNodeAsPdf} />
       )}
       {receiptSummaryDoc && (
-        <SummaryReportModal doc={receiptSummaryDoc} settings={settings} fmt={fmt} onClose={() => setReceiptSummaryDoc(null)} />
+        <SummaryReportModal doc={receiptSummaryDoc} settings={settings} fmt={fmt} onClose={() => setReceiptSummaryDoc(null)} downloadNodeAsPdf={downloadNodeAsPdf} />
+      )}
+      {biodataDoc && (
+        <BiodataDocModal doc={biodataDoc} settings={settings} fmt={fmt} onClose={() => setBiodataDoc(null)} shareImageToWhatsApp={shareImageToWhatsApp} />
       )}
       {invoiceDoc && (
         <InvoiceDocModal
