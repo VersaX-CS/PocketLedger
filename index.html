@@ -1377,8 +1377,8 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
   const status = invoiceStatusOf(invoice);
   const voided = status === 'void';
   const total = invoiceTotal(invoice);
-  const issuedOn = new Date(invoice.issueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-  const dueOn = new Date(invoice.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const issuedOn = new Date(invoice.issueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const dueOn = new Date(invoice.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   const invoiceCreditNotes = (creditNotes || []).filter((cn) => cn.invoiceId === invoice.id);
   const credited = invoiceCreditNotes.filter((cn) => !cn.voided).reduce((s, cn) => s + Number(cn.amount || 0), 0);
   const netTotal = Math.max(0, total - credited);
