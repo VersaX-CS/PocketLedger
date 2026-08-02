@@ -744,6 +744,58 @@ function toRowsFromText(text) {
 }
 
 // Reads an Excel workbook, trying each sheet until one auto-parses cleanly.
+// Parses a 2D grid of rows (from CSV/Excel/PDF) shaped like a thrift contribution sheet:
+// first column = member name, remaining columns = one per round, cell = amount paid (blank/0 = unpaid).
+// This is also exactly the shape produced by this app's own "Export contributions" CSV, so a
+// previously exported plan round-trips cleanly back in.
+function parseThriftGridRows(rows) {
+  const nonEmpty = (r) => r.some((c) => String(c || '').trim());
+  const headerIdx = rows.findIndex((r) => nonEmpty(r) && r.length > 1);
+  if (headerIdx === -1) return { members: [], periodCount: 0, suggestedAmount: '', suggestedFrequency: 'monthly', suggestedStartDate: '' };
+  const header = rows[headerIdx];
+  const periodLabels = header.slice(1);
+  const members = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || !nonEmpty(row)) continue;
+    const name = String(row[0] || '').trim();
+    if (!name) continue;
+    const amounts = periodLabels.map((_, j) => {
+      const n = parseMoneyString(row[j + 1]);
+      return isNaN(n) ? 0 : Math.abs(n);
+    });
+    members.push({ name, amounts, include: true });
+  }
+  // Best-effort: parse the first couple of period labels as dates to guess a start date and cadence.
+  const parsedDates = periodLabels.map((l) => parseStatementDate(l)).filter(Boolean);
+  let suggestedStartDate = parsedDates[0] || '';
+  let suggestedFrequency = 'monthly';
+  if (parsedDates.length >= 2) {
+    const gapDays = Math.round((new Date(parsedDates[1]) - new Date(parsedDates[0])) / 86400000);
+    if (gapDays <= 2) suggestedFrequency = 'daily';
+    else if (gapDays <= 10) suggestedFrequency = 'weekly';
+    else suggestedFrequency = 'monthly';
+  }
+  // Most common non-zero amount across every cell, as a sensible default round amount.
+  const counts = {};
+  members.forEach((m) => m.amounts.forEach((a) => { if (a > 0) counts[a] = (counts[a] || 0) + 1; }));
+  const suggestedAmount = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || '';
+  return { members, periodCount: periodLabels.length, suggestedAmount, suggestedFrequency, suggestedStartDate };
+}
+// Generates exactly `count` period dates from a start date at a given cadence, matching the
+// exact date math periodsForPlan uses (so imported contributions line up with the plan's own
+// grid afterward) — but driven by a fixed count instead of "how much time has elapsed".
+function periodsForCount(startDate, frequency, count) {
+  const start = new Date(startDate); start.setHours(0, 0, 0, 0);
+  const arr = [];
+  if (frequency === 'monthly') {
+    for (let i = 0; i < count; i++) arr.push(new Date(start.getFullYear(), start.getMonth() + i, 1).toISOString().slice(0, 10));
+  } else {
+    const stepDays = frequency === 'weekly' ? 7 : 1;
+    for (let i = 0; i < count; i++) arr.push(new Date(start.getTime() + i * stepDays * dayMs).toISOString().slice(0, 10));
+  }
+  return arr;
+}
 function excelRowsForImport(workbook) {
   let autoResult = null;
   let rawRows = [];
@@ -2777,6 +2829,7 @@ function App() {
   const [reminderDoc, setReminderDoc] = useState(null);
   const [reminderQueue, setReminderQueue] = useState([]);
   const taxFileInputRef = useRef(null);
+  const thriftFileInputRef = useRef(null);
   const importInputRef = useRef(null);
   const logoInputRef = useRef(null);
   const triggerLogoUpload = () => logoInputRef.current && logoInputRef.current.click();
@@ -3156,6 +3209,93 @@ function App() {
     setPlans((p) => [...p, plan]);
     setSelectedPlanId(plan.id);
     closeModalSilently();
+  };
+  const triggerThriftImport = () => thriftFileInputRef.current && thriftFileInputRef.current.click();
+  // Reads a CSV/Excel/PDF thrift contribution sheet and stages it for review before creating anything.
+  const handleThriftFileSelected = async (e) => {
+    const file = (e.target.files || [])[0];
+    if (!file) return;
+    const name = file.name.toLowerCase();
+    const isExcel = /\.(xlsx|xls)$/.test(name);
+    const isPdf = name.endsWith('.pdf') || file.type === 'application/pdf';
+    let rawRows = [];
+    try {
+      if (isExcel) {
+        const buf = await file.arrayBuffer();
+        const workbook = XLSX.read(new Uint8Array(buf), { type: 'array' });
+        rawRows = excelRowsForImport(workbook).rawRows;
+      } else if (isPdf) {
+        if (!window.pdfjsLib) { flash('PDF reading isn\u2019t available right now \u2014 try a CSV or Excel export instead.'); e.target.value = ''; return; }
+        const buf = await file.arrayBuffer();
+        rawRows = await pdfRowsFromArrayBuffer(buf);
+        if (rawRows.length <= 1) {
+          if (!window.Tesseract) { flash('This looks like a scanned PDF, and OCR isn\u2019t available right now \u2014 try a CSV or Excel export instead.'); e.target.value = ''; return; }
+          flash('Scanned PDF detected \u2014 reading it with OCR, this can take a moment\u2026');
+          rawRows = await ocrPdfRows(buf);
+        }
+      } else {
+        const text = await file.text();
+        rawRows = toRowsFromText(text);
+      }
+    } catch (err) {
+      console.warn('PocketLedger: thrift import read failed.', err);
+      flash('Could not read this file \u2014 it may be corrupted, scanned, or password-protected.');
+      e.target.value = '';
+      return;
+    }
+    e.target.value = '';
+    const parsed = parseThriftGridRows(rawRows);
+    if (parsed.members.length === 0) { flash('Couldn\u2019t find any contributor rows \u2014 the file should have a header row, then one member per row.'); return; }
+    openModal('importThriftPlan', {
+      fileName: file.name, rows: parsed.members, periodCount: parsed.periodCount,
+      name: file.name.replace(/\.[^.]+$/, ''),
+      frequency: parsed.suggestedFrequency, startDate: parsed.suggestedStartDate || todayISO(),
+      amount: parsed.suggestedAmount, fixedDueDay: true,
+    });
+  };
+  const toggleThriftImportRow = (idx) => setForm((f) => ({ ...f, rows: f.rows.map((r, i) => i === idx ? { ...r, include: r.include === false } : r) }));
+  // Registers any contributor names not already in Members, recreates the plan, and backfills
+  // every non-zero cell as a historical contribution on the matching generated period.
+  const submitThriftImport = () => {
+    if (guardWrite()) return;
+    if (!form.name) { flash('Enter a plan name.'); return; }
+    const includedRows = (form.rows || []).filter((r) => r.include !== false);
+    if (includedRows.length === 0) { flash('Select at least one contributor to import.'); return; }
+    const frequency = form.frequency || 'monthly';
+    const category = frequency === 'daily' ? 'Daily' : frequency === 'weekly' ? 'Weekly' : 'Monthly';
+    const cap = frequency === 'daily' ? 45 : frequency === 'weekly' ? 26 : 24;
+    const count = Math.min(form.periodCount || 0, cap);
+    const periods = periodsForCount(form.startDate || todayISO(), frequency, count);
+    const newMembers = [];
+    const memberIdFor = {};
+    includedRows.forEach((row) => {
+      const key = row.name.trim().toLowerCase();
+      const existing = members.find((m) => m.name.trim().toLowerCase() === key);
+      if (existing) { memberIdFor[row.name] = existing.id; return; }
+      const already = newMembers.find((m) => m.name.trim().toLowerCase() === key);
+      if (already) { memberIdFor[row.name] = already.id; return; }
+      const nm = { id: uid(), name: row.name, phone: '' };
+      newMembers.push(nm);
+      memberIdFor[row.name] = nm.id;
+    });
+    const plan = {
+      id: uid(), name: form.name, category, frequency, amount: Number(form.amount || 0),
+      startDate: form.startDate || todayISO(), memberIds: includedRows.map((row) => memberIdFor[row.name]),
+      perMemberAmounts: false, memberAmounts: {}, fixedDueDay: form.fixedDueDay !== false,
+    };
+    const newContributions = [];
+    includedRows.forEach((row) => {
+      const memberId = memberIdFor[row.name];
+      row.amounts.slice(0, count).forEach((amt, i) => {
+        if (amt > 0) newContributions.push({ id: uid(), planId: plan.id, memberId, period: periods[i], amount: amt, date: periods[i] });
+      });
+    });
+    if (newMembers.length) setMembers((prev) => [...newMembers, ...prev]);
+    setPlans((prev) => [plan, ...prev]);
+    setContributions((prev) => [...newContributions, ...prev]);
+    setSelectedPlanId(plan.id);
+    closeModalSilently();
+    flash(`Imported "${plan.name}" \u2014 ${includedRows.length} contributor(s) (${newMembers.length} new), ${newContributions.length} round(s) recorded.`);
   };
   const importDeviceContact = async (onFound) => {
     if (!contactPickerSupported()) { flash('Contact access isn’t supported on this browser/device — try Chrome on Android, or enter details manually.'); return; }
@@ -4695,7 +4835,11 @@ function App() {
     return (
       <>
         <SectionHeader eyebrow="Personalised strategies" title="Thrift plans"
-          action={<button className="btn btn-primary" data-tour="plans-new" onClick={() => openModal('newPlan', { memberIds: [] })}><Plus size={16} /> New thrift plan</button>} />
+          action={<div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-outline" onClick={triggerThriftImport}><Upload size={16} /> Import plan</button>
+            <button className="btn btn-primary" data-tour="plans-new" onClick={() => openModal('newPlan', { memberIds: [] })}><Plus size={16} /> New thrift plan</button>
+          </div>} />
+        <input ref={thriftFileInputRef} type="file" accept=".csv,.txt,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.pdf,application/pdf" style={{ display: 'none' }} onChange={handleThriftFileSelected} />
 
         <div className="plan-card-grid" data-tour="plans-grid">
           {plans.map((p) => {
@@ -7040,6 +7184,53 @@ function App() {
             </div>
           </div>
           <button className="btn btn-primary" onClick={submitNewPlan}>Create plan</button>
+        </Modal>
+      )}
+
+      {modal === 'importThriftPlan' && (
+        <Modal title="Import thrift plan" onClose={closeModal}>
+          <div className="field-hint" style={{ marginBottom: 14 }}>
+            Read from <strong>{form.fileName}</strong> — found {(form.rows || []).length} contributor(s) across {form.periodCount} round(s). Review the details below, then create the plan.
+          </div>
+          <div className="field"><label>Plan name</label>
+            <input className="kb-input" value={form.name || ''} onChange={(e) => setField('name', e.target.value)} placeholder="e.g. Morning Market Ajo" autoFocus />
+          </div>
+          <div className="field-row">
+            <div className="field"><label>Cadence</label>
+              <select className="kb-input" value={form.frequency || 'monthly'} onChange={(e) => setField('frequency', e.target.value)}>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </div>
+            <div className="field"><label>Default amount per round</label>
+              <input type="number" min="0" inputMode="decimal" className="kb-input" value={form.amount || ''} onChange={(e) => setField('amount', e.target.value)} placeholder="500" />
+            </div>
+          </div>
+          <div className="field-row">
+            <div className="field"><label>First round's date</label>
+              <input type="date" className="kb-input" value={form.startDate || todayISO()} onChange={(e) => setField('startDate', e.target.value)} />
+            </div>
+            <div className="field"><label>Contribution schedule</label>
+              <select className="kb-input" value={form.fixedDueDay === false ? 'random' : 'fixed'} onChange={(e) => setField('fixedDueDay', e.target.value === 'fixed')}>
+                <option value="fixed">Fixed day due</option>
+                <option value="random">Random days</option>
+              </select>
+            </div>
+          </div>
+          <div className="field">
+            <label>Contributors found — untick any that shouldn't be imported (e.g. a totals row)</label>
+            <div className="checkbox-list">
+              {(form.rows || []).map((row, i) => (
+                <label key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input type="checkbox" checked={row.include !== false} onChange={() => toggleThriftImportRow(i)} />
+                  <span style={{ flex: 1 }}>{row.name}</span>
+                  <span className="field-hint" style={{ margin: 0 }}>{row.amounts.filter((a) => a > 0).length} round(s) paid</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <button className="btn btn-primary" onClick={submitThriftImport}>Create plan &amp; import</button>
         </Modal>
       )}
 
