@@ -1645,7 +1645,7 @@ function CreditNoteDocModal({ creditNoteDoc, client, invoice, settings, fmt, onC
   );
 }
 
-function ReminderDocModal({ reminderDoc, settings, fmt, onClose, shareImageToWhatsApp }) {
+function ReminderDocModal({ reminderDoc, settings, fmt, onClose, queueRemaining = 0, shareImageToWhatsApp }) {
   useEscClose(onClose);
   const { title, personName, personPhone, message, amountDue, dueDate, filename } = reminderDoc;
   const issuedOn = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -1669,6 +1669,9 @@ function ReminderDocModal({ reminderDoc, settings, fmt, onClose, shareImageToWha
           <button className="icon-btn" onClick={onClose} title="Close" aria-label="Close"><X size={18} /></button>
         </div>
         <div className="modal-body">
+          {queueRemaining > 0 && (
+            <div className="field-hint" style={{ marginBottom: 12 }}>{queueRemaining} more overdue reminder{queueRemaining === 1 ? '' : 's'} queued — closing this one opens the next.</div>
+          )}
           <div id="receipt-print-area" className="receipt-sheet">
             <DocHeader settings={settings} />
             <div className="doc-title-row">
@@ -1696,6 +1699,7 @@ function ReminderDocModal({ reminderDoc, settings, fmt, onClose, shareImageToWha
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
             <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(personPhone, '', filename)}><MessageCircle size={14} /> Share image on WhatsApp</button>
+            {queueRemaining > 0 && <button className="btn btn-outline btn-small" onClick={onClose}><ArrowRight size={14} /> Skip to next</button>}
           </div>
         </div>
       </div>
@@ -2570,6 +2574,7 @@ function App() {
   const [loanTabSearch, setLoanTabSearch] = useState('');
   const [expandedTab, setExpandedTab] = useState(null);
   const [expenseCategoryFilter, setExpenseCategoryFilter] = useState('All');
+  const [expenseSearch, setExpenseSearch] = useState('');
   const [invoiceStatusFilter, setInvoiceStatusFilter] = useState('All');
   const [expenseSort, setExpenseSort] = useState({ key: 'date', dir: 'desc' });
   const [expenseShowCount, setExpenseShowCount] = useState(20);
@@ -2597,6 +2602,7 @@ function App() {
   const [taxImportBatch, setTaxImportBatch] = useState([]);
   const [taxReturnDoc, setTaxReturnDoc] = useState(null);
   const [reminderDoc, setReminderDoc] = useState(null);
+  const [reminderQueue, setReminderQueue] = useState([]);
   const taxFileInputRef = useRef(null);
   const importInputRef = useRef(null);
   const logoInputRef = useRef(null);
@@ -2708,7 +2714,7 @@ function App() {
   const setField = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   /* ---------- back button / swipe-back navigation ---------- */
-  const closeAllOverlays = () => { closeModal(); setInvoiceDoc(null); setReceipt(null); setPaymentReceiptDoc(null); setReminderDoc(null); setCreditNoteDoc(null); };
+  const closeAllOverlays = () => { closeModal(); setInvoiceDoc(null); setReceipt(null); setPaymentReceiptDoc(null); setReminderDoc(null); setReminderQueue([]); setCreditNoteDoc(null); };
   const historyInitedRef = useRef(false);
   const isRestoringRef = useRef(false);
   const exitArmedRef = useRef(false);
@@ -4050,6 +4056,38 @@ function App() {
     a.click();
     URL.revokeObjectURL(url);
   };
+  // Generic CSV download used by the Invoices/Receipts/Expenses/Clients list exports below.
+  const downloadCsv = (filename, headers, rows) => {
+    if (rows.length === 0) { flash('Nothing to export for this filter.'); return; }
+    const escape = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+    const csv = [headers.map(escape).join(','), ...rows.map((r) => r.map(escape).join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  };
+  const exportInvoicesCsv = (rows) => {
+    downloadCsv('invoices.csv', ['Number', 'Client', 'Issue date', 'Due date', 'Status', 'Total', 'Credited', 'Net total'], rows.map((inv) => {
+      const client = clientById(inv.clientId);
+      const total = invoiceTotal(inv);
+      const net = invoiceNetTotal(inv);
+      return [inv.number, client ? client.name : '', inv.issueDate, inv.dueDate, INVOICE_STATUS_LABEL[invoiceStatusOf(inv)] || invoiceStatusOf(inv), total, total - net, net];
+    }));
+  };
+  const exportReceiptsCsv = (rows) => {
+    downloadCsv('receipts.csv', ['Receipt No.', 'Client', 'Invoice', 'Date', 'Amount', 'Status', 'Note'], rows.map((r) => {
+      const client = clientById(r.clientId);
+      const inv = r.invoiceId ? invoiceById(r.invoiceId) : null;
+      return [r.receiptNo, client ? client.name : (r.clientName || ''), inv ? inv.number : '', r.date, r.amount, r.voided ? 'Void' : r.status === 'draft' ? 'Draft' : 'Paid', r.note || ''];
+    }));
+  };
+  const exportExpensesCsv = (rows) => {
+    downloadCsv('expenses.csv', ['Date', 'Category', 'Note', 'Amount', 'Recurring'], rows.map((e) => [e.date, e.category, e.note || '', e.amount, e.recurring ? 'Yes' : 'No']));
+  };
+  const exportClientsCsv = (rows) => {
+    downloadCsv('clients.csv', ['Name', 'Phone', 'Email', 'Address'], rows.map((c) => [c.name, c.phone || '', c.email || '', c.address || '']));
+  };
   const triggerImport = () => importInputRef.current && importInputRef.current.click();
   const handleImportFile = (e) => {
     if (guardWrite()) return;
@@ -4173,6 +4211,29 @@ function App() {
       `Invoice ${inv.number} for ${fmt(total)} is due on ${new Date(inv.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}.`,
       `Kindly reach out if you'd like to arrange this. Thank you!`,
     ].join('\n');
+  };
+  // Builds one reminder-doc config per overdue invoice with a phone on file, shows the
+  // first, and queues the rest — closing each one automatically opens the next so the
+  // whole overdue list can be worked through without hunting for each invoice individually.
+  const startOverdueReminders = (overdueInvoices) => {
+    const queue = overdueInvoices.filter((inv) => clientById(inv.clientId)?.phone).map((inv) => {
+      const client = clientById(inv.clientId);
+      return {
+        title: 'Invoice Reminder',
+        personName: client.name, personPhone: client.phone,
+        message: invoiceReminderMessage(inv),
+        amountDue: invoiceNetTotal(inv), dueDate: inv.dueDate,
+        filename: `reminder-${inv.number}.png`,
+      };
+    });
+    if (queue.length === 0) { flash('None of the overdue invoices have a client phone number on file.'); return; }
+    setReminderDoc(queue[0]);
+    setReminderQueue(queue.slice(1));
+  };
+  const advanceReminderQueue = () => {
+    if (reminderQueue.length === 0) { setReminderDoc(null); return; }
+    setReminderDoc(reminderQueue[0]);
+    setReminderQueue((q) => q.slice(1));
   };
 
   /* ============================== tab renders ============================== */
@@ -4692,13 +4753,13 @@ function App() {
                             </div>
                             <div className="loan-actions">
                               {out > 0 && (
-                                <button className="btn btn-small btn-ghost" onClick={() => setReminderDoc({
+                                <button className="btn btn-small btn-ghost" onClick={() => { setReminderQueue([]); setReminderDoc({
                                   title: key === 'repayments' ? 'Repayment Reminder' : 'Refund Reminder',
                                   personName: person, personPhone: l.phone,
                                   message: reminderMessage(person, l, key, dateField),
                                   amountDue: out, dueDate: l.dueDate,
                                   filename: `reminder-${l.id.slice(0, 8)}.png`,
-                                })}>
+                                }); }}>
                                   <Send size={13} /> Send reminder
                                 </button>
                               )}
@@ -4856,7 +4917,10 @@ function App() {
     return (
       <>
         <SectionHeader eyebrow="Who you invoice" title="Clients"
-          action={<button className="btn btn-primary" data-tour="clients-new" onClick={() => openModal('newClient')}><Plus size={16} /> Add client</button>} />
+          action={<div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-outline" onClick={() => exportClientsCsv(filtered)}><Download size={16} /> Export CSV</button>
+            <button className="btn btn-primary" data-tour="clients-new" onClick={() => openModal('newClient')}><Plus size={16} /> Add client</button>
+          </div>} />
         <SearchBox className="loan-search" placeholder="Search clients…" value={clientSearch} onChange={setClientSearch} />
         {filtered.length === 0 ? <EmptyState text={clients.length === 0 ? 'No clients yet — add your first one.' : 'No clients match your search.'} /> : (
           <div className="plan-card-grid">
@@ -4942,10 +5006,21 @@ function App() {
       const matchesStatus = invoiceStatusFilter === 'All' || invoiceStatusOf(i) === invoiceStatusFilter;
       return matchesSearch && matchesStatus;
     }).sort((a, b) => new Date(b.issueDate) - new Date(a.issueDate));
+    const overdueInvoices = invoices.filter((i) => invoiceStatusOf(i) === 'overdue');
+    const overdueTotal = overdueInvoices.reduce((s, i) => s + invoiceNetTotal(i), 0);
     return (
       <>
         <SectionHeader eyebrow="Bill your clients" title="Invoices"
-          action={<button className="btn btn-primary" data-tour="invoices-new" onClick={() => openModal('newInvoice', { items: [{ id: uid(), desc: '', qty: 1, price: '' }], issueDate: todayISO() })}><Plus size={16} /> New invoice</button>} />
+          action={<div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-outline" onClick={() => exportInvoicesCsv(filtered)}><Download size={16} /> Export CSV</button>
+            <button className="btn btn-primary" data-tour="invoices-new" onClick={() => openModal('newInvoice', { items: [{ id: uid(), desc: '', qty: 1, price: '' }], issueDate: todayISO() })}><Plus size={16} /> New invoice</button>
+          </div>} />
+        {overdueInvoices.length > 0 && (
+          <div className="field-hint" style={{ marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+            <span>{overdueInvoices.length} invoice{overdueInvoices.length === 1 ? '' : 's'} overdue, totaling {fmt(overdueTotal)}.</span>
+            <button className="btn btn-outline btn-small" onClick={() => startOverdueReminders(overdueInvoices)}><Bell size={13} /> Remind all overdue</button>
+          </div>
+        )}
         <SearchBox className="loan-search" placeholder="Search by client or invoice number…" value={invoiceSearch} onChange={setInvoiceSearch} />
         <div className="field-row" style={{ marginBottom: 14 }}>
           <select className="kb-input" value={invoiceStatusFilter} onChange={(e) => setInvoiceStatusFilter(e.target.value)}>
@@ -4982,13 +5057,13 @@ function App() {
                       {status === 'draft' && <button className="btn btn-outline btn-small" onClick={() => editInvoice(inv)}><Edit3 size={13} /> Edit</button>}
                       {status === 'draft' && <button className="btn btn-secondary btn-small" onClick={() => issueInvoice(inv.id)}><Send size={13} /> Issue</button>}
                       {status !== 'paid' && status !== 'draft' && status !== 'void' && <button className="btn btn-secondary btn-small" onClick={() => markInvoicePaid(inv.id)}><CheckCircle2 size={13} /> Mark paid</button>}
-                      {status !== 'paid' && status !== 'draft' && status !== 'void' && client?.phone && <button className="btn btn-ghost btn-small" onClick={() => setReminderDoc({
+                      {status !== 'paid' && status !== 'draft' && status !== 'void' && client?.phone && <button className="btn btn-ghost btn-small" onClick={() => { setReminderQueue([]); setReminderDoc({
                         title: 'Invoice Reminder',
                         personName: client.name, personPhone: client.phone,
                         message: invoiceReminderMessage(inv),
                         amountDue: net, dueDate: inv.dueDate,
                         filename: `reminder-${inv.number}.png`,
-                      })}><Bell size={13} /> Send reminder</button>}
+                      }); }}><Bell size={13} /> Send reminder</button>}
                       {(status === 'sent' || status === 'overdue') && <button className="btn btn-outline btn-small" onClick={() => voidInvoice(inv.id)}><Ban size={13} /> Void</button>}
                       {status === 'void' && <button className="btn btn-secondary btn-small" onClick={() => restoreInvoice(inv.id)}><RotateCcw size={13} /> Restore</button>}
                       {status !== 'draft' && status !== 'void' && <button className="btn btn-outline btn-small" onClick={() => openModal('newCreditNote', { invoiceId: inv.id, date: todayISO() })}><FileMinus size={13} /> Issue credit note</button>}
@@ -5013,7 +5088,10 @@ function App() {
     return (
       <>
         <SectionHeader eyebrow="Proof of payment" title="Receipts"
-          action={<button className="btn btn-primary" data-tour="receipts-new" onClick={() => openModal('newReceipt', { date: todayISO() })}><Plus size={16} /> Issue receipt</button>} />
+          action={<div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-outline" onClick={() => exportReceiptsCsv(filtered)}><Download size={16} /> Export CSV</button>
+            <button className="btn btn-primary" data-tour="receipts-new" onClick={() => openModal('newReceipt', { date: todayISO() })}><Plus size={16} /> Issue receipt</button>
+          </div>} />
         <SearchBox className="loan-search" placeholder="Search by payer or receipt number…" value={receiptSearch} onChange={setReceiptSearch} />
         {filtered.length === 0 ? <EmptyState text={receipts.length === 0 ? "No receipts yet — they're generated automatically when you mark an invoice paid, or issue one directly." : 'No receipts match your search.'} /> : (
           <div className="loan-list">
@@ -5105,6 +5183,7 @@ function App() {
   const renderExpenses = () => {
     const filtered = expenses
       .filter((e) => expenseCategoryFilter === 'All' || e.category === expenseCategoryFilter)
+      .filter((e) => !expenseSearch || (e.note || '').toLowerCase().includes(expenseSearch.toLowerCase()) || (e.category || '').toLowerCase().includes(expenseSearch.toLowerCase()))
       .sort((a, b) => {
         const { key, dir } = expenseSort;
         const mul = dir === 'asc' ? 1 : -1;
@@ -5121,14 +5200,18 @@ function App() {
     return (
       <>
         <SectionHeader eyebrow="Every expense" title="Expenses"
-          action={<button className="btn btn-primary" data-tour="expenses-new" onClick={() => openModal('newExpense', { date: todayISO() })}><Plus size={16} /> Log expense</button>} />
+          action={<div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-outline" onClick={() => exportExpensesCsv(filtered)}><Download size={16} /> Export CSV</button>
+            <button className="btn btn-primary" data-tour="expenses-new" onClick={() => openModal('newExpense', { date: todayISO() })}><Plus size={16} /> Log expense</button>
+          </div>} />
+        <SearchBox className="loan-search" placeholder="Search by note or category…" value={expenseSearch} onChange={(v) => { setExpenseSearch(v); setExpenseShowCount(20); }} />
         <div className="field-row" style={{ marginBottom: 14 }}>
           <select className="kb-input" value={expenseCategoryFilter} onChange={(e) => { setExpenseCategoryFilter(e.target.value); setExpenseShowCount(20); }}>
             <option value="All">All categories</option>
             {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
-        {filtered.length === 0 ? <EmptyState text={expenses.length === 0 ? 'No expenses logged yet.' : `No expenses in ${expenseCategoryFilter}.`} /> : (
+        {filtered.length === 0 ? <EmptyState text={expenses.length === 0 ? 'No expenses logged yet.' : 'No expenses match your filters.'} /> : (
           <>
             <table className="history-table">
               <thead><tr>{sortHeader('date', 'Date')}{sortHeader('category', 'Category')}<th>Note</th>{sortHeader('amount', 'Amount')}<th></th></tr></thead>
@@ -7246,7 +7329,8 @@ function App() {
           reminderDoc={reminderDoc}
           settings={settings}
           fmt={fmt}
-          onClose={() => setReminderDoc(null)}
+          onClose={advanceReminderQueue}
+          queueRemaining={reminderQueue.length}
           shareImageToWhatsApp={shareImageToWhatsApp}
         />
       )}
