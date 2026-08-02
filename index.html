@@ -1368,7 +1368,7 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
   const issuedOn = new Date(invoice.issueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   const dueOn = new Date(invoice.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   const invoiceCreditNotes = (creditNotes || []).filter((cn) => cn.invoiceId === invoice.id);
-  const credited = invoiceCreditNotes.reduce((s, cn) => s + Number(cn.amount || 0), 0);
+  const credited = invoiceCreditNotes.filter((cn) => !cn.voided).reduce((s, cn) => s + Number(cn.amount || 0), 0);
   const netTotal = Math.max(0, total - credited);
   const paid = status === 'paid' ? netTotal : (receipts || []).filter((r) => r.invoiceId === invoice.id && !r.voided).reduce((s, r) => s + r.amount, 0);
   const balance = Math.max(0, netTotal - paid);
@@ -1440,9 +1440,9 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
             <div className="doc-credit-note-list">
               <div className="client-card-section-label">Credit notes issued</div>
               {invoiceCreditNotes.map((cn) => (
-                <div key={cn.id} className="doc-credit-note-row" onClick={() => onOpenCreditNote(cn)}>
-                  <span>{cn.number}</span>
-                  <span className="kb-mono">−{fmt(cn.amount)}</span>
+                <div key={cn.id} className="doc-credit-note-row" onClick={() => onOpenCreditNote(cn)} style={cn.voided ? { opacity: .55 } : undefined}>
+                  <span>{cn.number}{cn.voided ? ' (voided)' : ''}</span>
+                  <span className="kb-mono">{cn.voided ? '' : `−${fmt(cn.amount)}`}</span>
                   <ChevronRight size={14} className="chev" />
                 </div>
               ))}
@@ -1552,18 +1552,20 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
   );
 }
 
-function CreditNoteDocModal({ creditNoteDoc, client, invoice, settings, fmt, onClose, shareImageToWhatsApp }) {
+function CreditNoteDocModal({ creditNoteDoc, client, invoice, settings, fmt, onClose, shareImageToWhatsApp, onVoidCreditNote, onRestoreCreditNote }) {
   useEscClose(onClose);
   const issuedOn = new Date(creditNoteDoc.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const voided = !!creditNoteDoc.voided;
 
   const message = [
     `*${settings.businessName}*${settings.rcNumber ? ` (RC ${settings.rcNumber})` : ''}`, '',
-    `CREDIT NOTE ${creditNoteDoc.number}`,
+    `${voided ? 'VOIDED CREDIT NOTE' : 'CREDIT NOTE'} ${creditNoteDoc.number}`,
     `Issued to: ${client ? client.name : 'Client'}`,
     `Amount credited: ${fmt(creditNoteDoc.amount)}`,
     `Date: ${issuedOn}`,
     ...(invoice ? [`Against invoice: ${invoice.number}`] : []),
     ...(creditNoteDoc.reason ? [`Reason: ${creditNoteDoc.reason}`] : []),
+    ...(voided ? ['This credit note has been voided and is no longer valid.'] : []),
   ].join('\n');
 
   const downloadImage = () => {
@@ -1584,7 +1586,8 @@ function CreditNoteDocModal({ creditNoteDoc, client, invoice, settings, fmt, onC
           <button className="icon-btn" onClick={onClose} title="Close" aria-label="Close"><X size={18} /></button>
         </div>
         <div className="modal-body">
-          <div id="receipt-print-area" className="receipt-sheet">
+          <div id="receipt-print-area" className="receipt-sheet" style={voided ? { position: 'relative' } : undefined}>
+            {voided && <div className="doc-void-watermark">VOID</div>}
             <DocHeader settings={settings} />
             <div className="doc-title-row">
               <div>
@@ -1596,6 +1599,12 @@ function CreditNoteDocModal({ creditNoteDoc, client, invoice, settings, fmt, onC
                 <div className="doc-billed-name">{client ? client.name : 'Client'}</div>
               </div>
             </div>
+            {voided && (
+              <div className="doc-line" style={{ marginBottom: 4 }}>
+                <span><Stamp status="overdue" label="Voided" /></span>
+                <span className="kb-mono">{creditNoteDoc.voidedAt ? new Date(creditNoteDoc.voidedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}</span>
+              </div>
+            )}
             <div>
               {invoice && <div className="doc-line"><span>Against invoice</span><span className="kb-mono">{invoice.number}</span></div>}
               {creditNoteDoc.reason && <div className="doc-line"><span>Reason</span><span className="kb-mono">{creditNoteDoc.reason}</span></div>}
@@ -1603,11 +1612,16 @@ function CreditNoteDocModal({ creditNoteDoc, client, invoice, settings, fmt, onC
             <div className="doc-totals">
               <div className="doc-total-row balance"><span>Amount credited</span><span className="kb-mono">−{fmt(creditNoteDoc.amount)}</span></div>
             </div>
-            <div className="receipt-footer">This credit note adjusts the balance owed on {invoice ? invoice.number : 'the invoice above'}. The original invoice remains unchanged.</div>
+            <div className="receipt-footer">{voided ? 'This credit note has been voided and no longer affects the invoice balance.' : `This credit note adjusts the balance owed on ${invoice ? invoice.number : 'the invoice above'}. The original invoice remains unchanged.`}</div>
             <DocSignature settings={settings} />
             <DocFooter settings={settings} />
           </div>
           <div className="receipt-actions">
+            {voided ? (
+              <button className="btn btn-secondary btn-small" onClick={() => onRestoreCreditNote(creditNoteDoc.id)}><RotateCcw size={14} /> Restore</button>
+            ) : (
+              <button className="btn btn-outline btn-small" onClick={() => onVoidCreditNote(creditNoteDoc.id)}><Ban size={14} /> Void credit note</button>
+            )}
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
             <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(client?.phone, message, `${creditNoteDoc.number}.png`)}><MessageCircle size={14} /> Share image on WhatsApp</button>
@@ -2724,7 +2738,7 @@ function App() {
   const invoiceById = (id) => invoices.find((i) => i.id === id);
   // Credit notes reduce what's actually owed on an invoice without ever editing the
   // original billed amount — the invoice stays a fixed record, the adjustment is separate.
-  const invoiceCreditTotal = (invoiceId) => creditNotes.filter((cn) => cn.invoiceId === invoiceId).reduce((s, cn) => s + Number(cn.amount || 0), 0);
+  const invoiceCreditTotal = (invoiceId) => creditNotes.filter((cn) => cn.invoiceId === invoiceId && !cn.voided).reduce((s, cn) => s + Number(cn.amount || 0), 0);
   const invoiceNetTotal = (inv) => Math.max(0, invoiceTotal(inv) - invoiceCreditTotal(inv.id));
   const findContribution = (planId, memberId, period) =>
     contributions.find((c) => c.planId === planId && c.memberId === memberId && c.period === period);
@@ -3223,9 +3237,14 @@ function App() {
     setReceipts((prev) => prev.map((r) => r.id === receiptId ? { ...r, status: 'issued' } : r));
     flash('Receipt issued.');
   };
+  // Only drafts can be deleted outright — once a receipt has been issued (or voided),
+  // it's kept on record for audit purposes; "delete" at that point means voiding it,
+  // or wiping everything via Settings > Clear all data.
   const deleteReceipt = (receiptId) => {
     if (guardWrite()) return;
-    askConfirm('Delete this receipt? This cannot be undone.', () => {
+    const receipt = receipts.find((r) => r.id === receiptId);
+    if (receipt && receipt.status !== 'draft') { flash('Issued receipts can\u2019t be deleted — void it instead to keep the record intact.'); return; }
+    askConfirm('Delete this draft receipt? This cannot be undone.', () => {
       setReceipts((prev) => prev.filter((r) => r.id !== receiptId));
     });
   };
@@ -3266,6 +3285,17 @@ function App() {
       };
       setCreditNotes((c) => [cn, ...c]);
       setSettings((s) => ({ ...s, creditNoteCounter: Math.max(s.creditNoteCounter || 3000, Number((cn.number || '').replace(/\D/g, '')) || 0) }));
+      // If this credit note — combined with any prior credits and payments already
+      // received — fully covers the invoice, it's settled. We mark the invoice paid so
+      // it stops showing as outstanding, but we do NOT auto-generate a payment receipt:
+      // a credit note isn't proof of cash received, so issuing a "receipt" here would
+      // misrepresent the record. The credit note itself is the settling document.
+      const alreadyCredited = creditNotes.filter((c2) => c2.invoiceId === inv.id && !c2.voided).reduce((s, c2) => s + Number(c2.amount || 0), 0);
+      const alreadyReceived = receipts.filter((r) => r.invoiceId === inv.id && !r.voided).reduce((s, r) => s + r.amount, 0);
+      const totalCovered = alreadyCredited + amount + alreadyReceived;
+      if (inv.status !== 'paid' && inv.status !== 'draft' && inv.status !== 'void' && totalCovered >= invoiceTotal(inv)) {
+        setInvoices((prev) => prev.map((i) => i.id === inv.id ? { ...i, status: 'paid', paidDate: todayISO() } : i));
+      }
       closeModalSilently();
       flash('Credit note issued.');
       setCreditNoteDoc(cn);
@@ -3276,15 +3306,29 @@ function App() {
     }
     finish();
   };
-  const deleteCreditNote = (creditNoteId) => {
+  // Credit notes, like invoices and receipts, are locked once issued for audit
+  // integrity — there's no delete. A mistaken credit note is corrected by voiding it
+  // (which restores the credited amount to the invoice's balance), not erasing it.
+  const voidCreditNote = (creditNoteId) => {
     if (guardWrite()) return;
-    askConfirm('Delete this credit note? The invoice balance will go back up. This cannot be undone.', () => {
-      setCreditNotes((prev) => prev.filter((cn) => cn.id !== creditNoteId));
-    });
+    askConfirm('Void this credit note? The credited amount goes back onto the invoice balance. It stays on record as cancelled — nothing is deleted, and you can restore it later.', () => {
+      setCreditNotes((prev) => prev.map((cn) => cn.id === creditNoteId ? { ...cn, voided: true, voidedAt: todayISO() } : cn));
+      flash('Credit note voided.');
+    }, { confirmLabel: 'Void credit note', danger: true });
   };
+  const restoreCreditNote = (creditNoteId) => {
+    if (guardWrite()) return;
+    setCreditNotes((prev) => prev.map((cn) => cn.id === creditNoteId ? { ...cn, voided: false, voidedAt: null } : cn));
+    flash('Credit note restored.');
+  };
+  // Only drafts can be deleted outright — once an invoice has been issued, paid, or
+  // voided, it's kept on record for audit purposes; "delete" at that point means voiding
+  // it instead, or wiping everything via Settings > Clear all data.
   const deleteInvoice = (invoiceId) => {
     if (guardWrite()) return;
-    askConfirm('Delete this invoice? This cannot be undone.', () => {
+    const invoice = invoices.find((i) => i.id === invoiceId);
+    if (invoice && invoice.status !== 'draft') { flash('Issued invoices can\u2019t be deleted — void it instead to keep the record intact.'); return; }
+    askConfirm('Delete this draft invoice? This cannot be undone.', () => {
       setInvoices((prev) => prev.filter((i) => i.id !== invoiceId));
     });
   };
@@ -4912,7 +4956,7 @@ function App() {
                       {(status === 'sent' || status === 'overdue') && <button className="btn btn-outline btn-small" onClick={() => voidInvoice(inv.id)}><Ban size={13} /> Void</button>}
                       {status === 'void' && <button className="btn btn-secondary btn-small" onClick={() => restoreInvoice(inv.id)}><RotateCcw size={13} /> Restore</button>}
                       {status !== 'draft' && status !== 'void' && <button className="btn btn-outline btn-small" onClick={() => openModal('newCreditNote', { invoiceId: inv.id, date: todayISO() })}><FileMinus size={13} /> Issue credit note</button>}
-                      <button className="btn btn-danger btn-small" onClick={() => deleteInvoice(inv.id)}><Trash2 size={13} /> Delete</button>
+                      {status === 'draft' && <button className="btn btn-danger btn-small" onClick={() => deleteInvoice(inv.id)}><Trash2 size={13} /> Delete</button>}
                     </div>
                   </div>
                 </div>
@@ -4965,7 +5009,7 @@ function App() {
                       ) : (
                         <button className="btn btn-outline btn-small" onClick={() => voidReceipt(r.id)}><Ban size={13} /> Void</button>
                       ))}
-                      <button className="btn btn-danger btn-small" onClick={() => deleteReceipt(r.id)}><Trash2 size={13} /> Delete</button>
+                      {draft && <button className="btn btn-danger btn-small" onClick={() => deleteReceipt(r.id)}><Trash2 size={13} /> Delete</button>}
                     </div>
                   </div>
                 </div>
@@ -7167,6 +7211,8 @@ function App() {
           fmt={fmt}
           onClose={() => setCreditNoteDoc(null)}
           shareImageToWhatsApp={shareImageToWhatsApp}
+          onVoidCreditNote={(id) => { setCreditNoteDoc(null); voidCreditNote(id); }}
+          onRestoreCreditNote={(id) => { restoreCreditNote(id); setCreditNoteDoc((d) => d ? { ...d, voided: false, voidedAt: null } : d); }}
         />
       )}
       {taxReturnDoc && (
