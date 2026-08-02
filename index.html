@@ -458,8 +458,17 @@ function seedClients() {
     { id: 'c2', name: 'Femi Owolabi', phone: '0705 118 2249', email: '', address: 'Ikeja, Lagos' },
   ];
 }
-function invoiceTotal(inv) {
+function invoiceSubtotal(inv) {
   return (inv.items || []).reduce((s, it) => s + Number(it.qty || 0) * Number(it.price || 0), 0);
+}
+function invoiceDiscountAmount(inv) {
+  return invoiceSubtotal(inv) * (Number(inv.discountPercent || 0) / 100);
+}
+function invoiceVatAmount(inv) {
+  return (invoiceSubtotal(inv) - invoiceDiscountAmount(inv)) * (Number(inv.vatPercent || 0) / 100);
+}
+function invoiceTotal(inv) {
+  return invoiceSubtotal(inv) - invoiceDiscountAmount(inv) + invoiceVatAmount(inv);
 }
 function seedInvoices() {
   return [
@@ -1376,6 +1385,9 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
   useEscClose(onClose);
   const status = invoiceStatusOf(invoice);
   const voided = status === 'void';
+  const subtotal = invoiceSubtotal(invoice);
+  const discountAmt = invoiceDiscountAmount(invoice);
+  const vatAmt = invoiceVatAmount(invoice);
   const total = invoiceTotal(invoice);
   const issuedOn = new Date(invoice.issueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   const dueOn = new Date(invoice.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -1437,7 +1449,10 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
               </div>
             )}
             <div className="doc-totals">
-              <div className="doc-total-row"><span>Subtotal</span><span className="kb-mono">{fmt(total)}</span></div>
+              {(discountAmt > 0 || vatAmt > 0) && <div className="doc-total-row"><span>Subtotal</span><span className="kb-mono">{fmt(subtotal)}</span></div>}
+              {discountAmt > 0 && <div className="doc-total-row"><span>Discount ({invoice.discountPercent}%)</span><span className="kb-mono">−{fmt(discountAmt)}</span></div>}
+              {vatAmt > 0 && <div className="doc-total-row"><span>VAT ({invoice.vatPercent}%)</span><span className="kb-mono">+{fmt(vatAmt)}</span></div>}
+              <div className="doc-total-row"><span>{(discountAmt > 0 || vatAmt > 0) ? 'Total' : 'Subtotal'}</span><span className="kb-mono">{fmt(total)}</span></div>
               {credited > 0 && <div className="doc-total-row"><span>Credited</span><span className="kb-mono">−{fmt(credited)}</span></div>}
               <div className="doc-total-row"><span>{creditSettled ? 'Settled (via credit)' : 'Paid'}</span><span className="kb-mono">{fmt(paid)}</span></div>
               <div className="doc-total-row balance"><span>Balance</span><span className="kb-mono">{fmt(balance)}</span></div>
@@ -1790,6 +1805,96 @@ function TabStatementModal({ tab, contact, settings, fmt, onClose, shareImageToW
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
             <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(personPhone, waText, `statement-${statementNo}.png`)}><MessageCircle size={14} /> Share image on WhatsApp</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ClientStatementModal({ client, invoices, receipts, creditNotes, settings, fmt, onClose, shareImageToWhatsApp }) {
+  useEscClose(onClose);
+  const clientInvoices = invoices.filter((i) => i.clientId === client.id && i.status !== 'draft' && i.status !== 'void');
+  const clientReceipts = receipts.filter((r) => r.clientId === client.id && !r.voided && r.status !== 'draft');
+  const clientCreditNotes = creditNotes.filter((cn) => cn.invoiceId && clientInvoices.some((i) => i.id === cn.invoiceId) && !cn.voided);
+  // One combined, chronological ledger — invoices raise the balance owed, receipts and
+  // credit notes bring it down — so the running total always reflects what's actually
+  // outstanding at each point, not just a tally of invoices in isolation.
+  const events = [
+    ...clientInvoices.map((i) => ({ date: i.issueDate, label: `Invoice ${i.number}`, amount: invoiceTotal(i) })),
+    ...clientReceipts.map((r) => ({ date: r.date, label: `Receipt ${r.receiptNo}`, amount: -Number(r.amount || 0) })),
+    ...clientCreditNotes.map((cn) => ({ date: cn.date, label: `Credit note ${cn.number}`, amount: -Number(cn.amount || 0) })),
+  ].sort((a, b) => new Date(a.date) - new Date(b.date));
+  let running = 0;
+  const rows = events.map((e) => { running += e.amount; return { ...e, running }; });
+  const totalInvoiced = clientInvoices.reduce((s, i) => s + invoiceTotal(i), 0);
+  const totalReceived = clientReceipts.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const totalCredited = clientCreditNotes.reduce((s, cn) => s + Number(cn.amount || 0), 0);
+  const balance = Math.max(0, totalInvoiced - totalReceived - totalCredited);
+  const issuedOn = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+
+  const downloadImage = () => {
+    const node = document.getElementById('receipt-print-area');
+    if (!node || !window.html2canvas) return;
+    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+      const url = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = url; a.download = `statement-${client.name.replace(/\s+/g, '-').toLowerCase()}.png`; a.click();
+    });
+  };
+  const waText = [
+    `*${settings.businessName}* — Client Statement`, '',
+    `Client: ${client.name}`, `As of: ${issuedOn}`, '',
+    ...rows.map((r) => `${new Date(r.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} — ${r.label}: ${r.amount < 0 ? '-' : ''}${fmt(Math.abs(r.amount))} (bal ${fmt(r.running)})`),
+    '', `Balance outstanding: ${fmt(balance)}`,
+  ].join('\n');
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card receipt-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3 className="kb-display">Statement — {client.name}</h3>
+          <button className="icon-btn" onClick={onClose} title="Close" aria-label="Close"><X size={18} /></button>
+        </div>
+        <div className="modal-body">
+          <div id="receipt-print-area" className="receipt-sheet">
+            <DocHeader settings={settings} />
+            <div className="doc-title-row">
+              <div>
+                <div className="doc-title">Client Statement</div>
+                <div className="doc-title-meta">As of {issuedOn}</div>
+              </div>
+              <div>
+                <div className="doc-billed-label">Client</div>
+                <div className="doc-billed-name">{client.name}</div>
+                {client.address && <div className="doc-title-meta" style={{ textAlign: 'right' }}>{client.address}</div>}
+              </div>
+            </div>
+            {rows.length === 0 ? (
+              <div className="panel-sub" style={{ marginTop: 10 }}>No invoices, receipts or credit notes on record for this client yet.</div>
+            ) : (
+              <div>
+                {rows.map((r, i) => (
+                  <div key={i} className="doc-line">
+                    <span>{new Date(r.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} — {r.label}</span>
+                    <span className="kb-mono">{r.amount < 0 ? '−' : ''}{fmt(Math.abs(r.amount))} · bal {fmt(r.running)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="doc-totals">
+              <div className="doc-total-row"><span>Total invoiced</span><span className="kb-mono">{fmt(totalInvoiced)}</span></div>
+              {totalCredited > 0 && <div className="doc-total-row"><span>Total credited</span><span className="kb-mono">−{fmt(totalCredited)}</span></div>}
+              <div className="doc-total-row"><span>Total received</span><span className="kb-mono">−{fmt(totalReceived)}</span></div>
+              <div className="doc-total-row balance"><span>Balance outstanding</span><span className="kb-mono">{fmt(balance)}</span></div>
+            </div>
+            <DocSignature settings={settings} />
+            <DocFooter settings={settings} />
+          </div>
+          <div className="receipt-actions">
+            <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
+            <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
+            <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(client.phone, waText, `statement-${client.name.replace(/\s+/g, '-').toLowerCase()}.png`)}><MessageCircle size={14} /> Share image on WhatsApp</button>
           </div>
         </div>
       </div>
@@ -2589,6 +2694,7 @@ function App() {
   const [bankOtherMode, setBankOtherMode] = useState(() => !!settings.bankName && !NIGERIA_BANK_NAMES.includes(settings.bankName));
   const [tourStep, setTourStep] = useState(null);
   const [tabStatementDoc, setTabStatementDoc] = useState(null);
+  const [clientStatementDoc, setClientStatementDoc] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [toast, setToast] = useState('');
   const [confirmDialog, setConfirmDialog] = useState(null); // { message, confirmLabel, danger, onConfirm }
@@ -2671,12 +2777,60 @@ function App() {
     });
   }, [currentUser]);
 
+  // ---------- auto-draft recurring invoices for the current month ----------
+  // Mirrors the recurring-expense engine above, but always lands as a 'draft' rather
+  // than being auto-issued — a real invoice going out to a real client should always
+  // get a human glance first, even on a series that's repeated for months.
+  useEffect(() => {
+    if (!currentUser || isReadOnly) return;
+    const thisMonth = todayISO().slice(0, 7);
+    const groups = {};
+    invoices.forEach((inv) => {
+      if (!inv.recurring || inv.status === 'void') return;
+      const key = inv.recurringId || inv.id;
+      (groups[key] = groups[key] || []).push(inv);
+    });
+    const fromData = invoices.map((i) => Number((i.number || '').replace(/\D/g, '')) || 0);
+    let counter = Math.max(settings.invoiceCounter || 1000, fromData.length ? Math.max(...fromData) : 1000);
+    const additions = [];
+    Object.values(groups).forEach((entries) => {
+      const latest = entries.slice().sort((a, b) => new Date(b.issueDate) - new Date(a.issueDate))[0];
+      if (latest.issueDate.slice(0, 7) === thisMonth) return; // already generated this month
+      const originalDay = new Date(latest.issueDate).getDate();
+      const [yy, mm] = thisMonth.split('-').map(Number);
+      const daysInMonth = new Date(yy, mm, 0).getDate();
+      const day = Math.min(originalDay, daysInMonth);
+      const newIssueDate = `${thisMonth}-${String(day).padStart(2, '0')}`;
+      const termDays = Math.round((new Date(latest.dueDate) - new Date(latest.issueDate)) / 86400000) || 14;
+      const newDueDate = new Date(new Date(newIssueDate).getTime() + termDays * 86400000).toISOString().slice(0, 10);
+      counter += 1;
+      additions.push({
+        id: uid(), number: `INV-${counter}`, clientId: latest.clientId,
+        issueDate: newIssueDate, dueDate: newDueDate,
+        items: (latest.items || []).map((it) => ({ ...it, id: uid() })),
+        status: 'draft', notes: latest.notes || '', paidDate: null,
+        discountPercent: latest.discountPercent || 0, vatPercent: latest.vatPercent || 0,
+        recurring: true, recurringId: latest.recurringId || latest.id,
+      });
+    });
+    if (additions.length) {
+      setInvoices((prev) => [...additions, ...prev]);
+      setSettings((s) => ({ ...s, invoiceCounter: counter }));
+      flash(`${additions.length} recurring invoice${additions.length === 1 ? '' : 's'} drafted for this month — review and issue when ready.`);
+    }
+  }, [currentUser]);
+
   const fmt = (n) => settings.currencySymbol + Math.round(Number(n || 0)).toLocaleString('en-NG');
   const toastTimerRef = useRef(null);
-  const flash = (msg) => {
+  const [toastUndo, setToastUndo] = useState(null);
+  // flash(msg) behaves as before. flash(msg, undoFn) additionally shows an Undo button
+  // in the toast for a few seconds — used after deletes so a slip of the finger (or a
+  // reconsidered decision) isn't permanent, without needing a separate confirmation step.
+  const flash = (msg, undoFn) => {
     setToast(msg);
+    setToastUndo(() => undoFn || null);
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = setTimeout(() => setToast(''), 3200);
+    toastTimerRef.current = setTimeout(() => { setToast(''); setToastUndo(null); }, undoFn ? 6000 : 3200);
   };
   // In-app replacement for window.confirm; onConfirm runs only if confirmed.
   const askConfirm = (message, onConfirm, opts) => {
@@ -3124,10 +3278,13 @@ function App() {
     }
     // Editing an existing draft updates it in place instead of creating a new invoice.
     if (form.editingInvoiceId) {
+      const existing = invoices.find((i) => i.id === form.editingInvoiceId);
       const updated = {
-        ...invoices.find((i) => i.id === form.editingInvoiceId),
+        ...existing,
         clientId, issueDate: form.issueDate || todayISO(), dueDate: form.dueDate || todayISO(),
         items: form.items, notes: form.notes || '',
+        discountPercent: Number(form.discountPercent || 0), vatPercent: Number(form.vatPercent || 0),
+        recurring: !!form.recurring, recurringId: form.recurring ? (existing.recurringId || existing.id) : null,
         status: asIssue ? 'sent' : 'draft',
       };
       setInvoices((prev) => prev.map((i) => i.id === form.editingInvoiceId ? updated : i));
@@ -3140,7 +3297,10 @@ function App() {
       id: uid(), number: form.number || nextInvoiceNumber(), clientId,
       issueDate: form.issueDate || todayISO(), dueDate: form.dueDate || todayISO(),
       items: form.items, status: asIssue ? 'sent' : 'draft', notes: form.notes || '', paidDate: null,
+      discountPercent: Number(form.discountPercent || 0), vatPercent: Number(form.vatPercent || 0),
     };
+    invoice.recurring = !!form.recurring;
+    invoice.recurringId = form.recurring ? invoice.id : null;
     setInvoices((i) => [invoice, ...i]);
     setSettings((s) => ({ ...s, invoiceCounter: Math.max(s.invoiceCounter || 1000, Number((invoice.number || '').replace(/\D/g, '')) || 0) }));
     closeModalSilently();
@@ -3154,6 +3314,8 @@ function App() {
       editingInvoiceId: inv.id, number: inv.number, clientId: inv.clientId,
       issueDate: inv.issueDate, dueDate: inv.dueDate,
       items: (inv.items || []).map((it) => ({ ...it })), notes: inv.notes || '',
+      discountPercent: inv.discountPercent || '', vatPercent: inv.vatPercent || '',
+      recurring: !!inv.recurring,
     });
   };
   const issueInvoice = (invoiceId) => {
@@ -3193,6 +3355,7 @@ function App() {
     setForm((f) => ({
       ...f, invoiceId, clientId: inv.clientId,
       items: (inv.items || []).map((it) => ({ id: uid(), desc: it.desc, qty: it.qty, price: it.price })),
+      discountPercent: inv.discountPercent || 0, vatPercent: inv.vatPercent || 0,
     }));
   };
   const markInvoicePaid = (invoiceId) => {
@@ -3218,7 +3381,10 @@ function App() {
     if (guardWrite()) return;
     if (!form.clientId && !form.clientName) { flash('Pick a client or type a payer name.'); return; }
     const items = (form.items || []).filter((it) => it.desc || it.qty || it.price);
-    const itemsTotal = items.reduce((s, it) => s + Number(it.qty || 0) * Number(it.price || 0), 0);
+    const itemsSubtotal = items.reduce((s, it) => s + Number(it.qty || 0) * Number(it.price || 0), 0);
+    const itemsDiscount = itemsSubtotal * (Number(form.discountPercent || 0) / 100);
+    const itemsVat = (itemsSubtotal - itemsDiscount) * (Number(form.vatPercent || 0) / 100);
+    const itemsTotal = itemsSubtotal - itemsDiscount + itemsVat;
     const amount = items.length ? itemsTotal : Number(form.amount || 0);
     if (!amount) { flash(items.length ? 'Add a quantity and price to at least one item.' : 'Enter an amount received.'); return; }
     // Walk-in payers (typed name, no client picked) are auto-saved to Clients so they show
@@ -3243,6 +3409,7 @@ function App() {
         ...receipts.find((r) => r.id === form.editingReceiptId),
         invoiceId: form.invoiceId || null, clientId, clientName: '',
         amount, items, date: form.date || todayISO(), note: form.note || '',
+        discountPercent: Number(form.discountPercent || 0), vatPercent: Number(form.vatPercent || 0),
         status: asIssue ? 'issued' : 'draft',
       };
       setReceipts((prev) => prev.map((r) => r.id === form.editingReceiptId ? updated : r));
@@ -3255,6 +3422,7 @@ function App() {
       id: uid(), receiptNo: form.receiptNo || nextReceiptNumber(), invoiceId: form.invoiceId || null,
       clientId, clientName: '',
       amount, items, date: form.date || todayISO(), note: form.note || '',
+      discountPercent: Number(form.discountPercent || 0), vatPercent: Number(form.vatPercent || 0),
       status: asIssue ? 'issued' : 'draft',
     };
     setReceipts((r) => [rcpt, ...r]);
@@ -3270,6 +3438,7 @@ function App() {
       editingReceiptId: r.id, receiptNo: r.receiptNo, invoiceId: r.invoiceId || '',
       clientId: r.clientId || '', clientName: r.clientName || '',
       items: (r.items || []).map((it) => ({ ...it })), amount: r.amount, date: r.date, note: r.note || '',
+      discountPercent: r.discountPercent || '', vatPercent: r.vatPercent || '',
     });
   };
   const issueReceipt = (receiptId) => {
@@ -3284,8 +3453,9 @@ function App() {
     if (guardWrite()) return;
     const receipt = receipts.find((r) => r.id === receiptId);
     if (receipt && receipt.status !== 'draft') { flash('Issued receipts can\u2019t be deleted — void it instead to keep the record intact.'); return; }
-    askConfirm('Delete this draft receipt? This cannot be undone.', () => {
+    askConfirm('Delete this draft receipt?', () => {
       setReceipts((prev) => prev.filter((r) => r.id !== receiptId));
+      flash('Draft receipt deleted.', receipt ? () => setReceipts((prev) => [receipt, ...prev]) : undefined);
     });
   };
   // Voiding keeps the receipt on record (nothing is edited or erased) but marks it
@@ -3368,22 +3538,28 @@ function App() {
     if (guardWrite()) return;
     const invoice = invoices.find((i) => i.id === invoiceId);
     if (invoice && invoice.status !== 'draft') { flash('Issued invoices can\u2019t be deleted — void it instead to keep the record intact.'); return; }
-    askConfirm('Delete this draft invoice? This cannot be undone.', () => {
+    askConfirm('Delete this draft invoice?', () => {
       setInvoices((prev) => prev.filter((i) => i.id !== invoiceId));
+      flash('Draft invoice deleted.', invoice ? () => setInvoices((prev) => [invoice, ...prev]) : undefined);
     });
   };
   const deletePlan = (planId) => {
     if (guardWrite()) return;
     const plan = planById(planId);
     if (!plan) return;
-    askConfirm(`Delete "${plan.name}"? This also removes its contribution history. This cannot be undone.`, () => {
+    askConfirm(`Delete "${plan.name}"? This also removes its contribution history.`, () => {
+      const removedContributions = contributions.filter((c) => c.planId === planId);
       setPlans((prev) => prev.filter((p) => p.id !== planId));
       setContributions((prev) => prev.filter((c) => c.planId !== planId));
       if (selectedPlanId === planId) {
         const next = plans.find((p) => p.id !== planId);
         setSelectedPlanId(next ? next.id : null);
       }
-      flash('Plan deleted.');
+      flash('Plan deleted.', () => {
+        setPlans((prev) => [plan, ...prev]);
+        setContributions((prev) => [...removedContributions, ...prev]);
+        setSelectedPlanId(planId);
+      });
     });
   };
   const deleteMember = (memberId) => {
@@ -3396,7 +3572,9 @@ function App() {
     if (alreadyPaidOnCycle.length) {
       warning += ` Note: they already received a payout on "${alreadyPaidOnCycle[0].name}" — removing them shortens how many rounds that cycle needs to complete.`;
     }
-    askConfirm(`Delete ${member.name}? This also removes their contribution history.${warning} This cannot be undone.`, () => {
+    askConfirm(`Delete ${member.name}? This also removes their contribution history.${warning}`, () => {
+      const removedContributions = contributions.filter((c) => c.memberId === memberId);
+      const memberPlanIds = onPlans.map((p) => p.id);
       setMembers((prev) => prev.filter((m) => m.id !== memberId));
       setContributions((prev) => prev.filter((c) => c.memberId !== memberId));
       setPlans((prev) => prev.map((p) => ({ ...p, memberIds: p.memberIds.filter((id) => id !== memberId) })));
@@ -3404,32 +3582,43 @@ function App() {
         const next = members.find((m) => m.id !== memberId);
         setSelectedMemberId(next ? next.id : null);
       }
-      flash('Contributor deleted.');
+      flash('Contributor deleted.', () => {
+        setMembers((prev) => [member, ...prev]);
+        setContributions((prev) => [...removedContributions, ...prev]);
+        setPlans((prev) => prev.map((p) => memberPlanIds.includes(p.id) ? { ...p, memberIds: [...p.memberIds, memberId] } : p));
+        setSelectedMemberId(memberId);
+      });
     });
   };
   const deleteClient = (clientId) => {
     if (guardWrite()) return;
     const client = clientById(clientId);
     if (!client) return;
-    const clientInvoices = invoices.filter((i) => i.clientId === clientId);
-    const warning = clientInvoices.length ? ` They have ${clientInvoices.length} invoice(s) on file — those will stay, just no longer linked to a client.` : '';
-    askConfirm(`Delete ${client.name}?${warning} This cannot be undone.`, () => {
+    const hasIssuedInvoice = invoices.some((i) => i.clientId === clientId && i.status !== 'draft' && i.status !== 'void');
+    const hasIssuedReceipt = receipts.some((r) => r.clientId === clientId && r.status === 'issued' && !r.voided);
+    if (hasIssuedInvoice || hasIssuedReceipt) {
+      flash('This client has an issued invoice or receipt on file, so they can\u2019t be deleted \u2014 you can still edit their details.');
+      return;
+    }
+    askConfirm(`Delete ${client.name}?`, () => {
       setClients((prev) => prev.filter((c) => c.id !== clientId));
-      flash('Client deleted.');
+      flash('Client deleted.', () => setClients((prev) => [client, ...prev]));
     });
   };
   const deleteLoanGiven = (loanId) => {
     if (guardWrite()) return;
-    askConfirm('Delete this loan record? This cannot be undone.', () => {
+    const loan = loansGiven.find((l) => l.id === loanId);
+    askConfirm('Delete this loan record?', () => {
       setLoansGiven((prev) => prev.filter((l) => l.id !== loanId));
-      flash('Loan record deleted.');
+      flash('Loan record deleted.', loan ? () => setLoansGiven((prev) => [loan, ...prev]) : undefined);
     });
   };
   const deleteLoanReceived = (loanId) => {
     if (guardWrite()) return;
-    askConfirm('Delete this loan record? This cannot be undone.', () => {
+    const loan = loansReceived.find((l) => l.id === loanId);
+    askConfirm('Delete this loan record?', () => {
       setLoansReceived((prev) => prev.filter((l) => l.id !== loanId));
-      flash('Loan record deleted.');
+      flash('Loan record deleted.', loan ? () => setLoansReceived((prev) => [loan, ...prev]) : undefined);
     });
   };
 
@@ -3521,14 +3710,19 @@ function App() {
   };
   const deleteTabEntry = (tabId, entryId) => {
     if (guardWrite()) return;
-    askConfirm('Delete this entry? This cannot be undone.', () => {
+    const tab = loanTabs.find((t) => t.id === tabId);
+    const entry = tab && tab.entries.find((e) => e.id === entryId);
+    askConfirm('Delete this entry?', () => {
       setLoanTabs((prev) => prev.map((t) => t.id === tabId ? { ...t, entries: t.entries.filter((e) => e.id !== entryId) } : t));
+      flash('Entry deleted.', entry ? () => setLoanTabs((prev) => prev.map((t) => t.id === tabId ? { ...t, entries: [...t.entries, entry] } : t)) : undefined);
     });
   };
   const deleteLoanTab = (tabId) => {
     if (guardWrite()) return;
-    askConfirm('Delete this whole IOU and its entries? This cannot be undone.', () => {
+    const tab = loanTabs.find((t) => t.id === tabId);
+    askConfirm('Delete this whole IOU and its entries?', () => {
       setLoanTabs((prev) => prev.filter((t) => t.id !== tabId));
+      flash('IOU deleted.', tab ? () => setLoanTabs((prev) => [tab, ...prev]) : undefined);
     });
   };
   const loanContactById = (id) => loanContacts.find((c) => c.id === id);
@@ -3570,8 +3764,10 @@ function App() {
   };
   const deleteExpense = (expenseId) => {
     if (guardWrite()) return;
-    askConfirm('Delete this expense? This cannot be undone.', () => {
+    const expense = expenses.find((e) => e.id === expenseId);
+    askConfirm('Delete this expense?', () => {
       setExpenses((prev) => prev.filter((e) => e.id !== expenseId));
+      flash('Expense deleted.', expense ? () => setExpenses((prev) => [expense, ...prev]) : undefined);
     });
   };
   const budgetForCategory = (category) => budgets.find((b) => b.category === category);
@@ -3588,8 +3784,10 @@ function App() {
   };
   const deleteBudget = (budgetId) => {
     if (guardWrite()) return;
-    askConfirm('Remove this budget? This cannot be undone.', () => {
+    const budget = budgets.find((b) => b.id === budgetId);
+    askConfirm('Remove this budget?', () => {
       setBudgets((prev) => prev.filter((b) => b.id !== budgetId));
+      flash('Budget removed.', budget ? () => setBudgets((prev) => [budget, ...prev]) : undefined);
     });
   };
 
@@ -3795,8 +3993,10 @@ function App() {
   };
   const deleteTaxTxn = (id) => {
     if (guardWrite()) return;
-    askConfirm('Delete this transaction? This cannot be undone.', () => {
+    const txn = taxTransactions.find((t) => t.id === id);
+    askConfirm('Delete this transaction?', () => {
       setTaxTransactions((prev) => prev.filter((t) => t.id !== id));
+      flash('Transaction deleted.', txn ? () => setTaxTransactions((prev) => [txn, ...prev]) : undefined);
     });
   };
   const submitNewTaxTxn = () => {
@@ -3882,8 +4082,10 @@ function App() {
   };
   const deleteTaxReturn = (id) => {
     if (guardWrite()) return;
-    askConfirm('Delete this tax return? This cannot be undone.', () => {
+    const taxReturn = taxReturns.find((r) => r.id === id);
+    askConfirm('Delete this tax return?', () => {
       setTaxReturns((prev) => prev.filter((r) => r.id !== id));
+      flash('Tax return deleted.', taxReturn ? () => setTaxReturns((prev) => [taxReturn, ...prev]) : undefined);
     });
   };
 
@@ -3919,8 +4121,11 @@ function App() {
   };
   const deletePlanMemberLoan = (planId, loanId) => {
     if (guardWrite()) return;
-    askConfirm('Delete this loan record? This cannot be undone.', () => {
+    const plan = planById(planId);
+    const loan = plan && (plan.memberLoans || []).find((ml) => ml.id === loanId);
+    askConfirm('Delete this loan record?', () => {
       setPlans((prev) => prev.map((p) => p.id === planId ? { ...p, memberLoans: (p.memberLoans || []).filter((ml) => ml.id !== loanId) } : p));
+      flash('Loan record deleted.', loan ? () => setPlans((prev) => prev.map((p) => p.id === planId ? { ...p, memberLoans: [...(p.memberLoans || []), loan] } : p)) : undefined);
     });
   };
 
@@ -4068,11 +4273,11 @@ function App() {
     URL.revokeObjectURL(url);
   };
   const exportInvoicesCsv = (rows) => {
-    downloadCsv('invoices.csv', ['Number', 'Client', 'Issue date', 'Due date', 'Status', 'Total', 'Credited', 'Net total'], rows.map((inv) => {
+    downloadCsv('invoices.csv', ['Number', 'Client', 'Issue date', 'Due date', 'Status', 'Subtotal', 'Discount %', 'VAT %', 'Total', 'Credited', 'Net total', 'Recurring'], rows.map((inv) => {
       const client = clientById(inv.clientId);
       const total = invoiceTotal(inv);
       const net = invoiceNetTotal(inv);
-      return [inv.number, client ? client.name : '', inv.issueDate, inv.dueDate, INVOICE_STATUS_LABEL[invoiceStatusOf(inv)] || invoiceStatusOf(inv), total, total - net, net];
+      return [inv.number, client ? client.name : '', inv.issueDate, inv.dueDate, INVOICE_STATUS_LABEL[invoiceStatusOf(inv)] || invoiceStatusOf(inv), invoiceSubtotal(inv), inv.discountPercent || 0, inv.vatPercent || 0, total, total - net, net, inv.recurring ? 'Yes' : 'No'];
     }));
   };
   const exportReceiptsCsv = (rows) => {
@@ -4186,6 +4391,9 @@ function App() {
 
   const invoiceMessage = (inv) => {
     const client = clientById(inv.clientId);
+    const subtotal = invoiceSubtotal(inv);
+    const discountAmt = invoiceDiscountAmount(inv);
+    const vatAmt = invoiceVatAmount(inv);
     const total = invoiceTotal(inv);
     const status = invoiceStatusOf(inv);
     const lines = [
@@ -4197,9 +4405,13 @@ function App() {
       '',
       ...inv.items.map((it) => `${it.desc} — ${it.qty} x ${fmt(it.price)} = ${fmt(it.qty * it.price)}`),
       '',
-      `Total: ${fmt(total)}`,
-      `Status: ${INVOICE_STATUS_LABEL[status]}`,
     ];
+    if (discountAmt > 0 || vatAmt > 0) {
+      lines.push(`Subtotal: ${fmt(subtotal)}`);
+      if (discountAmt > 0) lines.push(`Discount (${inv.discountPercent}%): -${fmt(discountAmt)}`);
+      if (vatAmt > 0) lines.push(`VAT (${inv.vatPercent}%): +${fmt(vatAmt)}`);
+    }
+    lines.push(`Total: ${fmt(total)}`, `Status: ${INVOICE_STATUS_LABEL[status]}`);
     if (settings.accountNumber || settings.bankName || settings.accountName) lines.push('', `Pay to: ${settings.bankName || ''} ${settings.accountNumber} (${settings.accountName || settings.businessName})`);
     return lines.join('\n');
   };
@@ -4928,14 +5140,16 @@ function App() {
               const clientInvoices = invoices.filter((i) => i.clientId === c.id).sort((a, b) => new Date(b.issueDate) - new Date(a.issueDate));
               const clientReceipts = receipts.filter((r) => r.clientId === c.id).sort((a, b) => new Date(b.date) - new Date(a.date));
               const owed = clientInvoices.filter((i) => i.status !== 'paid' && i.status !== 'draft' && i.status !== 'void').reduce((s, i) => s + invoiceNetTotal(i), 0);
+              const hasIssuedRecord = clientInvoices.some((i) => i.status !== 'draft' && i.status !== 'void') || clientReceipts.some((r) => r.status === 'issued' && !r.voided);
               const isOpen = expandedClient === c.id;
               return (
                 <div key={c.id} className="plan-card client-card" onClick={() => setExpandedClient(isOpen ? null : c.id)}>
                   <div className="plan-card-top">
                     <span className="plan-card-name">{c.name}</span>
                     <div className="client-card-top-right">
+                      <button className="icon-btn" onClick={(e) => { e.stopPropagation(); setClientStatementDoc(c); }} title="Statement" aria-label="Statement"><Receipt size={14} /></button>
                       <button className="icon-btn" onClick={(e) => { e.stopPropagation(); openModal('editClient', { clientId: c.id, name: c.name, phone: c.phone || '', email: c.email || '', address: c.address || '' }); }} title="Edit client" aria-label="Edit client"><Edit3 size={14} /></button>
-                      <button className="icon-btn" onClick={(e) => { e.stopPropagation(); deleteClient(c.id); }} title="Delete client" aria-label="Delete client"><Trash2 size={14} /></button>
+                      <button className="icon-btn" disabled={hasIssuedRecord} onClick={(e) => { e.stopPropagation(); deleteClient(c.id); }} title={hasIssuedRecord ? "Has an issued invoice or receipt — edit only, can't delete" : "Delete client"} aria-label="Delete client"><Trash2 size={14} /></button>
                       <ChevronDown size={16} className={`chev ${isOpen ? 'chev-open' : ''}`} />
                     </div>
                   </div>
@@ -5042,7 +5256,7 @@ function App() {
                 <div key={inv.id} className="loan-card">
                   <div className="loan-card-top" onClick={() => setInvoiceDoc(inv)}>
                     <div>
-                      <span className="loan-name">{inv.number} &middot; {client ? client.name : 'Unknown client'}</span>
+                      <span className="loan-name">{inv.number} &middot; {client ? client.name : 'Unknown client'}{inv.recurring && <span title="Repeats monthly"><Repeat size={12} style={{ marginLeft: 6, verticalAlign: '-1px', opacity: 0.6 }} /></span>}</span>
                       <div className="plan-card-meta">Due {new Date(inv.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
                     </div>
                     <div className="loan-card-right">
@@ -6267,6 +6481,7 @@ function App() {
         .modal-head{display:flex;justify-content:space-between;align-items:center;padding:18px 22px;border-bottom:1px solid var(--paper-line);}
         .modal-head h3{margin:0;font-size:18px;}
         .icon-btn{background:none;border:none;cursor:pointer;color:var(--ink-soft);}
+        .icon-btn:disabled{opacity:0.3;cursor:not-allowed;}
         .home-shell, .module-shell{height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden;}
         .welcome-shell{
           height:100vh; height:100dvh; width:100%; display:flex; flex-direction:column; align-items:center;
@@ -6345,6 +6560,8 @@ function App() {
         .toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:16px 20px 16px 26px;border-radius:12px;font-size:14.5px;box-shadow:0 10px 30px rgba(0,0,0,0.25);z-index:100;display:flex;align-items:center;gap:18px;width:min(92vw,480px);line-height:1.45;}
         .toast-close{background:none;border:none;color:rgba(255,255,255,0.7);cursor:pointer;padding:6px;display:flex;align-items:center;flex-shrink:0;border-radius:50%;}
         .toast-close:hover{color:#fff;background:rgba(255,255,255,0.15);}
+        .toast-undo{background:none;border:none;color:var(--gold);cursor:pointer;font-weight:700;font-size:13.5px;flex-shrink:0;padding:6px 4px;}
+        .toast-undo:hover{text-decoration:underline;}
         .receipt-card{max-width:420px;}
         .receipt-sheet{background:#fff;border:1px solid var(--paper-line);border-radius:12px;padding:18px 16px;}
         .receipt-brand{font-size:19px;font-weight:600;}
@@ -6561,7 +6778,8 @@ function App() {
       {toast && (
           <div className="toast" role="status" aria-live="polite">
             <span>{toast}</span>
-            <button type="button" className="toast-close" onClick={() => setToast('')} aria-label="Dismiss"><X size={13} /></button>
+            {toastUndo && <button type="button" className="toast-undo" onClick={() => { toastUndo(); setToast(''); setToastUndo(null); if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }}>Undo</button>}
+            <button type="button" className="toast-close" onClick={() => { setToast(''); setToastUndo(null); }} aria-label="Dismiss"><X size={13} /></button>
           </div>
         )}
       {tourStep !== null && (
@@ -6572,7 +6790,7 @@ function App() {
         <Modal title="New thrift plan" onClose={closeModal}>
           <div className="field">
             <label>Plan name</label>
-            <input className="kb-input" placeholder="e.g. Morning Market Ajo" value={form.name || ''} onChange={(e) => setField('name', e.target.value)} />
+            <input className="kb-input" placeholder="e.g. Morning Market Ajo" value={form.name || ''} onChange={(e) => setField('name', e.target.value)} autoFocus />
           </div>
           <div className="field-row">
             <div className="field">
@@ -6640,7 +6858,7 @@ function App() {
             <Phone size={13} /> Import from phone contacts
           </button>
           <div className="field"><label>Full name</label>
-            <input className="kb-input" value={form.name || ''} onChange={(e) => setField('name', e.target.value)} placeholder="e.g. Blessing Nwachukwu" />
+            <input className="kb-input" value={form.name || ''} onChange={(e) => setField('name', e.target.value)} placeholder="e.g. Blessing Nwachukwu" autoFocus />
           </div>
           <div className="field"><label>Phone number</label>
             <input className="kb-input" value={form.phone || ''} onChange={(e) => setField('phone', e.target.value)} placeholder="080…" />
@@ -6761,7 +6979,7 @@ function App() {
                 <Phone size={13} /> Import from phone contacts
               </button>
               <div className="field"><label>Full name</label>
-                <input className="kb-input" value={form.newContactName || ''} onChange={(e) => setField('newContactName', e.target.value)} placeholder="e.g. Chika Eze" />
+                <input className="kb-input" value={form.newContactName || ''} onChange={(e) => setField('newContactName', e.target.value)} placeholder="e.g. Chika Eze" autoFocus />
               </div>
               <div className="field"><label>Phone number (optional)</label>
                 <input className="kb-input" value={form.newContactPhone || ''} onChange={(e) => setField('newContactPhone', e.target.value)} placeholder="080…" />
@@ -6769,7 +6987,7 @@ function App() {
             </>
           ) : (
             <div className="field"><label>Person</label>
-              <select className="kb-input" value={form.contactId || ''} onChange={(e) => setField('contactId', e.target.value)}>
+              <select className="kb-input" value={form.contactId || ''} onChange={(e) => setField('contactId', e.target.value)} autoFocus>
                 <option value="">Choose someone…</option>
                 {loanContacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
@@ -6830,7 +7048,7 @@ function App() {
       {modal === 'newExpense' && (
         <Modal title="Log an expense" onClose={closeModal}>
           <div className="field"><label>Category</label>
-            <select className="kb-input" value={form.category || ''} onChange={(e) => setField('category', e.target.value)}>
+            <select className="kb-input" value={form.category || ''} onChange={(e) => setField('category', e.target.value)} autoFocus>
               <option value="">Choose a category…</option>
               {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
@@ -6928,7 +7146,7 @@ function App() {
             </div>
           </div>
           <div className="field"><label>Description</label>
-            <input className="kb-input" value={form.description || ''} onChange={(e) => setField('description', e.target.value)} placeholder="e.g. Payment from client" />
+            <input className="kb-input" value={form.description || ''} onChange={(e) => setField('description', e.target.value)} placeholder="e.g. Payment from client" autoFocus />
           </div>
           <div className="field-row">
             <div className="field"><label>Amount</label>
@@ -7062,7 +7280,7 @@ function App() {
             <Phone size={13} /> Import from phone contacts
           </button>
           <div className="field"><label>Client / business name</label>
-            <input className="kb-input" value={form.name || ''} onChange={(e) => setField('name', e.target.value)} placeholder="e.g. Bright Star Ventures" />
+            <input className="kb-input" value={form.name || ''} onChange={(e) => setField('name', e.target.value)} placeholder="e.g. Bright Star Ventures" autoFocus />
           </div>
           <div className="field"><label>Phone number</label>
             <input className="kb-input" value={form.phone || ''} onChange={(e) => setField('phone', e.target.value)} placeholder="080…" />
@@ -7143,12 +7361,33 @@ function App() {
             </div>
             <button className="btn btn-outline btn-small" style={{ marginTop: 8 }} onClick={addInvoiceItem}><Plus size={13} /> Add line item</button>
           </div>
-          <div className="field-hint" style={{ textAlign: 'right', fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>
-            Total: {fmt((form.items || []).reduce((s, it) => s + Number(it.qty || 0) * Number(it.price || 0), 0))}
+          <div className="field-row">
+            <div className="field"><label>Discount % (optional)</label>
+              <input type="number" min="0" max="100" inputMode="decimal" className="kb-input" value={form.discountPercent || ''} onChange={(e) => setField('discountPercent', e.target.value)} placeholder="0" />
+            </div>
+            <div className="field"><label>VAT % (optional)</label>
+              <input type="number" min="0" max="100" inputMode="decimal" className="kb-input" value={form.vatPercent || ''} onChange={(e) => setField('vatPercent', e.target.value)} placeholder="7.5" />
+            </div>
           </div>
+          {(() => {
+            const subtotal = (form.items || []).reduce((s, it) => s + Number(it.qty || 0) * Number(it.price || 0), 0);
+            const discount = subtotal * (Number(form.discountPercent || 0) / 100);
+            const vat = (subtotal - discount) * (Number(form.vatPercent || 0) / 100);
+            return (
+              <div className="field-hint" style={{ textAlign: 'right', fontSize: 13, lineHeight: 1.7 }}>
+                {discount > 0 && <div>Subtotal: {fmt(subtotal)} &nbsp;·&nbsp; Discount: −{fmt(discount)}</div>}
+                {vat > 0 && <div>VAT: +{fmt(vat)}</div>}
+                <div style={{ fontWeight: 700, color: 'var(--ink)' }}>Total: {fmt(subtotal - discount + vat)}</div>
+              </div>
+            );
+          })()}
           <div className="field"><label>Notes (optional)</label>
             <input className="kb-input" value={form.notes || ''} onChange={(e) => setField('notes', e.target.value)} placeholder="Thank you for your business." />
           </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+            <input type="checkbox" checked={!!form.recurring} onChange={(e) => setField('recurring', e.target.checked)} />
+            Repeats every month (e.g. a retainer or subscription)
+          </label>
           <div className="settings-actions">
             <button className="btn btn-outline" onClick={() => submitNewInvoice(false)}><FileText size={14} /> Save as draft</button>
             <button className="btn btn-primary" onClick={() => submitNewInvoice(true)}><Send size={14} /> {form.editingInvoiceId ? 'Issue invoice' : 'Create & issue'}</button>
@@ -7207,9 +7446,12 @@ function App() {
           </div>
           <div className="field-row">
             <div className="field"><label>{(form.items || []).length ? 'Amount received (from items)' : 'Amount received'}</label>
-              {(form.items || []).length ? (
-                <div className="kb-input kb-mono" style={{ background: 'var(--surface-2)' }}>{fmt((form.items || []).reduce((s, it) => s + Number(it.qty || 0) * Number(it.price || 0), 0))}</div>
-              ) : (
+              {(form.items || []).length ? (() => {
+                const sub = (form.items || []).reduce((s, it) => s + Number(it.qty || 0) * Number(it.price || 0), 0);
+                const disc = sub * (Number(form.discountPercent || 0) / 100);
+                const vat = (sub - disc) * (Number(form.vatPercent || 0) / 100);
+                return <div className="kb-input kb-mono" style={{ background: 'var(--surface-2)' }}>{fmt(sub - disc + vat)}</div>;
+              })() : (
                 <input type="number" min="0" inputMode="decimal" className="kb-input" value={form.amount || ''} onChange={(e) => setField('amount', e.target.value)} placeholder="25000" />
               )}
             </div>
@@ -7235,6 +7477,18 @@ function App() {
           settings={settings}
           fmt={fmt}
           onClose={() => setTabStatementDoc(null)}
+          shareImageToWhatsApp={shareImageToWhatsApp}
+        />
+      )}
+      {clientStatementDoc && (
+        <ClientStatementModal
+          client={clientStatementDoc}
+          invoices={invoices}
+          receipts={receipts}
+          creditNotes={creditNotes}
+          settings={settings}
+          fmt={fmt}
+          onClose={() => setClientStatementDoc(null)}
           shareImageToWhatsApp={shareImageToWhatsApp}
         />
       )}
@@ -7275,7 +7529,7 @@ function App() {
             )}
             <div className="field-row">
               <div className="field"><label>Amount to credit</label>
-                <input type="number" min="0" inputMode="decimal" className="kb-input" value={form.amount || ''} onChange={(e) => setField('amount', e.target.value)} placeholder="5000" />
+                <input type="number" min="0" inputMode="decimal" className="kb-input" value={form.amount || ''} onChange={(e) => setField('amount', e.target.value)} placeholder="5000" autoFocus />
               </div>
               <div className="field"><label>Date</label>
                 <input type="date" className="kb-input" value={form.date || todayISO()} onChange={(e) => setField('date', e.target.value)} />
