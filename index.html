@@ -2884,7 +2884,7 @@ function WelcomeScreen({ settings, onStart }) {
   );
 }
 
-function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, todayActivity }) {
+function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, onAlertClick, todayActivity }) {
   const cards = [
     { id: 'thrift', title: 'Thrift', desc: 'Run daily, weekly, monthly, rotating cycle or target savings circles and track every contribution.', icon: PiggyBank, tone: 'green', stat: `${stats.plans} active plan(s)` },
     { id: 'loans', title: 'Loan Tracking', desc: 'Track money you’ve lent out and personal loans you’ve received, with reminders.', icon: HandCoins, tone: 'steel', stat: `${stats.loans} loan(s) on file` },
@@ -2905,9 +2905,13 @@ function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, todayActivity }
           </div>
           <ul className="alert-list" style={{ maxHeight: 92, overflowY: 'auto', paddingRight: 4 }}>
             {topAlerts.map((a) => (
-              <li key={a.id} className={`alert-row sev-${a.severity}`}>
+              <li key={a.id} className={`alert-row sev-${a.severity} ${a.target ? 'alert-row-clickable' : ''}`}
+                onClick={a.target ? () => onAlertClick(a) : undefined}
+                role={a.target ? 'button' : undefined} tabIndex={a.target ? 0 : undefined}
+                onKeyDown={a.target ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onAlertClick(a); } } : undefined}>
                 <AlertTriangle size={15} />
                 <span>{a.text}</span>
+                {a.target && <ChevronRight size={15} className="alert-row-chevron" />}
               </li>
             ))}
           </ul>
@@ -5248,9 +5252,13 @@ function App() {
         {moduleAlerts(['Thrift contributions']).length === 0 ? <EmptyState text="Nothing urgent. Every plan is up to date." /> : (
           <ul className="alert-list">
             {moduleAlerts(['Thrift contributions']).slice(0, 3).map((a) => (
-              <li key={a.id} className={`alert-row sev-${a.severity}`}>
+              <li key={a.id} className={`alert-row sev-${a.severity} ${a.target ? 'alert-row-clickable' : ''}`}
+                onClick={a.target ? () => goToAlert(a) : undefined}
+                role={a.target ? 'button' : undefined} tabIndex={a.target ? 0 : undefined}
+                onKeyDown={a.target ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goToAlert(a); } } : undefined}>
                 <AlertTriangle size={15} />
                 <span>{a.text}</span>
+                {a.target && <ChevronRight size={15} className="alert-row-chevron" />}
               </li>
             ))}
           </ul>
@@ -5292,9 +5300,13 @@ function App() {
           {moduleAlerts(['Loans given', 'Loans received']).length === 0 ? <EmptyState text="Nothing urgent. Every loan is up to date." /> : (
             <ul className="alert-list">
               {moduleAlerts(['Loans given', 'Loans received']).slice(0, 5).map((a) => (
-                <li key={a.id} className={`alert-row sev-${a.severity}`}>
+                <li key={a.id} className={`alert-row sev-${a.severity} ${a.target ? 'alert-row-clickable' : ''}`}
+                  onClick={a.target ? () => goToAlert(a) : undefined}
+                  role={a.target ? 'button' : undefined} tabIndex={a.target ? 0 : undefined}
+                  onKeyDown={a.target ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goToAlert(a); } } : undefined}>
                   <AlertTriangle size={15} />
                   <span>{a.text}</span>
+                  {a.target && <ChevronRight size={15} className="alert-row-chevron" />}
                 </li>
               ))}
             </ul>
@@ -5336,9 +5348,13 @@ function App() {
           {moduleAlerts(['Payments']).length === 0 ? <EmptyState text="Nothing urgent. Every invoice is up to date." /> : (
             <ul className="alert-list">
               {moduleAlerts(['Payments']).slice(0, 5).map((a) => (
-                <li key={a.id} className={`alert-row sev-${a.severity}`}>
+                <li key={a.id} className={`alert-row sev-${a.severity} ${a.target ? 'alert-row-clickable' : ''}`}
+                  onClick={a.target ? () => goToAlert(a) : undefined}
+                  role={a.target ? 'button' : undefined} tabIndex={a.target ? 0 : undefined}
+                  onKeyDown={a.target ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goToAlert(a); } } : undefined}>
                   <AlertTriangle size={15} />
                   <span>{a.text}</span>
+                  {a.target && <ChevronRight size={15} className="alert-row-chevron" />}
                 </li>
               ))}
             </ul>
@@ -5989,6 +6005,7 @@ function App() {
       onPick={openModule}
       alerts={alerts}
       onViewAlerts={() => setActiveTab('alerts')}
+      onAlertClick={goToAlert}
       todayActivity={todayActivity}
     />
   );
@@ -6863,13 +6880,21 @@ function App() {
     const groups = ['Payments', 'Loans given', 'Loans received', 'Thrift contributions', 'Expense & Budgeting'];
     return (
       <>
-        <SectionHeader eyebrow="Stay on top of it" title="Alerts & notifications" />
+        <SectionHeader eyebrow="Stay on top of it" title="Alerts & notifications"
+          action={alerts.length > 0 && (
+            <button className="btn btn-outline" onClick={() => setDismissed((d) => [...d, ...alerts.map((a) => a.id)])}>
+              <Trash2 size={15} /> Clear all
+            </button>
+          )} />
         {alerts.length === 0 ? <EmptyState text="You're all caught up — no open alerts." /> : groups.map((g) => {
           const items = alerts.filter((a) => a.group === g);
           if (items.length === 0) return null;
           return (
             <div key={g} className="panel" style={{ marginBottom: 16 }}>
-              <div className="panel-title">{g}</div>
+              <div className="panel-title-row">
+                <div className="panel-title">{g} <span className="tag-ink" style={{ fontSize: 11.5 }}>{items.length}</span></div>
+                <button className="link-btn" onClick={() => setDismissed((d) => [...d, ...items.map((a) => a.id)])}>Clear group</button>
+              </div>
               <ul className="alert-list">
                 {items.map((a) => (
                   <li key={a.id} className={`alert-row sev-${a.severity} ${a.target ? 'alert-row-clickable' : ''}`}
@@ -7767,10 +7792,12 @@ function App() {
                 <button className="icon-btn" onClick={goHome} title="Home"><Home size={17} /></button>
               )}
               <button className="icon-btn" onClick={startTour} title="Take a tour"><Compass size={17} /></button>
-              <button className={`icon-btn ${activeTab === 'alerts' ? 'icon-btn-active' : ''}`} onClick={() => setActiveTab('alerts')} title="Alerts">
-                <Bell size={17} />
-                {alerts.length > 0 && <span className="bell-dot">{alerts.length}</span>}
-              </button>
+              {alerts.length > 0 && (
+                <button className={`icon-btn ${activeTab === 'alerts' ? 'icon-btn-active' : ''}`} onClick={() => setActiveTab('alerts')} title="Alerts">
+                  <Bell size={17} />
+                  <span className="bell-dot">{alerts.length}</span>
+                </button>
+              )}
               <button className="icon-btn" onClick={() => setHistoryOpen(true)} title="Activity log — undo a recent change">
                 <RotateCcw size={17} />
                 {undoStack.length > 0 && <span className="bell-dot">{undoStack.length}</span>}
