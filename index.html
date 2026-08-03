@@ -755,7 +755,7 @@ function toRowsFromText(text) {
 function parseThriftGridRows(rows) {
   const nonEmpty = (r) => r.some((c) => String(c || '').trim());
   const headerIdx = rows.findIndex((r) => nonEmpty(r) && r.length > 1);
-  if (headerIdx === -1) return { members: [], periodCount: 0, suggestedAmount: '', suggestedFrequency: 'monthly', suggestedStartDate: '' };
+  if (headerIdx === -1) return { members: [], periodCount: 0, suggestedAmount: '', suggestedFrequency: 'monthly', suggestedStartDate: '', fixedAmount: true };
   const header = rows[headerIdx];
   const periodLabels = header.slice(1);
   const members = [];
@@ -768,7 +768,13 @@ function parseThriftGridRows(rows) {
       const n = parseMoneyString(row[j + 1]);
       return isNaN(n) ? 0 : Math.abs(n);
     });
-    members.push({ name, amounts, include: true });
+    // This member's own most common non-zero amount on the sheet — used as their
+    // exact recorded amount when the plan turns out not to use one flat figure for everyone.
+    const ownCounts = {};
+    amounts.forEach((a) => { if (a > 0) ownCounts[a] = (ownCounts[a] || 0) + 1; });
+    const ownKeys = Object.keys(ownCounts);
+    const typicalAmount = ownKeys.length ? Number(ownKeys.sort((a, b) => ownCounts[b] - ownCounts[a])[0]) : 0;
+    members.push({ name, amounts, include: true, typicalAmount });
   }
   // Best-effort: parse the first couple of period labels as dates to guess a start date and cadence.
   const parsedDates = periodLabels.map((l) => parseStatementDate(l)).filter(Boolean);
@@ -784,7 +790,10 @@ function parseThriftGridRows(rows) {
   const counts = {};
   members.forEach((m) => m.amounts.forEach((a) => { if (a > 0) counts[a] = (counts[a] || 0) + 1; }));
   const suggestedAmount = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || '';
-  return { members, periodCount: periodLabels.length, suggestedAmount, suggestedFrequency, suggestedStartDate };
+  // The sheet only reflects one fixed amount if every contributor's own typical amount
+  // matches it (contributors with no paid rounds yet don't count against it either way).
+  const fixedAmount = members.every((m) => m.typicalAmount === 0 || String(m.typicalAmount) === String(suggestedAmount));
+  return { members, periodCount: periodLabels.length, suggestedAmount, suggestedFrequency, suggestedStartDate, fixedAmount };
 }
 // Generates exactly `count` period dates from a start date at a given cadence, matching the
 // exact date math periodsForPlan uses (so imported contributions line up with the plan's own
@@ -3303,13 +3312,13 @@ function App() {
     const list = [];
     loansGiven.forEach((l) => {
       const status = loanStatus(l, 'repayments');
-      if (status === 'overdue') list.push({ id: 'lg-' + l.id, severity: 'high', group: 'Loans given', text: `${l.borrower} is overdue by ${Math.abs(daysFromToday(l.dueDate))} day(s) — ${fmt(outstandingOf(l, 'repayments'))} outstanding.` });
-      else if (status === 'due-soon') list.push({ id: 'lgs-' + l.id, severity: 'medium', group: 'Loans given', text: `${l.borrower}'s repayment is due in ${daysFromToday(l.dueDate)} day(s).` });
+      if (status === 'overdue') list.push({ id: 'lg-' + l.id, severity: 'high', group: 'Loans given', text: `${l.borrower} is overdue by ${Math.abs(daysFromToday(l.dueDate))} day(s) — ${fmt(outstandingOf(l, 'repayments'))} outstanding.`, target: { module: 'loans', tab: 'loansGiven' } });
+      else if (status === 'due-soon') list.push({ id: 'lgs-' + l.id, severity: 'medium', group: 'Loans given', text: `${l.borrower}'s repayment is due in ${daysFromToday(l.dueDate)} day(s).`, target: { module: 'loans', tab: 'loansGiven' } });
     });
     loansReceived.forEach((l) => {
       const status = loanStatus(l, 'refunds');
-      if (status === 'overdue') list.push({ id: 'lr-' + l.id, severity: 'high', group: 'Loans received', text: `You are ${Math.abs(daysFromToday(l.dueDate))} day(s) overdue refunding ${l.lender} — ${fmt(outstandingOf(l, 'refunds'))} left.` });
-      else if (status === 'due-soon') list.push({ id: 'lrs-' + l.id, severity: 'medium', group: 'Loans received', text: `Refund to ${l.lender} is due in ${daysFromToday(l.dueDate)} day(s).` });
+      if (status === 'overdue') list.push({ id: 'lr-' + l.id, severity: 'high', group: 'Loans received', text: `You are ${Math.abs(daysFromToday(l.dueDate))} day(s) overdue refunding ${l.lender} — ${fmt(outstandingOf(l, 'refunds'))} left.`, target: { module: 'loans', tab: 'loansReceived' } });
+      else if (status === 'due-soon') list.push({ id: 'lrs-' + l.id, severity: 'medium', group: 'Loans received', text: `Refund to ${l.lender} is due in ${daysFromToday(l.dueDate)} day(s).`, target: { module: 'loans', tab: 'loansReceived' } });
     });
     plans.forEach((p) => {
       const periods = periodsForPlan(p).slice(0, -1);
@@ -3317,7 +3326,7 @@ function App() {
       p.memberIds.forEach((memberId) => {
         const missed = recent.filter((period) => !findContribution(p.id, memberId, period));
         if (missed.length >= 2) {
-          list.push({ id: 'miss-' + p.id + memberId, severity: 'medium', group: 'Thrift contributions', text: `${memberById(memberId)?.name} has missed ${missed.length} of the last ${recent.length} rounds in ${p.name}.` });
+          list.push({ id: 'miss-' + p.id + memberId, severity: 'medium', group: 'Thrift contributions', text: `${memberById(memberId)?.name} has missed ${missed.length} of the last ${recent.length} rounds in ${p.name}.`, target: { module: 'thrift', tab: 'plans', planId: p.id } });
         }
       });
     });
@@ -3326,8 +3335,8 @@ function App() {
       const client = clientById(inv.clientId);
       const name = client ? client.name : 'Client';
       const net = invoiceNetTotal(inv);
-      if (status === 'overdue' && net > 0) list.push({ id: 'inv-' + inv.id, severity: 'high', group: 'Payments', text: `Invoice ${inv.number} to ${name} is overdue by ${Math.abs(daysFromToday(inv.dueDate))} day(s) — ${fmt(net)} outstanding.` });
-      else if (status === 'sent' && net > 0 && daysFromToday(inv.dueDate) <= 3) list.push({ id: 'invs-' + inv.id, severity: 'medium', group: 'Payments', text: `Invoice ${inv.number} to ${name} is due in ${daysFromToday(inv.dueDate)} day(s).` });
+      if (status === 'overdue' && net > 0) list.push({ id: 'inv-' + inv.id, severity: 'high', group: 'Payments', text: `Invoice ${inv.number} to ${name} is overdue by ${Math.abs(daysFromToday(inv.dueDate))} day(s) — ${fmt(net)} outstanding.`, target: { module: 'payments', tab: 'invoices' } });
+      else if (status === 'sent' && net > 0 && daysFromToday(inv.dueDate) <= 3) list.push({ id: 'invs-' + inv.id, severity: 'medium', group: 'Payments', text: `Invoice ${inv.number} to ${name} is due in ${daysFromToday(inv.dueDate)} day(s).`, target: { module: 'payments', tab: 'invoices' } });
     });
     const thisMonth = todayISO().slice(0, 7);
     const spentByCat = {};
@@ -3336,8 +3345,8 @@ function App() {
       const spent = spentByCat[b.category] || 0;
       if (b.monthlyLimit <= 0) return;
       const pct = spent / b.monthlyLimit;
-      if (pct >= 1) list.push({ id: 'bud-' + b.id, severity: 'high', group: 'Expense & Budgeting', text: `${b.category} is over its monthly budget — ${fmt(spent)} spent of ${fmt(b.monthlyLimit)}.` });
-      else if (pct >= 0.9) list.push({ id: 'buds-' + b.id, severity: 'medium', group: 'Expense & Budgeting', text: `${b.category} is close to its monthly budget — ${fmt(spent)} of ${fmt(b.monthlyLimit)} spent.` });
+      if (pct >= 1) list.push({ id: 'bud-' + b.id, severity: 'high', group: 'Expense & Budgeting', text: `${b.category} is over its monthly budget — ${fmt(spent)} spent of ${fmt(b.monthlyLimit)}.`, target: { module: 'spending', tab: 'budgets' } });
+      else if (pct >= 0.9) list.push({ id: 'buds-' + b.id, severity: 'medium', group: 'Expense & Budgeting', text: `${b.category} is close to its monthly budget — ${fmt(spent)} of ${fmt(b.monthlyLimit)} spent.`, target: { module: 'spending', tab: 'budgets' } });
     });
     return list.filter((a) => !dismissed.includes(a.id));
   }, [loansGiven, loansReceived, plans, contributions, dismissed, invoices, clients, expenses, budgets]);
@@ -3401,9 +3410,16 @@ function App() {
   const submitNewPlan = () => {
     if (guardWrite()) return;
     if (!form.name || !form.amount) { flash('Enter a plan name and amount.'); return; }
-    const category = form.category || 'Daily';
+    const isEdit = !!form.id;
+    const existing = isEdit ? planById(form.id) : null;
+    if (isEdit && !existing) { closeModalSilently(); return; }
+    // Category, cadence and cycle/target-specific fields are locked once a plan exists —
+    // changing them after contributions have been recorded against a given structure
+    // would desync periods, cycle payouts, or target tracking from what's already saved.
+    const category = isEdit ? existing.category : (form.category || 'Daily');
     if (category === 'Cycle' && (form.memberIds || []).length < 2) { flash('Pick at least 2 members for a rotating cycle plan.'); return; }
-    const frequency = category === 'Cycle' ? (form.cycleFrequency || 'monthly')
+    const frequency = isEdit ? existing.frequency
+      : category === 'Cycle' ? (form.cycleFrequency || 'monthly')
       : category === 'Weekly' ? 'weekly'
       : category === 'Daily' ? 'daily'
       : category === 'Target' ? (form.targetDateMode || 'daily')
@@ -3411,6 +3427,19 @@ function App() {
     const memberAmounts = {};
     if (form.perMemberAmounts) {
       (form.memberIds || []).forEach((id) => { memberAmounts[id] = Number((form.memberAmounts || {})[id] || form.amount); });
+    }
+    if (isEdit) {
+      setPlans((prev) => prev.map((p) => p.id !== form.id ? p : {
+        ...p, name: form.name, amount: Number(form.amount),
+        targetAmount: category === 'Target' ? Number(form.targetAmount || 0) : p.targetAmount,
+        startDate: form.startDate || p.startDate, memberIds: form.memberIds || [],
+        perMemberAmounts: !!form.perMemberAmounts, memberAmounts,
+        fixedDueDay: form.fixedDueDay !== false,
+      }));
+      setSelectedPlanId(form.id);
+      closeModalSilently();
+      flash('Plan updated.');
+      return;
     }
     const plan = {
       id: uid(), name: form.name, category, frequency, amount: Number(form.amount),
@@ -3464,7 +3493,7 @@ function App() {
       fileName: file.name, rows: parsed.members, periodCount: parsed.periodCount,
       name: file.name.replace(/\.[^.]+$/, ''),
       frequency: parsed.suggestedFrequency, startDate: parsed.suggestedStartDate || todayISO(),
-      amount: parsed.suggestedAmount, fixedDueDay: true,
+      amount: parsed.suggestedAmount, fixedDueDay: true, fixedAmount: parsed.fixedAmount,
     });
   };
   const toggleThriftImportRow = (idx) => setForm((f) => ({ ...f, rows: f.rows.map((r, i) => i === idx ? { ...r, include: r.include === false } : r) }));
@@ -3495,7 +3524,13 @@ function App() {
     const plan = {
       id: uid(), name: form.name, category, frequency, amount: Number(form.amount || 0),
       startDate: form.startDate || todayISO(), memberIds: includedRows.map((row) => memberIdFor[row.name]),
-      perMemberAmounts: false, memberAmounts: {}, fixedDueDay: form.fixedDueDay !== false,
+      // If the sheet didn't use one flat amount for everyone, record each contributor's own
+      // exact typical amount from their row instead of forcing a single default on all of them.
+      perMemberAmounts: form.fixedAmount === false,
+      memberAmounts: form.fixedAmount === false
+        ? Object.fromEntries(includedRows.map((row) => [memberIdFor[row.name], row.typicalAmount || Number(form.amount || 0)]))
+        : {},
+      fixedDueDay: form.fixedDueDay !== false,
     };
     const newContributions = [];
     includedRows.forEach((row) => {
@@ -5222,6 +5257,7 @@ function App() {
                     )}
                   </>
                 )}
+                <button className="icon-btn" onClick={() => openModal('newPlan', { ...plan })} title="Edit plan" aria-label="Edit plan"><Edit3 size={15} /></button>
                 <button className="icon-btn" onClick={() => deletePlan(plan.id)} title="Delete plan" aria-label="Delete plan"><Trash2 size={15} /></button>
               </div>
             </div>
@@ -6675,10 +6711,14 @@ function App() {
               <div className="panel-title">{g}</div>
               <ul className="alert-list">
                 {items.map((a) => (
-                  <li key={a.id} className={`alert-row sev-${a.severity}`}>
+                  <li key={a.id} className={`alert-row sev-${a.severity} ${a.target ? 'alert-row-clickable' : ''}`}
+                    onClick={a.target ? () => goToAlert(a) : undefined}
+                    role={a.target ? 'button' : undefined} tabIndex={a.target ? 0 : undefined}
+                    onKeyDown={a.target ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goToAlert(a); } } : undefined}>
                     <AlertTriangle size={15} />
                     <span>{a.text}</span>
-                    <button className="link-btn" onClick={() => setDismissed((d) => [...d, a.id])}>Mark handled</button>
+                    <button className="link-btn" onClick={(e) => { e.stopPropagation(); setDismissed((d) => [...d, a.id]); }}>Mark handled</button>
+                    {a.target && <ChevronRight size={15} className="alert-row-chevron" />}
                   </li>
                 ))}
               </ul>
@@ -7075,6 +7115,16 @@ function App() {
   };
   const openModule = (mod) => { setActiveModule(mod); setActiveTab(MODULE_NAV[mod][0].id); setModuleSwitcherOpen(false); };
   const goHome = () => { setActiveModule('home'); setActiveTab('home'); };
+  // Jumps from a notification to the screen it's about (its module/tab, and the
+  // specific thrift plan when relevant), so tapping an alert takes you straight there.
+  const goToAlert = (alert) => {
+    const t = alert && alert.target;
+    if (!t) return;
+    if (t.planId) setSelectedPlanId(t.planId);
+    setActiveModule(t.module);
+    setActiveTab(t.tab);
+    setModuleSwitcherOpen(false);
+  };
   const MODULE_ALERT_GROUPS = {
     thrift: ['Thrift contributions'], loans: ['Loans given', 'Loans received'], payments: ['Payments'], spending: ['Expense & Budgeting'], tax: [],
   };
@@ -7186,6 +7236,9 @@ function App() {
         .alert-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;}
         .alert-row{display:flex;align-items:center;gap:9px;font-size:13px;padding:9px 11px;border-radius:8px;border:1px solid transparent;}
         .alert-row span{flex:1;}
+        .alert-row-clickable{cursor:pointer;}
+        .alert-row-clickable:hover, .alert-row-clickable:focus-visible{background:var(--surface-2);border-color:var(--paper-line);outline:none;}
+        .alert-row-chevron{color:var(--ink-soft);flex-shrink:0;}
         .sev-high{background:var(--brick-bg);color:var(--brick);}
         .sev-medium{background:var(--gold-bg);color:var(--gold);}
         .btn{display:inline-flex;align-items:center;gap:6px;border-radius:8px;padding:9px 15px;font-size:13.5px;font-weight:600;cursor:pointer;border:1px solid transparent;}
@@ -7646,7 +7699,7 @@ function App() {
       )}
 
       {modal === 'newPlan' && (
-        <Modal title="New thrift plan" onClose={closeModal}>
+        <Modal title={form.id ? 'Edit plan' : 'New thrift plan'} onClose={closeModal}>
           <div className="field">
             <label>Plan name</label>
             <input className="kb-input" placeholder="e.g. Morning Market Ajo" value={form.name || ''} onChange={(e) => setField('name', e.target.value)} autoFocus />
@@ -7654,9 +7707,16 @@ function App() {
           <div className="field-row">
             <div className="field">
               <label>Category / type</label>
-              <select className="kb-input" value={form.category || 'Daily'} onChange={(e) => setField('category', e.target.value)}>
-                <option>Daily</option><option>Weekly</option><option>Monthly</option><option>Target</option><option>Cycle</option>
-              </select>
+              {form.id ? (
+                <>
+                  <input className="kb-input" value={form.category || ''} disabled style={{ opacity: 0.7 }} />
+                  <div className="field-hint">Can't be changed once a plan has been created.</div>
+                </>
+              ) : (
+                <select className="kb-input" value={form.category || 'Daily'} onChange={(e) => setField('category', e.target.value)}>
+                  <option>Daily</option><option>Weekly</option><option>Monthly</option><option>Target</option><option>Cycle</option>
+                </select>
+              )}
             </div>
             <div className="field">
               <label>{form.perMemberAmounts ? 'Default amount' : 'Amount per round'}</label>
@@ -7681,7 +7741,7 @@ function App() {
               <input type="number" min="0" inputMode="decimal" className="kb-input" placeholder="240000" value={form.targetAmount || ''} onChange={(e) => setField('targetAmount', e.target.value)} />
             </div>
           )}
-          {form.category === 'Target' && (
+          {form.category === 'Target' && !form.id && (
             <div className="field">
               <label>Track contributions by</label>
               <select className="kb-input" value={form.targetDateMode || 'daily'} onChange={(e) => setField('targetDateMode', e.target.value)}>
@@ -7691,7 +7751,7 @@ function App() {
               <div className="field-hint">Per day gives you a column for every day since the start date — handy for a savings goal with no fixed monthly rhythm.</div>
             </div>
           )}
-          {form.category === 'Cycle' && (
+          {form.category === 'Cycle' && !form.id && (
             <div className="field">
               <label>Contribution cadence</label>
               <select className="kb-input" value={form.cycleFrequency || 'monthly'} onChange={(e) => setField('cycleFrequency', e.target.value)}>
@@ -7703,6 +7763,7 @@ function App() {
           <div className="field">
             <label>Start date</label>
             <input type="date" className="kb-input" value={form.startDate || todayISO()} onChange={(e) => setField('startDate', e.target.value)} />
+            {form.id && <div className="field-hint">Changing this shifts where future rounds fall — past recorded rounds stay as they are.</div>}
           </div>
           <div className="field">
             <label>Contributors</label>
@@ -7729,7 +7790,7 @@ function App() {
               })}
             </div>
           </div>
-          <button className="btn btn-primary" onClick={submitNewPlan}>Create plan</button>
+          <button className="btn btn-primary" onClick={submitNewPlan}>{form.id ? 'Save changes' : 'Create plan'}</button>
         </Modal>
       )}
 
@@ -7738,6 +7799,11 @@ function App() {
           <div className="field-hint" style={{ marginBottom: 14 }}>
             Read from <strong>{form.fileName}</strong> — found {(form.rows || []).length} contributor(s) across {form.periodCount} round(s). Review the details below, then create the plan.
           </div>
+          {form.fixedAmount === false && (
+            <div className="field-hint" style={{ marginBottom: 14 }}>
+              Contributors on this sheet don't all pay the same amount — the plan will be created with <strong>per-member amounts</strong>, each set to that contributor's own typical figure from the sheet, instead of one default for everyone.
+            </div>
+          )}
           <div className="field"><label>Plan name</label>
             <input className="kb-input" value={form.name || ''} onChange={(e) => setField('name', e.target.value)} placeholder="e.g. Morning Market Ajo" autoFocus />
           </div>
@@ -7749,7 +7815,7 @@ function App() {
                 <option value="monthly">Monthly</option>
               </select>
             </div>
-            <div className="field"><label>Default amount per round</label>
+            <div className="field"><label>{form.fixedAmount === false ? 'Fallback amount (if a member has no paid rounds)' : 'Default amount per round'}</label>
               <input type="number" min="0" inputMode="decimal" className="kb-input" value={form.amount || ''} onChange={(e) => setField('amount', e.target.value)} placeholder="500" />
             </div>
           </div>
@@ -7771,7 +7837,10 @@ function App() {
                 <label key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input type="checkbox" checked={row.include !== false} onChange={() => toggleThriftImportRow(i)} />
                   <span style={{ flex: 1 }}>{row.name}</span>
-                  <span className="field-hint" style={{ margin: 0 }}>{row.amounts.filter((a) => a > 0).length} round(s) paid</span>
+                  <span className="field-hint" style={{ margin: 0 }}>
+                    {form.fixedAmount === false && row.typicalAmount > 0 ? `${fmt(row.typicalAmount)} · ` : ''}
+                    {row.amounts.filter((a) => a > 0).length} round(s) paid
+                  </span>
                 </label>
               ))}
             </div>
@@ -7841,6 +7910,9 @@ function App() {
           </div>
           <div className="field"><label>Phone (for WhatsApp reminders, optional)</label>
             <input className="kb-input" value={form.phone || ''} onChange={(e) => setField('phone', e.target.value)} placeholder="080…" />
+            <button type="button" className="btn btn-small btn-outline" style={{ marginTop: 8 }} onClick={() => importDeviceContact((c) => { if (!form.borrower) setField('borrower', c.name || ''); setField('phone', c.phone || form.phone || ''); })}>
+              <Phone size={13} /> Import from phone contacts
+            </button>
           </div>
           <div className="field"><label>Link to a thrift plan (optional)</label>
             <select className="kb-input" value={form.linkedPlanId || ''} onChange={(e) => setField('linkedPlanId', e.target.value)}>
@@ -7890,6 +7962,9 @@ function App() {
           </div>
           <div className="field"><label>Phone (for WhatsApp reminders, optional)</label>
             <input className="kb-input" value={form.phone || ''} onChange={(e) => setField('phone', e.target.value)} placeholder="080…" />
+            <button type="button" className="btn btn-small btn-outline" style={{ marginTop: 8 }} onClick={() => importDeviceContact((c) => { if (!form.lender) setField('lender', c.name || ''); setField('phone', c.phone || form.phone || ''); })}>
+              <Phone size={13} /> Import from phone contacts
+            </button>
           </div>
           <div className="field"><label>Link to a thrift plan (optional)</label>
             <select className="kb-input" value={form.linkedPlanId || ''} onChange={(e) => setField('linkedPlanId', e.target.value)}>
@@ -8280,6 +8355,9 @@ function App() {
 
       {modal === 'editClient' && (
         <Modal title="Edit client" onClose={closeModal}>
+          <button type="button" className="btn btn-small btn-outline" style={{ marginBottom: 10 }} onClick={() => importDeviceContact((c) => { setField('name', c.name || form.name || ''); setField('phone', c.phone || form.phone || ''); })}>
+            <Phone size={13} /> Import from phone contacts
+          </button>
           <div className="field"><label>Client / business name</label>
             <input className="kb-input" value={form.name || ''} onChange={(e) => setField('name', e.target.value)} placeholder="e.g. Bright Star Ventures" />
           </div>
@@ -8306,14 +8384,19 @@ function App() {
             </select>
           </div>
           {form.clientId === '__new__' && (
-            <div className="field-row">
-              <div className="field"><label>New client name</label>
-                <input className="kb-input" value={form.newClientName || ''} onChange={(e) => setField('newClientName', e.target.value)} placeholder="e.g. Amaka Obi" />
+            <>
+              <button type="button" className="btn btn-small btn-outline" style={{ marginBottom: 4 }} onClick={() => importDeviceContact((c) => { setField('newClientName', c.name || form.newClientName || ''); setField('newClientPhone', c.phone || form.newClientPhone || ''); })}>
+                <Phone size={13} /> Import from phone contacts
+              </button>
+              <div className="field-row">
+                <div className="field"><label>New client name</label>
+                  <input className="kb-input" value={form.newClientName || ''} onChange={(e) => setField('newClientName', e.target.value)} placeholder="e.g. Amaka Obi" />
+                </div>
+                <div className="field"><label>Phone (optional)</label>
+                  <input className="kb-input" value={form.newClientPhone || ''} onChange={(e) => setField('newClientPhone', e.target.value)} placeholder="0803 123 4567" />
+                </div>
               </div>
-              <div className="field"><label>Phone (optional)</label>
-                <input className="kb-input" value={form.newClientPhone || ''} onChange={(e) => setField('newClientPhone', e.target.value)} placeholder="0803 123 4567" />
-              </div>
-            </div>
+            </>
           )}
           {form.clientId === '__new__' && form.newClientName && (
             <div className="field-hint" style={{ marginTop: -6, marginBottom: 12 }}>
@@ -8397,14 +8480,19 @@ function App() {
             </select>
           </div>
           {!form.clientId && (
-            <div className="field-row">
-              <div className="field"><label>Payer name</label>
-                <input className="kb-input" value={form.clientName || ''} onChange={(e) => setField('clientName', e.target.value)} placeholder="e.g. Amaka Obi" />
+            <>
+              <button type="button" className="btn btn-small btn-outline" style={{ marginBottom: 4 }} onClick={() => importDeviceContact((c) => { setField('clientName', c.name || form.clientName || ''); setField('clientPhone', c.phone || form.clientPhone || ''); })}>
+                <Phone size={13} /> Import from phone contacts
+              </button>
+              <div className="field-row">
+                <div className="field"><label>Payer name</label>
+                  <input className="kb-input" value={form.clientName || ''} onChange={(e) => setField('clientName', e.target.value)} placeholder="e.g. Amaka Obi" />
+                </div>
+                <div className="field"><label>Phone (optional)</label>
+                  <input className="kb-input" value={form.clientPhone || ''} onChange={(e) => setField('clientPhone', e.target.value)} placeholder="0803 123 4567" />
+                </div>
               </div>
-              <div className="field"><label>Phone (optional)</label>
-                <input className="kb-input" value={form.clientPhone || ''} onChange={(e) => setField('clientPhone', e.target.value)} placeholder="0803 123 4567" />
-              </div>
-            </div>
+            </>
           )}
           {!form.clientId && form.clientName && (
             <div className="field-hint" style={{ marginTop: -6, marginBottom: 12 }}>
