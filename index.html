@@ -2884,6 +2884,27 @@ function WelcomeScreen({ settings, onStart }) {
   );
 }
 
+function AutoSlider({ items, renderItem, interval = 2000 }) {
+  const [index, setIndex] = useState(0);
+  useEffect(() => { if (index >= items.length) setIndex(0); }, [items.length, index]);
+  useEffect(() => {
+    if (items.length <= 1) return;
+    const t = setInterval(() => setIndex((i) => (i + 1) % items.length), interval);
+    return () => clearInterval(t);
+  }, [items.length, interval]);
+  const safeIndex = index % items.length;
+  return (
+    <div className="auto-slider">
+      <div key={safeIndex} className="auto-slider-item">{renderItem(items[safeIndex], safeIndex)}</div>
+      {items.length > 1 && (
+        <div className="auto-slider-dots">
+          {items.map((_, i) => <span key={i} className={`auto-slider-dot ${i === safeIndex ? 'auto-slider-dot-active' : ''}`} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, onAlertClick, todayActivity }) {
   const cards = [
     { id: 'thrift', title: 'Thrift', desc: 'Run daily, weekly, monthly, rotating cycle or target savings circles and track every contribution.', icon: PiggyBank, tone: 'green', stat: `${stats.plans} active plan(s)` },
@@ -2903,9 +2924,9 @@ function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, onAlertClick, t
             <span>Needs your attention</span>
             <button className="link-btn" onClick={onViewAlerts}>View all ({alerts.length}) <ChevronRight size={14} /></button>
           </div>
-          <ul className="alert-list" style={{ maxHeight: 92, overflowY: 'auto', paddingRight: 4 }}>
-            {topAlerts.map((a) => (
-              <li key={a.id} className={`alert-row sev-${a.severity} ${a.target ? 'alert-row-clickable' : ''}`}
+          <AutoSlider items={topAlerts} renderItem={(a) => (
+            <ul className="alert-list">
+              <li className={`alert-row sev-${a.severity} ${a.target ? 'alert-row-clickable' : ''}`}
                 onClick={a.target ? () => onAlertClick(a) : undefined}
                 role={a.target ? 'button' : undefined} tabIndex={a.target ? 0 : undefined}
                 onKeyDown={a.target ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onAlertClick(a); } } : undefined}>
@@ -2913,8 +2934,8 @@ function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, onAlertClick, t
                 <span>{a.text}</span>
                 {a.target && <ChevronRight size={15} className="alert-row-chevron" />}
               </li>
-            ))}
-          </ul>
+            </ul>
+          )} />
         </div>
       )}
       <div className="panel" style={{ marginBottom: 16 }}>
@@ -2923,14 +2944,14 @@ function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, onAlertClick, t
           <span className="tag-ink" style={{ fontSize: 11.5 }}>{todayActs.length} today</span>
         </div>
         {todayActs.length === 0 ? <EmptyState text="Nothing logged yet today." /> : (
-          <ul className="activity-list" style={{ maxHeight: 150, overflowY: 'auto', paddingRight: 4 }}>
-            {todayActs.map((a, i) => (
-              <li key={i} className="activity-item">
+          <AutoSlider items={todayActs} renderItem={(a) => (
+            <ul className="activity-list">
+              <li className="activity-item">
                 <span className={`dot dot-${a.kind}`} />
                 <span className="activity-text">{a.text}</span>
               </li>
-            ))}
-          </ul>
+            </ul>
+          )} />
         )}
       </div>
       <div className="home-card-grid">
@@ -3060,6 +3081,18 @@ function App() {
   const [expandedClient, setExpandedClient] = useState(null);
   const [checkedClientIds, setCheckedClientIds] = useState([]);
   const [dismissed, setDismissed] = useState([]);
+  const [todayKey, setTodayKey] = useState(todayISO());
+  useEffect(() => {
+    const checkDay = () => setTodayKey((prev) => (prev !== todayISO() ? todayISO() : prev));
+    const interval = setInterval(checkDay, 60000);
+    window.addEventListener('focus', checkDay);
+    document.addEventListener('visibilitychange', checkDay);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', checkDay);
+      document.removeEventListener('visibilitychange', checkDay);
+    };
+  }, []);
   const [memberSearch, setMemberSearch] = useState('');
   const [loanGivenSearch, setLoanGivenSearch] = useState('');
   const [loanReceivedSearch, setLoanReceivedSearch] = useState('');
@@ -3472,11 +3505,10 @@ function App() {
     });
     plans.forEach((p) => {
       const periods = periodsForPlan(p).slice(0, -1);
-      const recent = periods.slice(-3);
       p.memberIds.forEach((memberId) => {
-        const missed = recent.filter((period) => !findContribution(p.id, memberId, period));
+        const missed = periods.filter((period) => !findContribution(p.id, memberId, period));
         if (missed.length >= 2) {
-          list.push({ id: 'miss-' + p.id + memberId, severity: 'medium', group: 'Thrift contributions', text: `${memberById(memberId)?.name} has missed ${missed.length} of the last ${recent.length} rounds in ${p.name}.`, target: { module: 'thrift', tab: 'plans', planId: p.id } });
+          list.push({ id: 'miss-' + p.id + memberId, severity: 'medium', group: 'Thrift contributions', text: `${memberById(memberId)?.name} has missed ${missed.length} of ${periods.length} rounds in ${p.name}.`, target: { module: 'thrift', tab: 'plans', planId: p.id } });
         }
       });
     });
@@ -3499,7 +3531,7 @@ function App() {
       else if (pct >= 0.9) list.push({ id: 'buds-' + b.id, severity: 'medium', group: 'Expense & Budgeting', text: `${b.category} is close to its monthly budget — ${fmt(spent)} of ${fmt(b.monthlyLimit)} spent.`, target: { module: 'spending', tab: 'budgets' } });
     });
     return list.filter((a) => !dismissed.includes(a.id));
-  }, [loansGiven, loansReceived, plans, contributions, dismissed, invoices, clients, expenses, budgets]);
+  }, [loansGiven, loansReceived, plans, contributions, dismissed, invoices, clients, expenses, budgets, todayKey]);
 
   /* ---------- dashboard derived data ---------- */
   const totalCollected = contributions.reduce((s, c) => s + c.amount, 0);
@@ -3507,12 +3539,19 @@ function App() {
   const runningThriftBalance = totalCollected - totalWithdrawnFromThrift;
   const totalOwedToMe = loansGiven.reduce((s, l) => s + outstandingOf(l, 'repayments'), 0);
   const totalIOwe = loansReceived.reduce((s, l) => s + outstandingOf(l, 'refunds'), 0);
+  const loanMovementThisMonth = (() => {
+    const ym = todayISO().slice(0, 7);
+    const repaid = loansGiven.reduce((s, l) => s + l.repayments.filter((r) => r.date.slice(0, 7) === ym).reduce((s2, r) => s2 + r.amount, 0), 0);
+    const refunded = loansReceived.reduce((s, l) => s + l.refunds.filter((r) => r.date.slice(0, 7) === ym).reduce((s2, r) => s2 + r.amount, 0), 0);
+    return repaid + refunded;
+  })();
   const activePlansCount = plans.length;
   const cyclePlansCount = plans.filter((p) => p.category === 'Cycle' && !cycleComplete(p)).length;
   const collectedThisMonth = contributions.filter((c) => c.date.slice(0, 7) === todayISO().slice(0, 7)).reduce((s, c) => s + c.amount, 0);
   const totalInvoiced = invoices.reduce((s, i) => s + invoiceTotal(i), 0);
   const totalReceived = receipts.filter((r) => !r.voided).reduce((s, r) => s + r.amount, 0);
   const totalOutstanding = invoices.filter((i) => i.status !== 'paid' && i.status !== 'draft' && i.status !== 'void').reduce((s, i) => s + invoiceNetTotal(i), 0);
+  const receivedThisMonth = receipts.filter((r) => !r.voided && r.date.slice(0, 7) === todayISO().slice(0, 7)).reduce((s, r) => s + r.amount, 0);
   const totalSpent = expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
   const spentThisMonth = expenses.filter((e) => e.date.slice(0, 7) === todayISO().slice(0, 7)).reduce((s, e) => s + Number(e.amount || 0), 0);
   const spendByCategory = useMemo(() => {
@@ -3559,7 +3598,7 @@ function App() {
     return acts.sort((a, b) => new Date(b.date) - new Date(a.date));
   }, [contributions, loansGiven, loansReceived, plans, receipts, clients, invoices, expenses]);
 
-  const todayActivity = useMemo(() => recentActivity.filter((a) => (a.date || '').slice(0, 10) === todayISO()), [recentActivity]);
+  const todayActivity = useMemo(() => recentActivity.filter((a) => (a.date || '').slice(0, 10) === todayKey), [recentActivity, todayKey]);
 
   const borrowerNames = useMemo(() => Array.from(new Set(loansGiven.map((l) => l.borrower))), [loansGiven]);
   const lenderNames = useMemo(() => Array.from(new Set(loansReceived.map((l) => l.lender))), [loansReceived]);
@@ -5276,6 +5315,7 @@ function App() {
         <StatCard label="IOUs net balance" value={fmt(loanTabs.reduce((s, t) => s + tabBalance(t), 0))} icon={Repeat} tone="steel" sub={`${loanTabs.length} IOU(s) open`} />
         <StatCard label="Total loans on file" value={loansGiven.length + loansReceived.length + loanTabs.length} icon={HandCoins} tone="gold" sub="Given + received + IOUs" />
         <StatCard label="Loan alerts" value={moduleAlerts(['Loans given', 'Loans received']).length} icon={AlertTriangle} tone="green" sub="Needs attention" />
+        <StatCard label="Moved this month" value={fmt(loanMovementThisMonth)} icon={Calendar} tone="brick" sub="Repayments + refunds" />
       </div>
       <div className="two-col">
         <div className="panel">
@@ -5324,6 +5364,8 @@ function App() {
         <StatCard label="Total received" value={fmt(totalReceived)} icon={Receipt} tone="green" sub={`${receipts.length} receipt(s)`} />
         <StatCard label="Outstanding" value={fmt(totalOutstanding)} icon={AlertTriangle} tone="brick" sub="Across unpaid invoices" />
         <StatCard label="Clients" value={clients.length} icon={Users} tone="gold" sub="On file" />
+        <StatCard label="Payment alerts" value={moduleAlerts(['Payments']).length} icon={AlertTriangle} tone="green" sub="Needs attention" />
+        <StatCard label="Received this month" value={fmt(receivedThisMonth)} icon={Calendar} tone="steel" sub={new Date().toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })} />
       </div>
       <div className="two-col">
         <div className="panel">
@@ -6360,6 +6402,8 @@ function App() {
           <StatCard label="Total logged" value={fmt(totalSpent)} icon={Wallet} tone="steel" sub={`${expenses.length} expense(s) all-time`} />
           <StatCard label="Top category" value={topCategory ? topCategory[0] : '—'} icon={Target} tone="gold" sub={topCategory ? fmt(topCategory[1]) : 'No expenses yet'} />
           <StatCard label="Budgets over limit" value={budgets.filter((b) => (spentThisMonthByCategory[b.category] || 0) > b.monthlyLimit).length} icon={AlertTriangle} tone="brick" sub={`${budgets.length} budget(s) set`} />
+          <StatCard label="Budget alerts" value={moduleAlerts(['Expense & Budgeting']).length} icon={AlertTriangle} tone="green" sub="Needs attention" />
+          <StatCard label="Categories tracked" value={spendByCategory.length} icon={Repeat} tone="steel" sub="With logged spend" />
         </div>
         <div className="two-col">
           <div className="panel">
@@ -6509,6 +6553,8 @@ function App() {
     const income = sumTaxCategoriesForYear(year, TAX_INCOME_CATEGORIES.filter((c) => c !== 'Non-Taxable Transfer'));
     const deductible = sumTaxCategoriesForYear(year, TAX_DEDUCTION_CATEGORIES.filter((c) => c !== 'Personal (non-deductible)'));
     const yearReturns = taxReturns.filter((r) => r.year === year);
+    const netTaxable = income - deductible;
+    const filedReturnsCount = taxReturns.filter((r) => r.status === 'filed').length;
     const recent = [...taxTransactions].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 6);
     return (
       <>
@@ -6523,6 +6569,8 @@ function App() {
           <StatCard label="Deductible / reliefs" value={fmt(deductible)} icon={CreditCard} tone="steel" sub={`${year} · from ledger`} />
           <StatCard label="Transactions imported" value={taxTransactions.length} icon={Upload} tone="gold" sub={`${taxImports.length} import batch(es)`} />
           <StatCard label="Returns this year" value={yearReturns.length} icon={Receipt} tone="brick" sub={`${taxReturns.length} total on file`} />
+          <StatCard label="Net taxable" value={fmt(netTaxable)} icon={Landmark} tone="steel" sub={`${year} · income less reliefs`} />
+          <StatCard label="Filed returns" value={filedReturnsCount} icon={CheckCircle2} tone="green" sub={`${taxReturns.length - filedReturnsCount} draft(s)`} />
         </div>
         <div className="panel">
           <div className="panel-title">How this works</div>
@@ -7356,7 +7404,7 @@ function App() {
         .kb-root.dark-mode{
           --paper:#10182B; --paper-line:#2A3550; --ink-soft:#94A0C2;
           --surface:#182140; --surface-2:#1C2846;
-          --green-bg:#173B30; --gold-bg:#3A2E12; --brick-bg:#3A2019; --steel-bg:#1E2A46;
+          --green-bg:#173B30; --gold-bg:#3A2E12; --brick-bg:#3A2019; --steel-bg:#1E2A46; --navy-bg:#2A2148;
           color:#ECE9DF;
         }
         .dark-mode .activity-text, .dark-mode .btn-outline, .dark-mode .kb-input,
@@ -7425,6 +7473,14 @@ function App() {
         .alert-row-clickable{cursor:pointer;}
         .alert-row-clickable:hover, .alert-row-clickable:focus-visible{background:var(--surface-2);border-color:var(--paper-line);outline:none;}
         .alert-row-chevron{color:var(--ink-soft);flex-shrink:0;}
+        .auto-slider{min-height:56px;display:flex;flex-direction:column;justify-content:center;}
+        .auto-slider .alert-list, .auto-slider .activity-list{margin:0;}
+        .auto-slider-item{animation:autoSliderIn .4s ease;}
+        @keyframes autoSliderIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
+        .auto-slider-dots{display:flex;gap:5px;justify-content:center;margin-top:10px;}
+        .auto-slider-dot{width:5px;height:5px;border-radius:50%;background:var(--paper-line);transition:background .2s, transform .2s;}
+        .auto-slider-dot-active{background:var(--gold);transform:scale(1.3);animation:autoSliderPulse 2s ease-in-out infinite;}
+        @keyframes autoSliderPulse{0%,100%{box-shadow:0 0 0 0 rgba(183,138,46,0.55);}50%{box-shadow:0 0 0 5px rgba(183,138,46,0);}}
         .sev-high{background:var(--brick-bg);color:var(--brick);}
         .sev-medium{background:var(--gold-bg);color:var(--gold);}
         .btn{display:inline-flex;align-items:center;gap:6px;border-radius:8px;padding:9px 15px;font-size:13.5px;font-weight:600;cursor:pointer;border:1px solid transparent;}
@@ -7716,8 +7772,13 @@ function App() {
         .carousel-dots{position:absolute;bottom:10px;left:0;right:0;display:flex;justify-content:center;gap:6px;}
         .carousel-dot{width:6px;height:6px;border-radius:50%;background:var(--paper-line);border:none;cursor:pointer;padding:0;}
         .carousel-dot-active{background:var(--ink);width:16px;border-radius:3px;}
-        .home-card{background:var(--surface);border:1px solid var(--paper-line);border-radius:14px;padding:13px 14px;cursor:pointer;transition:transform .15s, box-shadow .15s;}
+        .home-card{background:var(--surface);border:1px solid var(--paper-line);border-top:3px solid transparent;border-radius:14px;padding:13px 14px;cursor:pointer;transition:transform .15s, box-shadow .15s;}
         .home-card:hover{transform:translateY(-3px);box-shadow:0 14px 30px rgba(27,42,74,0.12);}
+        .home-card.tone-green{background:linear-gradient(180deg, var(--green-bg) 0%, var(--surface) 60%);border-top-color:var(--green);}
+        .home-card.tone-steel{background:linear-gradient(180deg, var(--steel-bg) 0%, var(--surface) 60%);border-top-color:var(--steel);}
+        .home-card.tone-gold{background:linear-gradient(180deg, var(--gold-bg) 0%, var(--surface) 60%);border-top-color:var(--gold);}
+        .home-card.tone-brick{background:linear-gradient(180deg, var(--brick-bg) 0%, var(--surface) 60%);border-top-color:var(--brick);}
+        .home-card.tone-navy{background:linear-gradient(180deg, var(--navy-bg) 0%, var(--surface) 60%);border-top-color:var(--navy);}
         .home-card-icon{width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;margin-bottom:7px;}
         .home-card.tone-green .home-card-icon{background:var(--green-bg);color:var(--green);}
         .home-card.tone-steel .home-card-icon{background:var(--steel-bg);color:var(--steel);}
