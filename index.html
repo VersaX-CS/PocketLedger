@@ -3505,6 +3505,7 @@ function App() {
   const totalIOwe = loansReceived.reduce((s, l) => s + outstandingOf(l, 'refunds'), 0);
   const activePlansCount = plans.length;
   const cyclePlansCount = plans.filter((p) => p.category === 'Cycle' && !cycleComplete(p)).length;
+  const collectedThisMonth = contributions.filter((c) => c.date.slice(0, 7) === todayISO().slice(0, 7)).reduce((s, c) => s + c.amount, 0);
   const totalInvoiced = invoices.reduce((s, i) => s + invoiceTotal(i), 0);
   const totalReceived = receipts.filter((r) => !r.voided).reduce((s, r) => s + r.amount, 0);
   const totalOutstanding = invoices.filter((i) => i.status !== 'paid' && i.status !== 'draft' && i.status !== 'void').reduce((s, i) => s + invoiceNetTotal(i), 0);
@@ -5201,6 +5202,7 @@ function App() {
         <StatCard label="Rotating cycles in progress" value={cyclePlansCount} icon={Repeat} tone="brick" sub="Cycle plans awaiting payout" />
         <StatCard label="Contributors" value={members.length} icon={Users} tone="steel" sub="Across all plans" />
         <StatCard label="Thrift alerts" value={moduleAlerts(['Thrift contributions']).length} icon={AlertTriangle} tone="gold" sub="Needs attention" />
+        <StatCard label="Collected this month" value={fmt(collectedThisMonth)} icon={Calendar} tone="green" sub={new Date().toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })} />
       </div>
       <div className="two-col">
         <div className="panel" data-tour="thrift-chart">
@@ -6787,7 +6789,7 @@ function App() {
           <button className="btn btn-outline btn-small" onClick={() => exportTaxLedgerCsv(filtered, taxYearFilter)}><Download size={14} /> Export CSV</button>
           <button className="btn btn-outline btn-small" onClick={() => exportTaxLedgerExcel(filtered, taxYearFilter)}><Download size={14} /> Export Excel</button>
         </div>
-        <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(2,1fr)', marginBottom: 18 }}>
+        <div className="stat-grid" style={{ marginBottom: 18 }}>
           <StatCard label="Income (this filter)" value={fmt(income)} icon={TrendingUp} tone="green" />
           <StatCard label="Deductible (this filter)" value={fmt(deductible)} icon={CreditCard} tone="steel" />
         </div>
@@ -7369,8 +7371,8 @@ function App() {
         .section-header h2{font-size:24px;margin:0;font-weight:600;}
         .section-header-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;margin-top:14px;}
         .section-header-actions>*{flex:0 0 auto;}
-        .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:22px;}
-        .stat-card{background:var(--surface);border:1px solid var(--paper-line);border-radius:12px;padding:16px 18px;position:relative;}
+        .stat-grid{display:flex;flex-wrap:wrap;gap:16px;margin-bottom:22px;}
+        .stat-card{background:var(--surface);border:1px solid var(--paper-line);border-radius:12px;padding:16px 18px;position:relative;flex:1 1 200px;min-width:200px;}
         .stat-icon{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;margin-bottom:10px;}
         .tone-green .stat-icon{background:var(--green-bg);color:var(--green);}
         .tone-steel .stat-icon{background:var(--steel-bg);color:var(--steel);}
@@ -7557,9 +7559,9 @@ function App() {
           display:flex;align-items:center;justify-content:center;color:var(--ink);
         }
         .icon-btn-active{background:var(--ink) !important;color:#fff !important;border-color:var(--ink) !important;}
-        .module-topbar-title{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600;color:var(--ink);}
-        .module-switcher{position:relative;}
-        .module-topbar-title-btn{background:none;border:none;padding:6px 8px;margin:-6px -8px;border-radius:10px;cursor:pointer;}
+        .module-topbar-title{display:flex;align-items:center;justify-content:flex-start;gap:8px;font-size:15px;font-weight:600;color:var(--ink);text-align:left;}
+        .module-switcher{position:relative;display:flex;justify-content:flex-start;margin-right:auto;}
+        .module-topbar-title-btn{background:none;border:none;padding:6px 8px;margin:-6px -8px;border-radius:10px;cursor:pointer;text-align:left;}
         .module-topbar-title-btn:hover{background:var(--paper);}
         .module-topbar-title-btn .chev{color:var(--ink-soft);transition:transform 0.15s ease;}
         .module-topbar-title-btn .chev.chev-open{transform:rotate(180deg);}
@@ -7742,7 +7744,7 @@ function App() {
         .payout-order-actions{display:flex;gap:2px;}
         .payout-order-actions .icon-btn:disabled{opacity:0.25;cursor:default;}
         @media (max-width:900px){
-          .stat-grid{grid-template-columns:repeat(2,1fr);}
+          .stat-card{flex-basis:calc(50% - 8px);}
           .two-col{grid-template-columns:1fr;}
           .master-detail{grid-template-columns:1fr;}
           .home-card-grid{grid-template-columns:1fr;}
