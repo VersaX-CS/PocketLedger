@@ -3152,29 +3152,29 @@ function App() {
   useEffect(() => {
     if (!currentUser || isReadOnly) return;
     const thisMonth = todayISO().slice(0, 7);
-    setExpenses((prev) => {
-      const groups = {};
-      prev.forEach((e) => {
-        if (!e.recurring) return;
-        const key = e.recurringId || e.id;
-        (groups[key] = groups[key] || []).push(e);
-      });
-      const additions = [];
-      Object.values(groups).forEach((entries) => {
-        const latest = entries.slice().sort((a, b) => new Date(b.date) - new Date(a.date))[0];
-        if (latest.date.slice(0, 7) === thisMonth) return; // already logged this month
-        const originalDay = new Date(latest.date).getDate();
-        const [yy, mm] = thisMonth.split('-').map(Number);
-        const daysInMonth = new Date(yy, mm, 0).getDate();
-        const day = Math.min(originalDay, daysInMonth);
-        additions.push({
-          id: uid(), category: latest.category, amount: latest.amount, date: `${thisMonth}-${String(day).padStart(2, '0')}`,
-          note: latest.note, recurring: true, recurringId: latest.recurringId || latest.id,
-          foreignCurrency: latest.foreignCurrency || null, foreignAmount: latest.foreignAmount || null,
-        });
-      });
-      return additions.length ? [...additions, ...prev] : prev;
+    const groups = {};
+    expenses.forEach((e) => {
+      if (!e.recurring) return;
+      const key = e.recurringId || e.id;
+      (groups[key] = groups[key] || []).push(e);
     });
+    const additions = [];
+    Object.values(groups).forEach((entries) => {
+      const latest = entries.slice().sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+      if (latest.date.slice(0, 7) === thisMonth) return; // already logged this month
+      const originalDay = new Date(latest.date).getDate();
+      const [yy, mm] = thisMonth.split('-').map(Number);
+      const daysInMonth = new Date(yy, mm, 0).getDate();
+      const day = Math.min(originalDay, daysInMonth);
+      additions.push({
+        id: uid(), category: latest.category, amount: latest.amount, date: `${thisMonth}-${String(day).padStart(2, '0')}`,
+        note: latest.note, recurring: true, recurringId: latest.recurringId || latest.id,
+        foreignCurrency: latest.foreignCurrency || null, foreignAmount: latest.foreignAmount || null,
+      });
+    });
+    if (additions.length) {
+      setExpenses((prev) => [...additions, ...prev], `Auto-logged ${additions.length} recurring expense${additions.length === 1 ? '' : 's'}`);
+    }
   }, [currentUser]);
 
   // ---------- auto-draft recurring invoices for the current month ----------
