@@ -97,6 +97,15 @@ async function idbClearHandle() {
   });
 }
 const uid = () => Math.random().toString(36).slice(2, 10);
+// Human-readable names for each data slice, used as a fallback label in the undo/action log
+// when a more specific label wasn't provided at the call site.
+const UNDO_DATA_LABELS = {
+  members: 'Contributors', plans: 'Thrift plans', contributions: 'Contributions',
+  loansGiven: 'Loans given', loansReceived: 'Loans received', loanContacts: 'Loan contacts',
+  loanTabs: 'Loan tabs', expenses: 'Expenses', budgets: 'Budgets', clients: 'Clients',
+  invoices: 'Invoices', receipts: 'Receipts', creditNotes: 'Credit notes',
+  taxTransactions: 'Tax transactions', taxImports: 'Tax imports', taxReturns: 'Tax returns',
+};
 const todayISO = () => new Date().toISOString().slice(0, 10);
 // Hashes a password with SHA-256 before it's ever stored or compared — the app has no
 // server, so this is client-side hashing (not salted/peppered like a real backend would do),
@@ -257,6 +266,17 @@ function periodLabel(period, frequency) {
 }
 function daysFromToday(dateStr) {
   return Math.ceil((new Date(dateStr) - new Date(todayISO())) / dayMs);
+}
+// Relative time label for the undo/action log, e.g. "just now", "5m ago", "3h ago".
+function timeAgo(ts) {
+  const diff = Math.max(0, Date.now() - ts);
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
 }
 function dateFieldForKey(key) {
   return key === 'repayments' ? 'dateGiven' : 'dateReceived';
@@ -2918,24 +2938,66 @@ function App() {
   const [taxImports, setTaxImportsRaw] = useState(() => (PERSISTED && PERSISTED.taxImports) || []);
   const [taxReturns, setTaxReturnsRaw] = useState(() => (PERSISTED && PERSISTED.taxReturns) || []);
 
+  // ---------- Undo / action log ----------
+  // Generic, works across every data type: each guarded setter below records the value it's
+  // about to replace. Calls made within the same synchronous handler (e.g. a delete that also
+  // cleans up related records) are grouped into one log entry via the 0ms batching timer.
+  const [undoStack, setUndoStack] = useState([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const undoBatchRef = useRef(null);
+  const queueUndo = (key, prevValue, label) => {
+    if (!undoBatchRef.current) {
+      const batch = { id: uid(), ts: Date.now(), keys: {}, labels: [] };
+      undoBatchRef.current = batch;
+      setTimeout(() => {
+        undoBatchRef.current = null;
+        const finalLabel = batch.labels.length
+          ? batch.labels.join(' · ')
+          : Object.keys(batch.keys).map((k) => `Updated ${UNDO_DATA_LABELS[k] || k}`).join(' · ');
+        setUndoStack((prev) => [...prev.slice(-29), { id: batch.id, ts: batch.ts, label: finalLabel, keys: batch.keys }]);
+      }, 0);
+    }
+    const batch = undoBatchRef.current;
+    if (!(key in batch.keys)) batch.keys[key] = prevValue;
+    if (label && !batch.labels.includes(label)) batch.labels.push(label);
+  };
+  const undoRawSetters = {
+    members: setMembersRaw, plans: setPlansRaw, contributions: setContributionsRaw,
+    loansGiven: setLoansGivenRaw, loansReceived: setLoansReceivedRaw, loanContacts: setLoanContactsRaw,
+    loanTabs: setLoanTabsRaw, expenses: setExpensesRaw, budgets: setBudgetsRaw, clients: setClientsRaw,
+    invoices: setInvoicesRaw, receipts: setReceiptsRaw, creditNotes: setCreditNotesRaw,
+    taxTransactions: setTaxTransactionsRaw, taxImports: setTaxImportsRaw, taxReturns: setTaxReturnsRaw,
+  };
+  const undoAction = (entryId) => {
+    const idx = undoStack.findIndex((e) => e.id === entryId);
+    if (idx === -1) return;
+    // Undoing an older entry also undoes everything newer than it (in reverse order), since
+    // those later actions may depend on the state this restores.
+    [...undoStack].slice(idx).reverse().forEach((entry) => {
+      Object.entries(entry.keys).forEach(([key, prevValue]) => { undoRawSetters[key] && undoRawSetters[key](prevValue); });
+    });
+    setUndoStack((prev) => prev.slice(0, idx));
+    flash(idx === undoStack.length - 1 ? 'Action undone.' : `Undone — and ${undoStack.length - 1 - idx} more recent change(s) with it.`);
+  };
+
   // Guarded setters: no-op with a flash message on the read-only demo account.
   const setUsers = (updater) => { if (guardWrite()) return; setUsersRaw(updater); };
-  const setMembers = (updater) => { if (guardWrite()) return; setMembersRaw(updater); };
-  const setPlans = (updater) => { if (guardWrite()) return; setPlansRaw(updater); };
-  const setContributions = (updater) => { if (guardWrite()) return; setContributionsRaw(updater); };
-  const setLoansGiven = (updater) => { if (guardWrite()) return; setLoansGivenRaw(updater); };
-  const setLoansReceived = (updater) => { if (guardWrite()) return; setLoansReceivedRaw(updater); };
-  const setLoanContacts = (updater) => { if (guardWrite()) return; setLoanContactsRaw(updater); };
-  const setLoanTabs = (updater) => { if (guardWrite()) return; setLoanTabsRaw(updater); };
-  const setExpenses = (updater) => { if (guardWrite()) return; setExpensesRaw(updater); };
-  const setBudgets = (updater) => { if (guardWrite()) return; setBudgetsRaw(updater); };
-  const setClients = (updater) => { if (guardWrite()) return; setClientsRaw(updater); };
-  const setInvoices = (updater) => { if (guardWrite()) return; setInvoicesRaw(updater); };
-  const setReceipts = (updater) => { if (guardWrite()) return; setReceiptsRaw(updater); };
-  const setCreditNotes = (updater) => { if (guardWrite()) return; setCreditNotesRaw(updater); };
-  const setTaxTransactions = (updater) => { if (guardWrite()) return; setTaxTransactionsRaw(updater); };
-  const setTaxImports = (updater) => { if (guardWrite()) return; setTaxImportsRaw(updater); };
-  const setTaxReturns = (updater) => { if (guardWrite()) return; setTaxReturnsRaw(updater); };
+  const setMembers = (updater, label) => { if (guardWrite()) return; queueUndo('members', members, label); setMembersRaw(updater); };
+  const setPlans = (updater, label) => { if (guardWrite()) return; queueUndo('plans', plans, label); setPlansRaw(updater); };
+  const setContributions = (updater, label) => { if (guardWrite()) return; queueUndo('contributions', contributions, label); setContributionsRaw(updater); };
+  const setLoansGiven = (updater, label) => { if (guardWrite()) return; queueUndo('loansGiven', loansGiven, label); setLoansGivenRaw(updater); };
+  const setLoansReceived = (updater, label) => { if (guardWrite()) return; queueUndo('loansReceived', loansReceived, label); setLoansReceivedRaw(updater); };
+  const setLoanContacts = (updater, label) => { if (guardWrite()) return; queueUndo('loanContacts', loanContacts, label); setLoanContactsRaw(updater); };
+  const setLoanTabs = (updater, label) => { if (guardWrite()) return; queueUndo('loanTabs', loanTabs, label); setLoanTabsRaw(updater); };
+  const setExpenses = (updater, label) => { if (guardWrite()) return; queueUndo('expenses', expenses, label); setExpensesRaw(updater); };
+  const setBudgets = (updater, label) => { if (guardWrite()) return; queueUndo('budgets', budgets, label); setBudgetsRaw(updater); };
+  const setClients = (updater, label) => { if (guardWrite()) return; queueUndo('clients', clients, label); setClientsRaw(updater); };
+  const setInvoices = (updater, label) => { if (guardWrite()) return; queueUndo('invoices', invoices, label); setInvoicesRaw(updater); };
+  const setReceipts = (updater, label) => { if (guardWrite()) return; queueUndo('receipts', receipts, label); setReceiptsRaw(updater); };
+  const setCreditNotes = (updater, label) => { if (guardWrite()) return; queueUndo('creditNotes', creditNotes, label); setCreditNotesRaw(updater); };
+  const setTaxTransactions = (updater, label) => { if (guardWrite()) return; queueUndo('taxTransactions', taxTransactions, label); setTaxTransactionsRaw(updater); };
+  const setTaxImports = (updater, label) => { if (guardWrite()) return; queueUndo('taxImports', taxImports, label); setTaxImportsRaw(updater); };
+  const setTaxReturns = (updater, label) => { if (guardWrite()) return; queueUndo('taxReturns', taxReturns, label); setTaxReturnsRaw(updater); };
   const [clientSearch, setClientSearch] = useState('');
   const [invoiceSearch, setInvoiceSearch] = useState('');
   const [receiptSearch, setReceiptSearch] = useState('');
@@ -3281,10 +3343,11 @@ function App() {
   const toggleContribution = (planId, memberId, period, amount) => {
     if (guardWrite()) return;
     const existing = findContribution(planId, memberId, period);
+    const who = memberById(memberId)?.name || 'a contributor';
     if (existing) {
-      setContributions((prev) => prev.filter((c) => c.id !== existing.id));
+      setContributions((prev) => prev.filter((c) => c.id !== existing.id), `Unmarked payment — ${who} (${fmt(existing.amount)})`);
     } else {
-      setContributions((prev) => [...prev, { id: uid(), planId, memberId, period, amount, date: todayISO() }]);
+      setContributions((prev) => [...prev, { id: uid(), planId, memberId, period, amount, date: todayISO() }], `Marked payment — ${who} (${fmt(amount)})`);
     }
   };
   // Requires two taps on the same grid cell (within 2s) before an edit actually fires —
@@ -3451,7 +3514,7 @@ function App() {
         startDate: form.startDate || p.startDate, memberIds: form.memberIds || [],
         perMemberAmounts: !!form.perMemberAmounts, memberAmounts,
         fixedDueDay: form.fixedDueDay !== false,
-      }));
+      }), `Edited plan — ${form.name}`);
       setSelectedPlanId(form.id);
       closeModalSilently();
       flash('Plan updated.');
@@ -3465,7 +3528,7 @@ function App() {
       perMemberAmounts: !!form.perMemberAmounts, memberAmounts,
       fixedDueDay: form.fixedDueDay !== false,
     };
-    setPlans((p) => [...p, plan]);
+    setPlans((p) => [...p, plan], `Created plan — ${form.name}`);
     setSelectedPlanId(plan.id);
     closeModalSilently();
   };
@@ -3576,11 +3639,11 @@ function App() {
       if (form.id) {
         setMembers((prev) => prev.map((m) => m.id === form.id ? {
           ...m, name: form.name, phone: form.phone || '', address: form.address || '', email: form.email || '', note: form.note || '',
-        } : m));
+        } : m), `Edited contributor — ${form.name}`);
         flash('Contributor updated.');
       } else {
         const member = { id: uid(), name: form.name, phone: form.phone || '', address: form.address || '', email: form.email || '', note: form.note || '' };
-        setMembers((m) => [...m, member]);
+        setMembers((m) => [...m, member], `Added contributor — ${form.name}`);
         setSelectedMemberId(member.id);
       }
       closeModalSilently();
@@ -3947,7 +4010,7 @@ function App() {
     if (receipt && receipt.status !== 'draft' && !unrestricted) { flash('Issued receipts can\u2019t be deleted \u2014 void it instead, or turn on unrestricted delete in Settings.'); return; }
     const label = receipt && receipt.status !== 'draft' ? `${receipt.voided ? 'voided' : 'issued'} receipt ${receipt.receiptNo}` : 'this draft receipt';
     askConfirm(`Delete ${label}?${receipt && receipt.status !== 'draft' ? ' This permanently removes it from your records.' : ''}`, () => {
-      setReceipts((prev) => prev.filter((r) => r.id !== receiptId));
+      setReceipts((prev) => prev.filter((r) => r.id !== receiptId), `Deleted receipt — ${receipt?.receiptNo || 'draft'}`);
       flash('Receipt deleted.', receipt ? () => setReceipts((prev) => [receipt, ...prev]) : undefined);
     }, receipt && receipt.status !== 'draft' ? { confirmLabel: 'Delete permanently', danger: true } : undefined);
   };
@@ -4035,7 +4098,7 @@ function App() {
     if (invoice && invoice.status !== 'draft' && !unrestricted) { flash('Issued invoices can\u2019t be deleted \u2014 void it instead, or turn on unrestricted delete in Settings.'); return; }
     const label = invoice && invoice.status !== 'draft' ? `${invoice.status} invoice ${invoice.number}` : 'this draft invoice';
     askConfirm(`Delete ${label}?${invoice && invoice.status !== 'draft' ? ' This permanently removes it from your records, including any linked receipts or credit notes staying on file pointing to it.' : ''}`, () => {
-      setInvoices((prev) => prev.filter((i) => i.id !== invoiceId));
+      setInvoices((prev) => prev.filter((i) => i.id !== invoiceId), `Deleted invoice — ${invoice?.number || ''}`);
       flash('Invoice deleted.', invoice ? () => setInvoices((prev) => [invoice, ...prev]) : undefined);
     }, invoice && invoice.status !== 'draft' ? { confirmLabel: 'Delete permanently', danger: true } : undefined);
   };
@@ -4045,8 +4108,8 @@ function App() {
     if (!plan) return;
     askConfirm(`Delete "${plan.name}"? This also removes its contribution history.`, () => {
       const removedContributions = contributions.filter((c) => c.planId === planId);
-      setPlans((prev) => prev.filter((p) => p.id !== planId));
-      setContributions((prev) => prev.filter((c) => c.planId !== planId));
+      setPlans((prev) => prev.filter((p) => p.id !== planId), `Deleted plan — ${plan.name}`);
+      setContributions((prev) => prev.filter((c) => c.planId !== planId), `Deleted plan — ${plan.name}`);
       if (selectedPlanId === planId) {
         const next = plans.find((p) => p.id !== planId);
         setSelectedPlanId(next ? next.id : null);
@@ -4071,9 +4134,9 @@ function App() {
     askConfirm(`Delete ${member.name}? This also removes their contribution history.${warning}`, () => {
       const removedContributions = contributions.filter((c) => c.memberId === memberId);
       const memberPlanIds = onPlans.map((p) => p.id);
-      setMembers((prev) => prev.filter((m) => m.id !== memberId));
-      setContributions((prev) => prev.filter((c) => c.memberId !== memberId));
-      setPlans((prev) => prev.map((p) => ({ ...p, memberIds: p.memberIds.filter((id) => id !== memberId) })));
+      setMembers((prev) => prev.filter((m) => m.id !== memberId), `Deleted contributor — ${member.name}`);
+      setContributions((prev) => prev.filter((c) => c.memberId !== memberId), `Deleted contributor — ${member.name}`);
+      setPlans((prev) => prev.map((p) => ({ ...p, memberIds: p.memberIds.filter((id) => id !== memberId) })), `Deleted contributor — ${member.name}`);
       if (selectedMemberId === memberId) {
         const next = members.find((m) => m.id !== memberId);
         setSelectedMemberId(next ? next.id : null);
@@ -4099,9 +4162,9 @@ function App() {
     askConfirm(`Delete ${removedMembers.length} contributor${removedMembers.length > 1 ? 's' : ''}? This also removes their contribution history.${warning}`, () => {
       const removedContributions = contributions.filter((c) => memberIds.includes(c.memberId));
       const memberPlanMap = onPlans.map((p) => ({ id: p.id, memberIds: p.memberIds.filter((id) => memberIds.includes(id)) }));
-      setMembers((prev) => prev.filter((m) => !memberIds.includes(m.id)));
-      setContributions((prev) => prev.filter((c) => !memberIds.includes(c.memberId)));
-      setPlans((prev) => prev.map((p) => ({ ...p, memberIds: p.memberIds.filter((id) => !memberIds.includes(id)) })));
+      setMembers((prev) => prev.filter((m) => !memberIds.includes(m.id)), `Deleted ${removedMembers.length} contributor(s)`);
+      setContributions((prev) => prev.filter((c) => !memberIds.includes(c.memberId)), `Deleted ${removedMembers.length} contributor(s)`);
+      setPlans((prev) => prev.map((p) => ({ ...p, memberIds: p.memberIds.filter((id) => !memberIds.includes(id)) })), `Deleted ${removedMembers.length} contributor(s)`);
       if (memberIds.includes(selectedMemberId)) {
         const next = members.find((m) => !memberIds.includes(m.id));
         setSelectedMemberId(next ? next.id : null);
@@ -4128,7 +4191,7 @@ function App() {
       return;
     }
     askConfirm(`Delete ${client.name}?`, () => {
-      setClients((prev) => prev.filter((c) => c.id !== clientId));
+      setClients((prev) => prev.filter((c) => c.id !== clientId), `Deleted client — ${client.name}`);
       flash('Client deleted.', () => setClients((prev) => [client, ...prev]));
     });
   };
@@ -4149,7 +4212,7 @@ function App() {
     const blockedNote = blocked.length ? ` ${blocked.length} of the selected client${blocked.length > 1 ? 's have' : ' has'} an issued invoice or receipt and will be skipped.` : '';
     askConfirm(`Delete ${deletable.length} client${deletable.length > 1 ? 's' : ''}?${blockedNote}`, () => {
       const deletableIds = deletable.map((c) => c.id);
-      setClients((prev) => prev.filter((c) => !deletableIds.includes(c.id)));
+      setClients((prev) => prev.filter((c) => !deletableIds.includes(c.id)), `Deleted ${deletable.length} client(s)`);
       setCheckedClientIds([]);
       flash(`${deletable.length} client${deletable.length > 1 ? 's' : ''} deleted.`, () => {
         setClients((prev) => [...deletable, ...prev]);
@@ -4160,7 +4223,7 @@ function App() {
     if (guardWrite()) return;
     const loan = loansGiven.find((l) => l.id === loanId);
     askConfirm('Delete this loan record?', () => {
-      setLoansGiven((prev) => prev.filter((l) => l.id !== loanId));
+      setLoansGiven((prev) => prev.filter((l) => l.id !== loanId), `Deleted loan given — ${loan?.borrower || ''}`);
       flash('Loan record deleted.', loan ? () => setLoansGiven((prev) => [loan, ...prev]) : undefined);
     });
   };
@@ -4168,7 +4231,7 @@ function App() {
     if (guardWrite()) return;
     const loan = loansReceived.find((l) => l.id === loanId);
     askConfirm('Delete this loan record?', () => {
-      setLoansReceived((prev) => prev.filter((l) => l.id !== loanId));
+      setLoansReceived((prev) => prev.filter((l) => l.id !== loanId), `Deleted loan received — ${loan?.lender || ''}`);
       flash('Loan record deleted.', loan ? () => setLoansReceived((prev) => [loan, ...prev]) : undefined);
     });
   };
@@ -4272,7 +4335,7 @@ function App() {
     if (guardWrite()) return;
     const tab = loanTabs.find((t) => t.id === tabId);
     askConfirm('Delete this whole IOU and its entries?', () => {
-      setLoanTabs((prev) => prev.filter((t) => t.id !== tabId));
+      setLoanTabs((prev) => prev.filter((t) => t.id !== tabId), 'Deleted an IOU');
       flash('IOU deleted.', tab ? () => setLoanTabs((prev) => [tab, ...prev]) : undefined);
     });
   };
@@ -4297,7 +4360,7 @@ function App() {
       recurring: !!form.recurring, recurringId: form.recurring ? id : null,
       foreignCurrency: form.foreignCurrency || null, foreignAmount: form.foreignCurrency ? Number(form.foreignAmount) : null,
     };
-    setExpenses((prev) => [expense, ...prev]);
+    setExpenses((prev) => [expense, ...prev], `Logged expense — ${form.category} (${fmt(expense.amount)})`);
     closeModalSilently();
     flash(form.recurring ? 'Expense logged — it will repeat automatically each month.' : 'Expense logged.');
   };
@@ -4317,7 +4380,7 @@ function App() {
     if (guardWrite()) return;
     const expense = expenses.find((e) => e.id === expenseId);
     askConfirm('Delete this expense?', () => {
-      setExpenses((prev) => prev.filter((e) => e.id !== expenseId));
+      setExpenses((prev) => prev.filter((e) => e.id !== expenseId), `Deleted expense — ${expense?.category || ''}`);
       flash('Expense deleted.', expense ? () => setExpenses((prev) => [expense, ...prev]) : undefined);
     });
   };
@@ -4337,7 +4400,7 @@ function App() {
     if (guardWrite()) return;
     const budget = budgets.find((b) => b.id === budgetId);
     askConfirm('Remove this budget?', () => {
-      setBudgets((prev) => prev.filter((b) => b.id !== budgetId));
+      setBudgets((prev) => prev.filter((b) => b.id !== budgetId), `Removed budget — ${budget?.category || ''}`);
       flash('Budget removed.', budget ? () => setBudgets((prev) => [budget, ...prev]) : undefined);
     });
   };
@@ -4692,7 +4755,7 @@ function App() {
     if (amount > available) { flash(`${member ? member.name : 'This member'} only has ${fmt(available)} available to take out of ${plan ? plan.name : 'this plan'}.`); return; }
     setPlans((prev) => prev.map((p) => p.id === form.planId
       ? { ...p, withdrawals: [...(p.withdrawals || []), { id: uid(), memberId: form.memberId, amount, date: form.date || todayISO(), note: form.note || '' }] }
-      : p));
+      : p), `Take-out — ${member ? member.name : 'a member'} (${fmt(amount)})`);
     flash(`${fmt(amount)} taken out for ${member ? member.name : 'the member'}.`);
     closeModalSilently();
   };
@@ -4701,7 +4764,7 @@ function App() {
     const plan = planById(planId);
     const wd = plan && (plan.withdrawals || []).find((w) => w.id === withdrawalId);
     askConfirm('Delete this take-out record?', () => {
-      setPlans((prev) => prev.map((p) => p.id === planId ? { ...p, withdrawals: (p.withdrawals || []).filter((w) => w.id !== withdrawalId) } : p));
+      setPlans((prev) => prev.map((p) => p.id === planId ? { ...p, withdrawals: (p.withdrawals || []).filter((w) => w.id !== withdrawalId) } : p), 'Deleted a take-out record');
       flash('Take-out record deleted.', wd ? () => setPlans((prev) => prev.map((p) => p.id === planId ? { ...p, withdrawals: [...(p.withdrawals || []), wd] } : p)) : undefined);
     });
   };
@@ -5523,6 +5586,8 @@ function App() {
                 <button className="icon-btn" onClick={() => openModal('newMember', { id: selected.id, name: selected.name, phone: selected.phone || '', email: selected.email || '', address: selected.address || '', note: selected.note || '' })} title="Edit contributor" aria-label="Edit contributor">
                   <Edit3 size={15} />
                 </button>
+              </div>
+              <div className="detail-actions">
                 <button className="btn btn-small btn-ghost" onClick={() => setBiodataDoc({
                   name: selected.name, phone: selected.phone,
                   fields: [
@@ -7330,10 +7395,11 @@ function App() {
         .chev{margin-left:auto;color:var(--ink-soft);transition:transform .15s;}
         .chev-open{transform:rotate(180deg);}
         .detail-panel{padding:22px 24px;}
-        .detail-head{display:flex;align-items:center;gap:14px;margin-bottom:18px;flex-wrap:wrap;}
+        .detail-head{display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap;}
+        .detail-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:18px;}
         .member-avatar-lg{width:52px;height:52px;border-radius:50%;background:var(--gold-bg);color:var(--gold);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:20px;flex-shrink:0;}
         .detail-name{font-size:19px;font-weight:600;}
-        .detail-stats{display:flex;gap:20px 28px;flex-wrap:wrap;padding:14px 0;border-top:1px solid var(--paper-line);border-bottom:1px solid var(--paper-line);margin-bottom:14px;}
+        .detail-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:20px;padding:14px 0;border-top:1px solid var(--paper-line);border-bottom:1px solid var(--paper-line);margin-bottom:14px;}
         .detail-stats span{display:block;font-size:18px;font-weight:600;}
         .detail-stats label{font-size:11px;color:var(--ink-soft);}
         .tag-row{display:flex;gap:6px;flex-wrap:wrap;}
@@ -7448,6 +7514,11 @@ function App() {
         .tab-balance-owe{color:var(--brick);}
         .tab-balance-clear{color:var(--green);}
         .tab-entry-list{list-style:none;margin:0 0 4px;padding:0;display:flex;flex-direction:column;gap:6px;}
+        .history-log-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;max-height:60vh;overflow-y:auto;}
+        .history-log-row{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--surface-2);border-radius:10px;padding:10px 12px;}
+        .history-log-info{min-width:0;}
+        .history-log-label{font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+        .history-log-time{font-size:11px;color:var(--ink-soft);margin-top:2px;}
         .tab-entry-row{display:flex;align-items:center;gap:10px;font-size:13px;padding:8px 10px;border-radius:8px;background:#F8F5EB;}
         .tab-entry-row-borrow{border-left:3px solid var(--steel);}
         .tab-entry-row-payment{border-left:3px solid var(--green);}
@@ -7626,6 +7697,10 @@ function App() {
                 <Bell size={17} />
                 {alerts.length > 0 && <span className="bell-dot">{alerts.length}</span>}
               </button>
+              <button className="icon-btn" onClick={() => setHistoryOpen(true)} title="Activity log — undo a recent change">
+                <RotateCcw size={17} />
+                {undoStack.length > 0 && <span className="bell-dot">{undoStack.length}</span>}
+              </button>
               <button className={`icon-btn ${activeTab === 'settings' ? 'icon-btn-active' : ''}`} data-tour="topbar-settings" onClick={() => setActiveTab('settings')} title="Settings"><SettingsIcon size={17} /></button>
               <button className="icon-btn" onClick={handleLogout} title="Log out"><LogOut size={17} /></button>
             </div>
@@ -7671,6 +7746,10 @@ function App() {
               <button className="icon-btn" onClick={() => setActiveTab('alerts')} title="Alerts">
                 <Bell size={16} />
                 {moduleAlerts(MODULE_ALERT_GROUPS[activeModule]).length > 0 && <span className="bell-dot">{moduleAlerts(MODULE_ALERT_GROUPS[activeModule]).length}</span>}
+              </button>
+              <button className="icon-btn" onClick={() => setHistoryOpen(true)} title="Activity log — undo a recent change">
+                <RotateCcw size={16} />
+                {undoStack.length > 0 && <span className="bell-dot">{undoStack.length}</span>}
               </button>
               <button className="icon-btn" onClick={() => setActiveTab('settings')} title="Settings"><SettingsIcon size={16} /></button>
               <button className="icon-btn" onClick={handleLogout} title="Log out"><LogOut size={16} /></button>
@@ -7873,11 +7952,9 @@ function App() {
 
       {modal === 'newMember' && (
         <Modal title={form.id ? 'Edit contributor' : 'Add contributor'} onClose={closeModal}>
-          {!form.id && (
-            <button type="button" className="btn btn-small btn-outline" style={{ marginBottom: 10 }} onClick={() => importDeviceContact((c) => { setField('name', c.name || form.name || ''); setField('phone', c.phone || form.phone || ''); })}>
-              <Phone size={13} /> Import from phone contacts
-            </button>
-          )}
+          <button type="button" className="btn btn-small btn-outline" style={{ marginBottom: 10 }} onClick={() => importDeviceContact((c) => { setField('name', c.name || form.name || ''); setField('phone', c.phone || form.phone || ''); })}>
+            <Phone size={13} /> Import from phone contacts
+          </button>
           <div className="field"><label>Full name</label>
             <input className="kb-input" value={form.name || ''} onChange={(e) => setField('name', e.target.value)} placeholder="e.g. Blessing Nwachukwu" autoFocus />
           </div>
@@ -8738,6 +8815,30 @@ function App() {
             toggleContribution(contribPrompt.planId, contribPrompt.memberId, contribPrompt.period, amt);
             setContribPrompt(null);
           }}>Mark paid</button>
+        </Modal>
+      )}
+      {historyOpen && (
+        <Modal title="Activity log" onClose={() => setHistoryOpen(false)}>
+          <div className="panel-sub" style={{ marginBottom: 14 }}>
+            Your last {undoStack.length} change{undoStack.length === 1 ? '' : 's'} on this device. Undoing an older entry also undoes anything more recent than it.
+          </div>
+          {undoStack.length === 0 ? (
+            <EmptyState text="No changes yet to undo." />
+          ) : (
+            <ul className="history-log-list">
+              {[...undoStack].reverse().map((entry, i) => (
+                <li key={entry.id} className="history-log-row">
+                  <div className="history-log-info">
+                    <div className="history-log-label">{entry.label}</div>
+                    <div className="history-log-time kb-mono">{timeAgo(entry.ts)}</div>
+                  </div>
+                  <button className="btn btn-small btn-outline" onClick={() => undoAction(entry.id)}>
+                    <RotateCcw size={13} /> {i === 0 ? 'Undo' : 'Undo to here'}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </Modal>
       )}
       {confirmDialog && (
