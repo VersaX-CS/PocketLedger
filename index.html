@@ -2870,8 +2870,8 @@ function WelcomeScreen({ settings, onStart }) {
         <CreditCard className="decor-icon decor-sm-h" strokeWidth={1} />
       </div>
       <div className="welcome-brand">
-        <div className="logo-mark">{settings.logoDataUrl ? <img src={settings.logoDataUrl} alt="logo" className="logo-mark-img" /> : <AppLogo size={22} invert />}</div>
-        <div className="kb-title kb-display">{settings.businessName || 'PocketLedger'}</div>
+        <div className="logo-mark"><AppLogo size={22} invert /></div>
+        <div className="kb-title kb-display">PocketLedger</div>
       </div>
       <div className="welcome-carousel-wrap">
         <Carousel slides={slides} />
@@ -7755,7 +7755,11 @@ function App() {
 
       {activeModule === 'home' ? (
         <div className="home-shell">
-          <header className="home-topbar" style={{ justifyContent: 'flex-end' }}>
+          <header className="home-topbar">
+            <div className="logo-text">
+              <div className="kb-title kb-display">{settings.businessName || 'PocketLedger'}</div>
+              <div className="kb-tag">Thrift, loans &amp; payments</div>
+            </div>
             <div className="home-topbar-actions">
               {activeTab !== 'home' && (
                 <button className="icon-btn" onClick={goHome} title="Home"><Home size={17} /></button>
