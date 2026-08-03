@@ -2960,6 +2960,8 @@ function App() {
   const [expandedTab, setExpandedTab] = useState(null);
   const [contribPrompt, setContribPrompt] = useState(null);
   const [contribAmountInput, setContribAmountInput] = useState('');
+  const [armedCell, setArmedCell] = useState(null);
+  const armedCellTimerRef = useRef(null);
   const [expenseCategoryFilter, setExpenseCategoryFilter] = useState('All');
   const [expenseSearch, setExpenseSearch] = useState('');
   const [invoiceStatusFilter, setInvoiceStatusFilter] = useState('All');
@@ -3284,6 +3286,20 @@ function App() {
     } else {
       setContributions((prev) => [...prev, { id: uid(), planId, memberId, period, amount, date: todayISO() }]);
     }
+  };
+  // Requires two taps on the same grid cell (within 2s) before an edit actually fires —
+  // guards against accidental taps while scrolling/swiping on a touch screen. First tap
+  // just "arms" the cell (visual highlight); the second tap runs the real action.
+  const handleCellTap = (cellKey, action) => {
+    if (armedCell === cellKey) {
+      clearTimeout(armedCellTimerRef.current);
+      setArmedCell(null);
+      action();
+      return;
+    }
+    setArmedCell(cellKey);
+    clearTimeout(armedCellTimerRef.current);
+    armedCellTimerRef.current = setTimeout(() => setArmedCell(null), 2000);
   };
 
   const planTotal = (planId) => contributions.filter((c) => c.planId === planId).reduce((s, c) => s + c.amount, 0);
@@ -5372,18 +5388,21 @@ function App() {
                         const overdueUnpaid = isFixed && !paid && !isToday && new Date(period) < new Date(todayISO());
                         const memberAmount = plan.perMemberAmounts ? (plan.memberAmounts || {})[memberId] ?? plan.amount : plan.amount;
                         const paidOn = paid ? new Date(contribution.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : null;
+                        const cellKey = `${plan.id}:${memberId}:${period}`;
+                        const armed = armedCell === cellKey;
+                        const runCellAction = () => {
+                          if (paid) { toggleContribution(plan.id, memberId, period); return; }
+                          setContribAmountInput(memberAmount ? String(memberAmount) : '');
+                          setContribPrompt({ planId: plan.id, memberId, period, frequency: plan.frequency, defaultAmount: memberAmount });
+                        };
                         return (
                           <td key={period}>
                             <button
-                              className={`cell-dot ${paid ? 'cell-paid' : 'cell-unpaid'} ${isToday ? 'cell-today' : ''} ${overdueUnpaid ? 'cell-overdue' : ''}`}
-                              title={paid ? `Paid ${fmt(contribution.amount)} on ${paidOn} — tap to undo` : overdueUnpaid ? 'Overdue — tap to enter amount paid' : 'Tap to enter amount paid'}
-                              onClick={() => {
-                                if (paid) { toggleContribution(plan.id, memberId, period); return; }
-                                setContribAmountInput(memberAmount ? String(memberAmount) : '');
-                                setContribPrompt({ planId: plan.id, memberId, period, frequency: plan.frequency, defaultAmount: memberAmount });
-                              }}
+                              className={`cell-dot ${paid ? 'cell-paid' : 'cell-unpaid'} ${isToday ? 'cell-today' : ''} ${overdueUnpaid ? 'cell-overdue' : ''} ${armed ? 'cell-armed' : ''}`}
+                              title={armed ? 'Tap again to confirm' : paid ? `Paid ${fmt(contribution.amount)} on ${paidOn} — tap twice to undo` : overdueUnpaid ? 'Overdue — tap twice to enter amount paid' : 'Tap twice to enter amount paid'}
+                              onClick={() => handleCellTap(cellKey, runCellAction)}
                             >
-                              {paid ? (isFixed ? <span className="cell-paid-stamp">{new Date(contribution.date).getDate()}</span> : <CheckCircle2 size={15} />) : null}
+                              {armed ? <span className="cell-armed-dot" /> : paid ? (isFixed ? <span className="cell-paid-stamp">{new Date(contribution.date).getDate()}</span> : <CheckCircle2 size={15} />) : null}
                             </button>
                           </td>
                         );
@@ -7290,6 +7309,9 @@ function App() {
         .cell-today{box-shadow:0 0 0 2px var(--gold-bg);}
         .cell-overdue{background:var(--surface-2);border-style:dashed;opacity:0.55;}
         .cell-paid-stamp{font-size:10px;font-weight:700;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;}
+        .cell-armed{border-color:var(--gold);background:var(--gold-bg);box-shadow:0 0 0 2px var(--gold-bg),0 0 0 3.5px var(--gold);animation:cell-armed-pulse 1s ease-in-out infinite;}
+        .cell-armed-dot{width:7px;height:7px;border-radius:50%;background:var(--gold);}
+        @keyframes cell-armed-pulse{0%,100%{opacity:1;}50%{opacity:.55;}}
         .kb-input{border:1px solid var(--paper-line);border-radius:8px;padding:8px 11px;font-size:13px;font-family:inherit;background:var(--surface);color:var(--ink);}
         .master-detail{display:grid;grid-template-columns:300px 1fr;gap:16px;align-items:start;}
         .master-list{padding:14px;}
@@ -7308,10 +7330,10 @@ function App() {
         .chev{margin-left:auto;color:var(--ink-soft);transition:transform .15s;}
         .chev-open{transform:rotate(180deg);}
         .detail-panel{padding:22px 24px;}
-        .detail-head{display:flex;align-items:center;gap:14px;margin-bottom:18px;}
+        .detail-head{display:flex;align-items:center;gap:14px;margin-bottom:18px;flex-wrap:wrap;}
         .member-avatar-lg{width:52px;height:52px;border-radius:50%;background:var(--gold-bg);color:var(--gold);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:20px;flex-shrink:0;}
         .detail-name{font-size:19px;font-weight:600;}
-        .detail-stats{display:flex;gap:28px;padding:14px 0;border-top:1px solid var(--paper-line);border-bottom:1px solid var(--paper-line);margin-bottom:14px;}
+        .detail-stats{display:flex;gap:20px 28px;flex-wrap:wrap;padding:14px 0;border-top:1px solid var(--paper-line);border-bottom:1px solid var(--paper-line);margin-bottom:14px;}
         .detail-stats span{display:block;font-size:18px;font-weight:600;}
         .detail-stats label{font-size:11px;color:var(--ink-soft);}
         .tag-row{display:flex;gap:6px;flex-wrap:wrap;}
@@ -7405,7 +7427,7 @@ function App() {
         .module-switcher-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;border:none;background:none;cursor:pointer;font-size:14px;font-weight:600;color:var(--ink);text-align:left;}
         .module-switcher-item:hover{background:var(--paper);}
         .module-switcher-item-home{color:var(--ink-soft);border-top:1px solid var(--paper-line);margin-top:4px;padding-top:10px;border-radius:0 0 10px 10px;}
-        .home-content, .module-content{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:28px 36px 60px;background-image:repeating-linear-gradient(to bottom,transparent,transparent 37px,var(--paper-line) 38px);}
+        .home-content, .module-content{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;padding:28px 36px 60px;background-image:repeating-linear-gradient(to bottom,transparent,transparent 37px,var(--paper-line) 38px);}
         .bottom-nav{display:flex;background:var(--surface);border-top:1px solid var(--paper-line);flex-shrink:0;padding:6px 4px calc(6px + env(safe-area-inset-bottom));}
         .bottom-nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;cursor:pointer;color:var(--ink-soft);padding:6px 2px;font-size:10.5px;font-weight:600;border-radius:10px;}
         .bottom-nav-item-active{color:var(--ink);background:var(--paper);}
