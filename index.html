@@ -1961,6 +1961,96 @@ function ClientStatementModal({ client, invoices, receipts, creditNotes, setting
   );
 }
 
+function ContributorStatementModal({ member, plans, contributions, settings, fmt, onClose, downloadNodeAsPdf, shareImageToWhatsApp }) {
+  useEscClose(onClose);
+  const memberContributions = contributions.filter((c) => c.memberId === member.id);
+  const memberWithdrawals = plans.flatMap((p) => (p.withdrawals || [])
+    .filter((w) => w.memberId === member.id)
+    .map((w) => ({ ...w, planName: p.name })));
+  const planName = (planId) => (plans.find((p) => p.id === planId) || {}).name || 'Thrift plan';
+  // One combined, chronological ledger — contributions build the balance up, take-outs bring
+  // it down — so the running total always reflects the member's actual savings at each point.
+  const events = [
+    ...memberContributions.map((c) => ({ date: c.date, label: `Contribution — ${planName(c.planId)}`, amount: Number(c.amount || 0) })),
+    ...memberWithdrawals.map((w) => ({ date: w.date, label: `Take-out — ${w.planName}${w.note ? ` (${w.note})` : ''}`, amount: -Number(w.amount || 0) })),
+  ].sort((a, b) => new Date(a.date) - new Date(b.date));
+  let running = 0;
+  const rows = events.map((e) => { running += e.amount; return { ...e, running }; });
+  const totalContributed = memberContributions.reduce((s, c) => s + Number(c.amount || 0), 0);
+  const totalWithdrawn = memberWithdrawals.reduce((s, w) => s + Number(w.amount || 0), 0);
+  const balance = totalContributed - totalWithdrawn;
+  const issuedOn = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const slug = `statement-${member.name.replace(/\s+/g, '-').toLowerCase()}`;
+
+  const downloadImage = () => {
+    const node = document.getElementById('receipt-print-area');
+    if (!node || !window.html2canvas) return;
+    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+      const url = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = url; a.download = `${slug}.png`; a.click();
+    });
+  };
+  const waText = [
+    `*${settings.businessName}* — Contributor Statement`, '',
+    `Contributor: ${member.name}`, `As of: ${issuedOn}`, '',
+    ...rows.map((r) => `${new Date(r.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} — ${r.label}: ${r.amount < 0 ? '-' : ''}${fmt(Math.abs(r.amount))} (bal ${fmt(r.running)})`),
+    '', `Running balance: ${fmt(balance)}`,
+  ].join('\n');
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card receipt-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3 className="kb-display">Statement — {member.name}</h3>
+          <button className="icon-btn" onClick={onClose} title="Close" aria-label="Close"><X size={18} /></button>
+        </div>
+        <div className="modal-body">
+          <div id="receipt-print-area" className="receipt-sheet">
+            <DocHeader settings={settings} />
+            <div className="doc-title-row">
+              <div>
+                <div className="doc-title">Contributor Statement</div>
+                <div className="doc-title-meta">As of {issuedOn}</div>
+              </div>
+              <div>
+                <div className="doc-billed-label">Contributor</div>
+                <div className="doc-billed-name">{member.name}</div>
+                {member.phone && <div className="doc-title-meta" style={{ textAlign: 'right' }}>{member.phone}</div>}
+              </div>
+            </div>
+            {rows.length === 0 ? (
+              <div className="panel-sub" style={{ marginTop: 10 }}>No contributions or take-outs recorded for this contributor yet.</div>
+            ) : (
+              <div>
+                {rows.map((r, i) => (
+                  <div key={i} className="doc-line">
+                    <span>{new Date(r.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} — {r.label}</span>
+                    <span className="kb-mono">{r.amount < 0 ? '−' : ''}{fmt(Math.abs(r.amount))} · bal {fmt(r.running)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="doc-totals">
+              <div className="doc-total-row"><span>Total contributed</span><span className="kb-mono">{fmt(totalContributed)}</span></div>
+              {totalWithdrawn > 0 && <div className="doc-total-row"><span>Total taken out</span><span className="kb-mono">−{fmt(totalWithdrawn)}</span></div>}
+              <div className="doc-total-row balance"><span>Running balance</span><span className="kb-mono">{fmt(balance)}</span></div>
+            </div>
+            <DocSignature settings={settings} />
+            <DocFooter settings={settings} />
+          </div>
+          <div className="receipt-actions">
+            <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
+            <button className="btn btn-outline btn-small" onClick={() => downloadNodeAsPdf('receipt-print-area', `${slug}.pdf`)}><FileText size={14} /> Download PDF</button>
+            <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
+            {member.phone && <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(member.phone, waText, `${slug}.png`)}><MessageCircle size={14} /> Share image on WhatsApp</button>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Reusable sorted summary report for the Invoices and Receipts lists — 'doc' is prebuilt
 // by the caller (who has access to client/invoice lookups) as { title, sortLabel, rows:
 // [{ primary, secondary, meta, amount }], totalLabel, total, count }.
@@ -2788,6 +2878,7 @@ function App() {
   const [users, setUsersRaw] = useState(() => (PERSISTED && PERSISTED.users) || [{ id: 'u1', name: 'Amaka Obi', businessName: 'PocketLedger Ledger', email: DEMO_EMAIL, password: '0ead2060b65992dca4769af601a1b3a35ef38cfad2c2c465bb160ea764157c5d', isDemo: true }]);
   const [currentUser, setCurrentUser] = useState(null);
   const [activeModule, setActiveModule] = useState('home');
+  const [moduleSwitcherOpen, setModuleSwitcherOpen] = useState(false);
   const [preAuthWelcomeSeen, setPreAuthWelcomeSeen] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
 
@@ -2881,12 +2972,14 @@ function App() {
   const [tourStep, setTourStep] = useState(null);
   const [tabStatementDoc, setTabStatementDoc] = useState(null);
   const [clientStatementDoc, setClientStatementDoc] = useState(null);
+  const [contributorStatementDoc, setContributorStatementDoc] = useState(null);
   const [invoiceSummaryDoc, setInvoiceSummaryDoc] = useState(null);
   const [receiptSummaryDoc, setReceiptSummaryDoc] = useState(null);
   const [biodataDoc, setBiodataDoc] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [toast, setToast] = useState('');
-  const [confirmDialog, setConfirmDialog] = useState(null); // { message, confirmLabel, danger, onConfirm }
+  const [confirmDialog, setConfirmDialog] = useState(null); // { message, confirmLabel, danger, onConfirm, requireText }
+  const [confirmTypedText, setConfirmTypedText] = useState('');
   const [taxYearFilter, setTaxYearFilter] = useState(new Date().getFullYear());
   const [taxSourceFilter, setTaxSourceFilter] = useState('All');
   const [taxTxnShowCount, setTaxTxnShowCount] = useState(30);
@@ -3063,8 +3156,9 @@ function App() {
     toastTimerRef.current = setTimeout(() => { setToast(''); setToastUndo(null); }, undoFn ? 6000 : 3200);
   };
   // In-app replacement for window.confirm; onConfirm runs only if confirmed.
+  // opts.requireText: if set, the person must type this exact text before the confirm button unlocks.
   const askConfirm = (message, onConfirm, opts) => {
-    setConfirmDialog({ message, onConfirm, confirmLabel: (opts && opts.confirmLabel) || 'Delete', danger: !opts || opts.danger !== false });
+    setConfirmDialog({ message, onConfirm, confirmLabel: (opts && opts.confirmLabel) || 'Delete', danger: !opts || opts.danger !== false, requireText: (opts && opts.requireText) || null });
   };
   const digitsOnly = (s) => (s || '').replace(/\D/g, '');
   const waHref = (phone, text) => {
@@ -3185,6 +3279,14 @@ function App() {
 
   const planTotal = (planId) => contributions.filter((c) => c.planId === planId).reduce((s, c) => s + c.amount, 0);
   const memberTotal = (memberId) => contributions.filter((c) => c.memberId === memberId).reduce((s, c) => s + c.amount, 0);
+  // Take-outs: a member drawing down their own accumulated savings — separate from a member loan,
+  // which is money lent out of the pool and expected to be repaid.
+  const planMemberContributed = (planId, memberId) => contributions.filter((c) => c.planId === planId && c.memberId === memberId).reduce((s, c) => s + c.amount, 0);
+  const planWithdrawnTotal = (planId) => (planById(planId)?.withdrawals || []).reduce((s, w) => s + w.amount, 0);
+  const planMemberWithdrawn = (planId, memberId) => (planById(planId)?.withdrawals || []).filter((w) => w.memberId === memberId).reduce((s, w) => s + w.amount, 0);
+  const planMemberBalance = (planId, memberId) => planMemberContributed(planId, memberId) - planMemberWithdrawn(planId, memberId);
+  const memberWithdrawnTotal = (memberId) => plans.reduce((s, p) => s + (p.withdrawals || []).filter((w) => w.memberId === memberId).reduce((s2, w) => s2 + w.amount, 0), 0);
+  const memberBalance = (memberId) => memberTotal(memberId) - memberWithdrawnTotal(memberId);
   const memberConsistency = (memberId) => {
     const relevantPlans = plans.filter((p) => p.memberIds.includes(memberId));
     let due = 0, paid = 0;
@@ -3242,6 +3344,8 @@ function App() {
 
   /* ---------- dashboard derived data ---------- */
   const totalCollected = contributions.reduce((s, c) => s + c.amount, 0);
+  const totalWithdrawnFromThrift = plans.reduce((s, p) => s + (p.withdrawals || []).reduce((s2, w) => s2 + w.amount, 0), 0);
+  const runningThriftBalance = totalCollected - totalWithdrawnFromThrift;
   const totalOwedToMe = loansGiven.reduce((s, l) => s + outstandingOf(l, 'repayments'), 0);
   const totalIOwe = loansReceived.reduce((s, l) => s + outstandingOf(l, 'refunds'), 0);
   const activePlansCount = plans.length;
@@ -3416,14 +3520,21 @@ function App() {
   const submitNewMember = () => {
     if (guardWrite()) return;
     if (!form.name) { flash('Enter a name.'); return; }
-    const dup = members.some((m) => m.name.trim().toLowerCase() === form.name.trim().toLowerCase());
+    const dup = members.some((m) => m.id !== form.id && m.name.trim().toLowerCase() === form.name.trim().toLowerCase());
     const finish = () => {
-      const member = { id: uid(), name: form.name, phone: form.phone || '' };
-      setMembers((m) => [...m, member]);
-      setSelectedMemberId(member.id);
+      if (form.id) {
+        setMembers((prev) => prev.map((m) => m.id === form.id ? {
+          ...m, name: form.name, phone: form.phone || '', address: form.address || '', email: form.email || '', note: form.note || '',
+        } : m));
+        flash('Contributor updated.');
+      } else {
+        const member = { id: uid(), name: form.name, phone: form.phone || '', address: form.address || '', email: form.email || '', note: form.note || '' };
+        setMembers((m) => [...m, member]);
+        setSelectedMemberId(member.id);
+      }
       closeModalSilently();
     };
-    if (dup) { askConfirm(`A contributor named "${form.name.trim()}" already exists. Add another one anyway?`, finish, { confirmLabel: 'Add anyway', danger: false }); return; }
+    if (dup) { askConfirm(`A contributor named "${form.name.trim()}" already exists. ${form.id ? 'Save' : 'Add'} anyway?`, finish, { confirmLabel: form.id ? 'Save anyway' : 'Add anyway', danger: false }); return; }
     finish();
   };
   const submitNewLoanGiven = () => {
@@ -3894,7 +4005,7 @@ function App() {
         setContributions((prev) => [...removedContributions, ...prev]);
         setSelectedPlanId(planId);
       });
-    });
+    }, { requireText: plan.name });
   };
   const deleteMember = (memberId) => {
     if (guardWrite()) return;
@@ -4518,6 +4629,32 @@ function App() {
     });
   };
 
+  /* ---------- thrift take-outs (a member drawing down their own savings) ---------- */
+  const submitThriftWithdrawal = () => {
+    if (guardWrite()) return;
+    if (!form.planId || !form.memberId || !form.amount) { flash('Pick a plan, a member and an amount.'); return; }
+    const amount = Number(form.amount);
+    const member = memberById(form.memberId);
+    const plan = planById(form.planId);
+    const available = planMemberBalance(form.planId, form.memberId);
+    if (amount <= 0) { flash('Enter an amount greater than zero.'); return; }
+    if (amount > available) { flash(`${member ? member.name : 'This member'} only has ${fmt(available)} available to take out of ${plan ? plan.name : 'this plan'}.`); return; }
+    setPlans((prev) => prev.map((p) => p.id === form.planId
+      ? { ...p, withdrawals: [...(p.withdrawals || []), { id: uid(), memberId: form.memberId, amount, date: form.date || todayISO(), note: form.note || '' }] }
+      : p));
+    flash(`${fmt(amount)} taken out for ${member ? member.name : 'the member'}.`);
+    closeModalSilently();
+  };
+  const deleteThriftWithdrawal = (planId, withdrawalId) => {
+    if (guardWrite()) return;
+    const plan = planById(planId);
+    const wd = plan && (plan.withdrawals || []).find((w) => w.id === withdrawalId);
+    askConfirm('Delete this take-out record?', () => {
+      setPlans((prev) => prev.map((p) => p.id === planId ? { ...p, withdrawals: (p.withdrawals || []).filter((w) => w.id !== withdrawalId) } : p));
+      flash('Take-out record deleted.', wd ? () => setPlans((prev) => prev.map((p) => p.id === planId ? { ...p, withdrawals: [...(p.withdrawals || []), wd] } : p)) : undefined);
+    });
+  };
+
   /* ---------- import / export ---------- */
   const backupPayload = () => ({
     exportedAt: new Date().toISOString(), users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs,
@@ -4872,6 +5009,7 @@ function App() {
       <SectionHeader eyebrow="Thrift" title="Today's thrift position" />
       <div className="stat-grid">
         <StatCard label="Total thrift collected" value={fmt(totalCollected)} icon={PiggyBank} tone="green" sub={`${activePlansCount} plan(s) running`} />
+        <StatCard label="Running savings balance" value={fmt(runningThriftBalance)} icon={Wallet} tone="steel" sub={totalWithdrawnFromThrift > 0 ? `${fmt(totalWithdrawnFromThrift)} taken out` : 'Nothing taken out yet'} />
         <StatCard label="Rotating cycles in progress" value={cyclePlansCount} icon={Repeat} tone="brick" sub="Cycle plans awaiting payout" />
         <StatCard label="Contributors" value={members.length} icon={Users} tone="steel" sub="Across all plans" />
         <StatCard label="Thrift alerts" value={moduleAlerts(['Thrift contributions']).length} icon={AlertTriangle} tone="gold" sub="Needs attention" />
@@ -5052,6 +5190,9 @@ function App() {
                 ) : (
                   <div className="plan-card-total kb-mono">{fmt(total)} collected</div>
                 )}
+                {p.category !== 'Cycle' && planWithdrawnTotal(p.id) > 0 && (
+                  <div className="plan-card-meta" style={{ marginTop: 2 }}>{fmt(total - planWithdrawnTotal(p.id))} balance after take-outs</div>
+                )}
               </div>
             );
           })}
@@ -5070,9 +5211,16 @@ function App() {
                   {unassigned.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
                 </select>
                 {plan.memberIds.length > 0 && (
-                  <button className="btn btn-small btn-outline" onClick={() => openModal('planMemberLoan', { planId: plan.id, destination: 'infused', date: todayISO() })}>
-                    <HandCoins size={14} /> Member loan
-                  </button>
+                  <>
+                    <button className="btn btn-small btn-outline" onClick={() => openModal('planMemberLoan', { planId: plan.id, destination: 'infused', date: todayISO() })}>
+                      <HandCoins size={14} /> Member loan
+                    </button>
+                    {plan.category !== 'Cycle' && (
+                      <button className="btn btn-small btn-outline" onClick={() => openModal('thriftWithdrawal', { planId: plan.id, date: todayISO() })}>
+                        <ArrowUpRight size={14} /> Take out
+                      </button>
+                    )}
+                  </>
                 )}
                 <button className="icon-btn" onClick={() => deletePlan(plan.id)} title="Delete plan" aria-label="Delete plan"><Trash2 size={15} /></button>
               </div>
@@ -5165,17 +5313,18 @@ function App() {
               </div>
             )}
 
-            <div className="grid-scroll" data-tour="plans-table">
+            <div className="grid-scroll contrib-grid-scroll" data-tour="plans-table">
               <table className="contrib-grid">
                 <thead>
                   <tr>
                     <th className="member-col">Contributor</th>
                     {periods.map((p) => <th key={p} className="kb-mono">{periodLabel(p, plan.frequency)}</th>)}
+                    {plan.category !== 'Cycle' && <th className="kb-mono">Balance</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {plan.memberIds.length === 0 ? (
-                    <tr><td colSpan={periods.length + 1}><EmptyState text="No contributors on this plan yet." /></td></tr>
+                    <tr><td colSpan={periods.length + (plan.category !== 'Cycle' ? 2 : 1)}><EmptyState text="No contributors on this plan yet." /></td></tr>
                   ) : plan.memberIds.map((memberId) => (
                     <tr key={memberId}>
                       <td className="member-col">{memberById(memberId)?.name}</td>
@@ -5203,11 +5352,38 @@ function App() {
                           </td>
                         );
                       })}
+                      {plan.category !== 'Cycle' && (
+                        <td className="kb-mono balance-cell">
+                          {fmt(planMemberBalance(plan.id, memberId))}
+                          <button className="icon-btn" style={{ marginLeft: 6, verticalAlign: '-3px' }} title="Take out savings" aria-label="Take out savings"
+                            onClick={() => openModal('thriftWithdrawal', { planId: plan.id, memberId, date: todayISO() })}>
+                            <ArrowUpRight size={13} />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+
+            {(plan.withdrawals || []).length > 0 && (
+              <div style={{ marginTop: 18 }}>
+                <div className="panel-title" style={{ fontSize: 13 }}>Take-outs from this plan</div>
+                <ul className="tab-entry-list">
+                  {plan.withdrawals.map((w) => (
+                    <li key={w.id} className="tab-entry-row tab-entry-row-borrow">
+                      <span className="tab-entry-amount kb-mono">{fmt(w.amount)}</span>
+                      <span className="tab-entry-note">{memberById(w.memberId)?.name || 'Member'}{w.note ? ` — ${w.note}` : ''}</span>
+                      <span className="tab-entry-date kb-mono">{new Date(w.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                      <div className="tab-entry-actions">
+                        <button className="icon-btn" onClick={() => deleteThriftWithdrawal(plan.id, w.id)} title="Delete" aria-label="Delete"><Trash2 size={13} /></button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {(plan.memberLoans || []).length > 0 && (
               <div style={{ marginTop: 18 }}>
@@ -5238,6 +5414,7 @@ function App() {
     const selected = memberById(selectedMemberId) || members[0];
     const memberPlans = selected ? plans.filter((p) => p.memberIds.includes(selected.id)) : [];
     const history = selected ? contributions.filter((c) => c.memberId === selected.id).sort((a, b) => new Date(b.date) - new Date(a.date)) : [];
+    const withdrawalHistory = selected ? plans.flatMap((p) => (p.withdrawals || []).filter((w) => w.memberId === selected.id).map((w) => ({ ...w, planId: p.id }))).sort((a, b) => new Date(b.date) - new Date(a.date)) : [];
     return (
       <>
         <SectionHeader eyebrow="Everyone in the book" title="Contributors"
@@ -5268,7 +5445,7 @@ function App() {
                   <div className="member-avatar kb-display">{m.name.charAt(0)}</div>
                   <div>
                     <div className="member-name">{m.name}</div>
-                    <div className="member-sub kb-mono">{fmt(memberTotal(m.id))} total</div>
+                    <div className="member-sub kb-mono">{fmt(memberBalance(m.id))} balance</div>
                   </div>
                   <ChevronRight size={15} className="chev" />
                 </li>
@@ -5284,7 +5461,13 @@ function App() {
                 <div style={{ flex: 1 }}>
                   <div className="kb-display detail-name">{selected.name}</div>
                   <div className="panel-sub"><Phone size={12} style={{ verticalAlign: '-2px' }} /> {selected.phone ? <a className="tel-link" href={`tel:${selected.phone.replace(/[^0-9+]/g, '')}`}>{selected.phone}</a> : 'No phone on file'}</div>
+                  {selected.email && <div className="panel-sub"><Mail size={12} style={{ verticalAlign: '-2px' }} /> {selected.email}</div>}
+                  {selected.address && <div className="panel-sub"><MapPin size={12} style={{ verticalAlign: '-2px' }} /> {selected.address}</div>}
+                  {selected.note && <div className="panel-sub" style={{ marginTop: 4, fontStyle: 'italic' }}>{selected.note}</div>}
                 </div>
+                <button className="icon-btn" onClick={() => openModal('newMember', { id: selected.id, name: selected.name, phone: selected.phone || '', email: selected.email || '', address: selected.address || '', note: selected.note || '' })} title="Edit contributor" aria-label="Edit contributor">
+                  <Edit3 size={15} />
+                </button>
                 <button className="btn btn-small btn-ghost" onClick={() => setBiodataDoc({
                   name: selected.name, phone: selected.phone,
                   fields: [
@@ -5296,10 +5479,19 @@ function App() {
                 })}>
                   <ImageIcon size={13} /> Share biodata
                 </button>
+                {memberPlans.filter((p) => p.category !== 'Cycle').length > 0 && (
+                  <button className="btn btn-small btn-outline" onClick={() => openModal('thriftWithdrawal', { planId: memberPlans.filter((p) => p.category !== 'Cycle')[0].id, memberId: selected.id, date: todayISO() })}>
+                    <ArrowUpRight size={13} /> Take out
+                  </button>
+                )}
+                <button className="btn btn-small btn-outline" onClick={() => setContributorStatementDoc(selected)}>
+                  <FileText size={13} /> Download statement
+                </button>
                 <button className="icon-btn" onClick={() => deleteMember(selected.id)} title="Delete contributor" aria-label="Delete contributor"><Trash2 size={15} /></button>
               </div>
               <div className="detail-stats">
                 <div><span className="kb-mono">{fmt(memberTotal(selected.id))}</span><label>Total contributed</label></div>
+                <div><span className="kb-mono">{fmt(memberBalance(selected.id))}</span><label>Running balance</label></div>
                 <div><span className="kb-mono">{memberConsistency(selected.id)}%</span><label>Payment consistency</label></div>
                 <div><span className="kb-mono">{memberPlans.length}</span><label>Plans joined</label></div>
               </div>
@@ -5328,6 +5520,25 @@ function App() {
                       Load more ({history.length - memberHistoryShowCount} remaining)
                     </button>
                   )}
+                </>
+              )}
+              {withdrawalHistory.length > 0 && (
+                <>
+                  <div className="panel-title" style={{ marginTop: 18 }}>Take-out history</div>
+                  <table className="history-table">
+                    <thead><tr><th>Date</th><th>Plan</th><th>Amount</th><th>Note</th><th></th></tr></thead>
+                    <tbody>
+                      {withdrawalHistory.map((w) => (
+                        <tr key={w.id}>
+                          <td className="kb-mono">{new Date(w.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+                          <td>{planById(w.planId)?.name}</td>
+                          <td className="kb-mono">{fmt(w.amount)}</td>
+                          <td>{w.note || '—'}</td>
+                          <td><button className="icon-btn" onClick={() => deleteThriftWithdrawal(w.planId, w.id)} title="Delete" aria-label="Delete"><Trash2 size={13} /></button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </>
               )}
             </div>
@@ -6862,7 +7073,7 @@ function App() {
       { id: 'taxReturns', label: 'Returns', icon: Receipt },
     ],
   };
-  const openModule = (mod) => { setActiveModule(mod); setActiveTab(MODULE_NAV[mod][0].id); };
+  const openModule = (mod) => { setActiveModule(mod); setActiveTab(MODULE_NAV[mod][0].id); setModuleSwitcherOpen(false); };
   const goHome = () => { setActiveModule('home'); setActiveTab('home'); };
   const MODULE_ALERT_GROUPS = {
     thrift: ['Thrift contributions'], loans: ['Loans given', 'Loans received'], payments: ['Payments'], spending: ['Expense & Budgeting'], tax: [],
@@ -6978,6 +7189,7 @@ function App() {
         .sev-high{background:var(--brick-bg);color:var(--brick);}
         .sev-medium{background:var(--gold-bg);color:var(--gold);}
         .btn{display:inline-flex;align-items:center;gap:6px;border-radius:8px;padding:9px 15px;font-size:13.5px;font-weight:600;cursor:pointer;border:1px solid transparent;}
+        .btn:disabled{opacity:0.4;cursor:not-allowed;}
         .btn-primary{background:var(--ink);color:#fff;}
         .btn-primary:hover{background:#28395e;}
         .btn-secondary{background:var(--steel);color:#fff;}
@@ -7011,10 +7223,14 @@ function App() {
         .progress-label{position:absolute;right:0;top:-16px;font-size:11px;color:var(--ink-soft);}
         .inline-add select{max-width:220px;}
         .grid-scroll{overflow-x:auto;}
-        .contrib-grid{border-collapse:collapse;width:100%;font-size:12.5px;}
-        .contrib-grid th{text-align:center;padding:6px 8px;color:var(--ink-soft);font-weight:600;white-space:nowrap;}
+        .contrib-grid-scroll{overflow:auto;max-height:min(60vh, 520px);border-radius:8px;}
+        .contrib-grid{border-collapse:separate;border-spacing:0;width:100%;font-size:12.5px;}
+        .contrib-grid th{text-align:center;padding:6px 8px;color:var(--ink-soft);font-weight:600;white-space:nowrap;background:var(--surface);}
         .contrib-grid th.member-col, .contrib-grid td.member-col{text-align:left;white-space:nowrap;font-weight:500;padding-right:14px;}
         .contrib-grid td{text-align:center;padding:4px;}
+        .contrib-grid-scroll thead th{position:sticky;top:0;z-index:2;box-shadow:inset 0 -1px 0 var(--paper-line);}
+        .contrib-grid-scroll th.member-col, .contrib-grid-scroll td.member-col{position:sticky;left:0;background:var(--surface);z-index:1;box-shadow:inset -1px 0 0 var(--paper-line);}
+        .contrib-grid-scroll thead th.member-col{z-index:3;}
         .cell-dot{width:26px;height:26px;border-radius:7px;border:1.5px solid var(--paper-line);background:var(--surface);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;color:var(--green);}
         .cell-paid{background:var(--green-bg);border-color:var(--green);}
         .cell-unpaid:hover{border-color:var(--steel);}
@@ -7126,6 +7342,16 @@ function App() {
         }
         .icon-btn-active{background:var(--ink) !important;color:#fff !important;border-color:var(--ink) !important;}
         .module-topbar-title{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600;color:var(--ink);}
+        .module-switcher{position:relative;}
+        .module-topbar-title-btn{background:none;border:none;padding:6px 8px;margin:-6px -8px;border-radius:10px;cursor:pointer;}
+        .module-topbar-title-btn:hover{background:var(--paper);}
+        .module-topbar-title-btn .chev{color:var(--ink-soft);transition:transform 0.15s ease;}
+        .module-topbar-title-btn .chev.chev-open{transform:rotate(180deg);}
+        .module-switcher-backdrop{position:fixed;inset:0;z-index:39;background:transparent;}
+        .module-switcher-menu{position:absolute;top:calc(100% + 6px);left:0;min-width:220px;background:var(--surface);border:1px solid var(--paper-line);border-radius:14px;box-shadow:0 12px 32px rgba(27,42,74,0.18);padding:6px;z-index:40;display:flex;flex-direction:column;gap:2px;}
+        .module-switcher-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;border:none;background:none;cursor:pointer;font-size:14px;font-weight:600;color:var(--ink);text-align:left;}
+        .module-switcher-item:hover{background:var(--paper);}
+        .module-switcher-item-home{color:var(--ink-soft);border-top:1px solid var(--paper-line);margin-top:4px;padding-top:10px;border-radius:0 0 10px 10px;}
         .home-content, .module-content{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:28px 36px 60px;background-image:repeating-linear-gradient(to bottom,transparent,transparent 37px,var(--paper-line) 38px);}
         .bottom-nav{display:flex;background:var(--surface);border-top:1px solid var(--paper-line);flex-shrink:0;padding:6px 4px calc(6px + env(safe-area-inset-bottom));}
         .bottom-nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;cursor:pointer;color:var(--ink-soft);padding:6px 2px;font-size:10.5px;font-weight:600;border-radius:10px;}
@@ -7339,9 +7565,32 @@ function App() {
         <div className="module-shell">
           <header className="module-topbar">
             <button className="icon-btn" onClick={goHome} title="Home"><Home size={18} /></button>
-            <div className="module-topbar-title">
-              {(() => { const M = MODULE_META[activeModule].icon; return <M size={16} />; })()}
-              <span className="kb-display">{MODULE_META[activeModule].label}</span>
+            <div className="module-switcher">
+              <button type="button" className="module-topbar-title module-topbar-title-btn" onClick={() => setModuleSwitcherOpen((v) => !v)} aria-expanded={moduleSwitcherOpen} aria-haspopup="true">
+                {(() => { const M = MODULE_META[activeModule].icon; return <M size={16} />; })()}
+                <span className="kb-display">{MODULE_META[activeModule].label}</span>
+                <ChevronDown size={14} className={`chev ${moduleSwitcherOpen ? 'chev-open' : ''}`} />
+              </button>
+              {moduleSwitcherOpen && (
+                <>
+                  <div className="module-switcher-backdrop" onClick={() => setModuleSwitcherOpen(false)} />
+                  <div className="module-switcher-menu" role="menu">
+                    {Object.keys(MODULE_META).filter((mod) => mod !== activeModule).map((mod) => {
+                      const M = MODULE_META[mod].icon;
+                      return (
+                        <button key={mod} type="button" className="module-switcher-item" role="menuitem" onClick={() => openModule(mod)}>
+                          <M size={16} />
+                          <span>{MODULE_META[mod].label}</span>
+                        </button>
+                      );
+                    })}
+                    <button type="button" className="module-switcher-item module-switcher-item-home" role="menuitem" onClick={() => { goHome(); setModuleSwitcherOpen(false); }}>
+                      <Home size={16} />
+                      <span>Home</span>
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
             <div className="module-topbar-actions">
               <button className="icon-btn" onClick={() => setActiveTab('alerts')} title="Alerts">
@@ -7532,17 +7781,28 @@ function App() {
       )}
 
       {modal === 'newMember' && (
-        <Modal title="Add contributor" onClose={closeModal}>
-          <button type="button" className="btn btn-small btn-outline" style={{ marginBottom: 10 }} onClick={() => importDeviceContact((c) => { setField('name', c.name || form.name || ''); setField('phone', c.phone || form.phone || ''); })}>
-            <Phone size={13} /> Import from phone contacts
-          </button>
+        <Modal title={form.id ? 'Edit contributor' : 'Add contributor'} onClose={closeModal}>
+          {!form.id && (
+            <button type="button" className="btn btn-small btn-outline" style={{ marginBottom: 10 }} onClick={() => importDeviceContact((c) => { setField('name', c.name || form.name || ''); setField('phone', c.phone || form.phone || ''); })}>
+              <Phone size={13} /> Import from phone contacts
+            </button>
+          )}
           <div className="field"><label>Full name</label>
             <input className="kb-input" value={form.name || ''} onChange={(e) => setField('name', e.target.value)} placeholder="e.g. Blessing Nwachukwu" autoFocus />
           </div>
           <div className="field"><label>Phone number</label>
             <input className="kb-input" value={form.phone || ''} onChange={(e) => setField('phone', e.target.value)} placeholder="080…" />
           </div>
-          <button className="btn btn-primary" onClick={submitNewMember}>Add contributor</button>
+          <div className="field"><label>Email (optional)</label>
+            <input className="kb-input" value={form.email || ''} onChange={(e) => setField('email', e.target.value)} placeholder="name@example.com" />
+          </div>
+          <div className="field"><label>Address (optional)</label>
+            <input className="kb-input" value={form.address || ''} onChange={(e) => setField('address', e.target.value)} placeholder="Home or business address" />
+          </div>
+          <div className="field"><label>Note (optional)</label>
+            <input className="kb-input" value={form.note || ''} onChange={(e) => setField('note', e.target.value)} placeholder="Anything else worth remembering" />
+          </div>
+          <button className="btn btn-primary" onClick={submitNewMember}>{form.id ? 'Save changes' : 'Add contributor'}</button>
         </Modal>
       )}
 
@@ -7953,6 +8213,50 @@ function App() {
           <button className="btn btn-primary" onClick={submitPlanMemberLoan}>Give loan</button>
         </Modal>
       )}
+      {modal === 'thriftWithdrawal' && (() => {
+        const wPlan = planById(form.planId);
+        const wMembers = wPlan ? wPlan.memberIds : [];
+        const available = form.planId && form.memberId ? planMemberBalance(form.planId, form.memberId) : null;
+        return (
+          <Modal title="Take out savings" onClose={closeModal}>
+            <div className="field-hint" style={{ marginBottom: 12 }}>
+              For a member taking out part or all of their own savings. This is different from a member loan — it reduces their balance for good, with nothing to repay.
+            </div>
+            <div className="field"><label>Plan</label>
+              <select className="kb-input" value={form.planId || ''} onChange={(e) => { setField('planId', e.target.value); setField('memberId', ''); }}>
+                <option value="">Choose a thrift plan…</option>
+                {plans.filter((p) => p.category !== 'Cycle').map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div className="field"><label>Member</label>
+              <select className="kb-input" value={form.memberId || ''} onChange={(e) => setField('memberId', e.target.value)} disabled={!form.planId}>
+                <option value="">Choose a contributor…</option>
+                {wMembers.map((id) => <option key={id} value={id}>{memberById(id)?.name}</option>)}
+              </select>
+            </div>
+            {available !== null && (
+              <div className="field-hint" style={{ marginBottom: 12 }}>
+                Available balance: <strong className="kb-mono">{fmt(available)}</strong>
+                {available > 0 && (
+                  <button type="button" className="link-btn" style={{ marginLeft: 8 }} onClick={() => setField('amount', String(available))}>Take out all</button>
+                )}
+              </div>
+            )}
+            <div className="field-row">
+              <div className="field"><label>Amount</label>
+                <input type="number" min="0" inputMode="decimal" className="kb-input" value={form.amount || ''} onChange={(e) => setField('amount', e.target.value)} placeholder="10000" />
+              </div>
+              <div className="field"><label>Date</label>
+                <input type="date" className="kb-input" value={form.date || todayISO()} onChange={(e) => setField('date', e.target.value)} />
+              </div>
+            </div>
+            <div className="field"><label>Note (optional)</label>
+              <input className="kb-input" value={form.note || ''} onChange={(e) => setField('note', e.target.value)} placeholder="What is this take-out for?" />
+            </div>
+            <button className="btn btn-primary" onClick={submitThriftWithdrawal}>Take out</button>
+          </Modal>
+        );
+      })()}
       {modal === 'newClient' && (
         <Modal title="Add client" onClose={closeModal}>
           <button type="button" className="btn btn-small btn-outline" style={{ marginBottom: 10 }} onClick={() => importDeviceContact((c) => { setField('name', c.name || form.name || ''); setField('phone', c.phone || form.phone || ''); })}>
@@ -8175,6 +8479,18 @@ function App() {
           shareImageToWhatsApp={shareImageToWhatsApp}
         />
       )}
+      {contributorStatementDoc && (
+        <ContributorStatementModal
+          member={contributorStatementDoc}
+          plans={plans}
+          contributions={contributions}
+          settings={settings}
+          fmt={fmt}
+          onClose={() => setContributorStatementDoc(null)}
+          downloadNodeAsPdf={downloadNodeAsPdf}
+          shareImageToWhatsApp={shareImageToWhatsApp}
+        />
+      )}
       {invoiceSummaryDoc && (
         <SummaryReportModal doc={invoiceSummaryDoc} settings={settings} fmt={fmt} onClose={() => setInvoiceSummaryDoc(null)} downloadNodeAsPdf={downloadNodeAsPdf} />
       )}
@@ -8315,22 +8631,29 @@ function App() {
         </Modal>
       )}
       {confirmDialog && (
-        <div className="modal-backdrop" onClick={() => setConfirmDialog(null)}>
+        <div className="modal-backdrop" onClick={() => { setConfirmDialog(null); setConfirmTypedText(''); }}>
           <div className="modal-card confirm-card" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">
               <h3 className="kb-display">{confirmDialog.danger ? 'Are you sure?' : 'Please confirm'}</h3>
-              <button className="icon-btn" onClick={() => setConfirmDialog(null)} title="Close" aria-label="Close"><X size={18} /></button>
+              <button className="icon-btn" onClick={() => { setConfirmDialog(null); setConfirmTypedText(''); }} title="Close" aria-label="Close"><X size={18} /></button>
             </div>
             <div className="modal-body">
-              <p className="panel-sub" style={{ marginBottom: 22, lineHeight: 1.5 }}>{confirmDialog.message}</p>
+              <p className="panel-sub" style={{ marginBottom: confirmDialog.requireText ? 12 : 22, lineHeight: 1.5 }}>{confirmDialog.message}</p>
+              {confirmDialog.requireText && (
+                <div className="field" style={{ marginBottom: 12 }}>
+                  <label>Type <strong>{confirmDialog.requireText}</strong> to confirm</label>
+                  <input className="kb-input" autoFocus value={confirmTypedText} onChange={(e) => setConfirmTypedText(e.target.value)} placeholder={confirmDialog.requireText} />
+                </div>
+              )}
               <div className="settings-actions">
                 <button
                   className={confirmDialog.danger ? 'btn btn-danger' : 'btn btn-primary'}
-                  onClick={() => { const fn = confirmDialog.onConfirm; setConfirmDialog(null); fn && fn(); }}
+                  disabled={confirmDialog.requireText ? confirmTypedText.trim() !== confirmDialog.requireText : false}
+                  onClick={() => { const fn = confirmDialog.onConfirm; setConfirmDialog(null); setConfirmTypedText(''); fn && fn(); }}
                 >
                   {confirmDialog.danger ? <Trash2 size={15} /> : <CheckCircle2 size={15} />} {confirmDialog.confirmLabel}
                 </button>
-                <button className="btn btn-outline" onClick={() => setConfirmDialog(null)}>Cancel</button>
+                <button className="btn btn-outline" onClick={() => { setConfirmDialog(null); setConfirmTypedText(''); }}>Cancel</button>
               </div>
             </div>
           </div>
