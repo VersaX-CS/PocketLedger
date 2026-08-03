@@ -130,7 +130,10 @@ const UNDO_DATA_LABELS = {
   invoices: 'Invoices', receipts: 'Receipts', creditNotes: 'Credit notes',
   taxTransactions: 'Tax transactions', taxImports: 'Tax imports', taxReturns: 'Tax returns',
 };
-const todayISO = () => new Date().toISOString().slice(0, 10);
+const todayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 // Hashes a password with SHA-256 before it's ever stored or compared — the app has no
 // server, so this is client-side hashing (not salted/peppered like a real backend would do),
 // but it means the raw password is never written to localStorage or an exported backup.
@@ -2924,7 +2927,7 @@ function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, onAlertClick, t
             <span>Needs your attention</span>
             <button className="link-btn" onClick={onViewAlerts}>View all ({alerts.length}) <ChevronRight size={14} /></button>
           </div>
-          <AutoSlider items={topAlerts} renderItem={(a) => (
+          <AutoSlider items={topAlerts} interval={5000} renderItem={(a) => (
             <ul className="alert-list">
               <li className={`alert-row sev-${a.severity} ${a.target ? 'alert-row-clickable' : ''}`}
                 onClick={a.target ? () => onAlertClick(a) : undefined}
@@ -2944,7 +2947,7 @@ function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, onAlertClick, t
           <span className="tag-ink" style={{ fontSize: 11.5 }}>{todayActs.length} today</span>
         </div>
         {todayActs.length === 0 ? <EmptyState text="Nothing logged yet today." /> : (
-          <AutoSlider items={todayActs} renderItem={(a) => (
+          <AutoSlider items={todayActs} interval={5600} renderItem={(a) => (
             <ul className="activity-list">
               <li className="activity-item">
                 <span className={`dot dot-${a.kind}`} />
@@ -3504,6 +3507,7 @@ function App() {
       else if (status === 'due-soon') list.push({ id: 'lrs-' + l.id, severity: 'medium', group: 'Loans received', text: `Refund to ${l.lender} is due in ${daysFromToday(l.dueDate)} day(s).`, target: { module: 'loans', tab: 'loansReceived' } });
     });
     plans.forEach((p) => {
+      if (p.closed) return;
       const periods = periodsForPlan(p).slice(0, -1);
       p.memberIds.forEach((memberId) => {
         const missed = periods.filter((period) => !findContribution(p.id, memberId, period));
@@ -3545,8 +3549,8 @@ function App() {
     const refunded = loansReceived.reduce((s, l) => s + l.refunds.filter((r) => r.date.slice(0, 7) === ym).reduce((s2, r) => s2 + r.amount, 0), 0);
     return repaid + refunded;
   })();
-  const activePlansCount = plans.length;
-  const cyclePlansCount = plans.filter((p) => p.category === 'Cycle' && !cycleComplete(p)).length;
+  const activePlansCount = plans.filter((p) => !p.closed).length;
+  const cyclePlansCount = plans.filter((p) => p.category === 'Cycle' && !cycleComplete(p) && !p.closed).length;
   const collectedThisMonth = contributions.filter((c) => c.date.slice(0, 7) === todayISO().slice(0, 7)).reduce((s, c) => s + c.amount, 0);
   const totalInvoiced = invoices.reduce((s, i) => s + invoiceTotal(i), 0);
   const totalReceived = receipts.filter((r) => !r.voided).reduce((s, r) => s + r.amount, 0);
@@ -4238,6 +4242,38 @@ function App() {
         setSelectedPlanId(planId);
       });
     }, { requireText: plan.name });
+  };
+  const closeMemberOnPlan = (planId, memberId) => {
+    if (guardWrite()) return;
+    const plan = planById(planId);
+    const member = memberById(memberId);
+    if (!plan || !member) return;
+    const alreadyPaidOnCycle = plan.category === 'Cycle' && !cycleComplete(plan) && (plan.payouts || []).some((po) => po.memberId === memberId);
+    const warning = alreadyPaidOnCycle ? ' Note: they already received a payout on this cycle — closing their spot shortens how many rounds it needs to complete.' : '';
+    askConfirm(`Close ${member.name}'s spot on "${plan.name}"? They'll stop being included in future rounds, but their contribution history stays on record.${warning}`, () => {
+      setPlans((prev) => prev.map((p) => p.id === planId ? { ...p, memberIds: p.memberIds.filter((id) => id !== memberId) } : p), `Closed ${member.name}'s spot — ${plan.name}`);
+      flash(`${member.name}'s spot on ${plan.name} is closed.`, () => {
+        setPlans((prev) => prev.map((p) => p.id === planId && !p.memberIds.includes(memberId) ? { ...p, memberIds: [...p.memberIds, memberId] } : p));
+      });
+    });
+  };
+  const closePlan = (planId) => {
+    if (guardWrite()) return;
+    const plan = planById(planId);
+    if (!plan) return;
+    askConfirm(`Close "${plan.name}" for the whole group? No new contributions can be recorded, but all history stays on record and you can reopen it anytime.`, () => {
+      setPlans((prev) => prev.map((p) => p.id === planId ? { ...p, closed: true, closedAt: todayISO() } : p), `Closed plan — ${plan.name}`);
+      flash(`${plan.name} is closed.`, () => {
+        setPlans((prev) => prev.map((p) => p.id === planId ? { ...p, closed: false, closedAt: null } : p));
+      });
+    });
+  };
+  const reopenPlan = (planId) => {
+    if (guardWrite()) return;
+    const plan = planById(planId);
+    if (!plan) return;
+    setPlans((prev) => prev.map((p) => p.id === planId ? { ...p, closed: false, closedAt: null } : p), `Reopened plan — ${plan.name}`);
+    flash(`${plan.name} reopened.`);
   };
   const deleteMember = (memberId) => {
     if (guardWrite()) return;
@@ -5424,10 +5460,10 @@ function App() {
           {plans.map((p) => {
             const total = planTotal(p.id);
             return (
-              <div key={p.id} className={`plan-card ${p.id === selectedPlanId ? 'plan-card-active' : ''}`} onClick={() => setSelectedPlanId(p.id)}>
+              <div key={p.id} className={`plan-card ${p.id === selectedPlanId ? 'plan-card-active' : ''} ${p.closed ? 'plan-card-closed' : ''}`} onClick={() => setSelectedPlanId(p.id)}>
                 <div className="plan-card-top">
                   <CategoryTag category={p.category} />
-                  <span className="kb-mono plan-amount">{fmt(p.amount)}</span>
+                  {p.closed ? <Stamp status="overdue" label="Closed" /> : <span className="kb-mono plan-amount">{fmt(p.amount)}</span>}
                 </div>
                 <div className="plan-card-name kb-display">{p.name}</div>
                 <div className="plan-card-meta">{p.memberIds.length} contributor(s) · {p.frequency}</div>
@@ -5450,15 +5486,22 @@ function App() {
           <div className="panel" style={{ marginTop: 24 }}>
             <div className="panel-title-row">
               <div>
-                <div className="panel-title">{plan.name}</div>
-                <div className="panel-sub">Tap a cell to mark a round as paid · {plan.perMemberAmounts ? 'amount varies per member' : `${fmt(plan.amount)} per round`}</div>
+                <div className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {plan.name}
+                  {plan.closed && <Stamp status="overdue" label="Closed" />}
+                </div>
+                <div className="panel-sub">
+                  {plan.closed ? `Closed on ${new Date(plan.closedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} — no new contributions can be recorded.` : `Tap a cell to mark a round as paid · ${plan.perMemberAmounts ? 'amount varies per member' : `${fmt(plan.amount)} per round`}`}
+                </div>
               </div>
               <div className="inline-add">
-                <select className="kb-input" defaultValue="" onChange={(e) => { addMemberToPlan(plan.id, e.target.value); e.target.value = ''; }}>
-                  <option value="" disabled>Add contributor to plan…</option>
-                  {unassigned.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                </select>
-                {plan.memberIds.length > 0 && (
+                {!plan.closed && (
+                  <select className="kb-input" defaultValue="" onChange={(e) => { addMemberToPlan(plan.id, e.target.value); e.target.value = ''; }}>
+                    <option value="" disabled>Add contributor to plan…</option>
+                    {unassigned.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                )}
+                {!plan.closed && plan.memberIds.length > 0 && (
                   <>
                     <button className="btn btn-small btn-outline" onClick={() => openModal('planMemberLoan', { planId: plan.id, destination: 'infused', date: todayISO() })}>
                       <HandCoins size={14} /> Member loan
@@ -5471,9 +5514,15 @@ function App() {
                   </>
                 )}
                 <button className="icon-btn" onClick={() => openModal('newPlan', { ...plan })} title="Edit plan" aria-label="Edit plan"><Edit3 size={15} /></button>
+                {plan.closed ? (
+                  <button className="icon-btn" onClick={() => reopenPlan(plan.id)} title="Reopen plan" aria-label="Reopen plan"><RotateCcw size={15} /></button>
+                ) : (
+                  <button className="icon-btn" onClick={() => closePlan(plan.id)} title="Close plan for the group" aria-label="Close plan for the group"><Ban size={15} /></button>
+                )}
                 <button className="icon-btn" onClick={() => deletePlan(plan.id)} title="Delete plan" aria-label="Delete plan"><Trash2 size={15} /></button>
               </div>
             </div>
+
 
             {plan.category === 'Target' && (
               <div style={{ marginBottom: 16 }}>
@@ -5576,7 +5625,16 @@ function App() {
                     <tr><td colSpan={periods.length + (plan.category !== 'Cycle' ? 2 : 1)}><EmptyState text="No contributors on this plan yet." /></td></tr>
                   ) : plan.memberIds.map((memberId) => (
                     <tr key={memberId}>
-                      <td className="member-col">{memberById(memberId)?.name}</td>
+                      <td className="member-col">
+                        {memberById(memberId)?.name}
+                        {!plan.closed && (
+                          <button className="icon-btn" style={{ marginLeft: 6, verticalAlign: '-3px' }}
+                            onClick={() => closeMemberOnPlan(plan.id, memberId)}
+                            title="Close this contributor's spot — they can't keep up" aria-label="Close this contributor's spot">
+                            <Ban size={13} />
+                          </button>
+                        )}
+                      </td>
                       {periods.map((period) => {
                         const contribution = findContribution(plan.id, memberId, period);
                         const paid = !!contribution;
@@ -5588,6 +5646,7 @@ function App() {
                         const cellKey = `${plan.id}:${memberId}:${period}`;
                         const armed = armedCell === cellKey;
                         const runCellAction = () => {
+                          if (plan.closed) return;
                           if (paid) { toggleContribution(plan.id, memberId, period); return; }
                           setContribAmountInput(memberAmount ? String(memberAmount) : '');
                           setContribPrompt({ planId: plan.id, memberId, period, frequency: plan.frequency, defaultAmount: memberAmount });
@@ -5596,7 +5655,8 @@ function App() {
                           <td key={period}>
                             <button
                               className={`cell-dot ${paid ? 'cell-paid' : 'cell-unpaid'} ${isToday ? 'cell-today' : ''} ${overdueUnpaid ? 'cell-overdue' : ''} ${armed ? 'cell-armed' : ''}`}
-                              title={armed ? 'Tap again to confirm' : paid ? `Paid ${fmt(contribution.amount)} on ${paidOn} — tap twice to undo` : overdueUnpaid ? 'Overdue — tap twice to enter amount paid' : 'Tap twice to enter amount paid'}
+                              disabled={plan.closed && !paid}
+                              title={plan.closed ? (paid ? `Paid ${fmt(contribution.amount)} on ${paidOn}` : 'Plan is closed') : armed ? 'Tap again to confirm' : paid ? `Paid ${fmt(contribution.amount)} on ${paidOn} — tap twice to undo` : overdueUnpaid ? 'Overdue — tap twice to enter amount paid' : 'Tap twice to enter amount paid'}
                               onClick={() => handleCellTap(cellKey, runCellAction)}
                             >
                               {armed ? <span className="cell-armed-dot" /> : paid ? (isFixed ? <span className="cell-paid-stamp">{new Date(contribution.date).getDate()}</span> : <CheckCircle2 size={15} />) : null}
@@ -7500,6 +7560,7 @@ function App() {
         .plan-card{background:var(--surface);border:1px solid var(--paper-line);border-radius:12px;padding:16px;cursor:pointer;transition:border-color .15s, transform .1s;}
         .plan-card:hover{transform:translateY(-2px);}
         .plan-card-active{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink);}
+        .plan-card-closed{opacity:.62;}
         .plan-card-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
         .plan-amount{font-size:13px;color:var(--ink-soft);}
         .plan-card-name{font-size:16.5px;font-weight:600;margin-bottom:4px;}
@@ -7527,6 +7588,7 @@ function App() {
         .contrib-grid-scroll th.member-col, .contrib-grid-scroll td.member-col{position:sticky;left:0;background:var(--surface);z-index:1;box-shadow:inset -1px 0 0 var(--paper-line);}
         .contrib-grid-scroll thead th.member-col{z-index:3;}
         .cell-dot{width:26px;height:26px;border-radius:7px;border:1.5px solid var(--paper-line);background:var(--surface);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;color:var(--green);}
+        .cell-dot:disabled{cursor:not-allowed;opacity:.55;}
         .cell-paid{background:var(--green-bg);border-color:var(--green);}
         .cell-unpaid:hover{border-color:var(--steel);}
         .cell-today{box-shadow:0 0 0 2px var(--gold-bg);}
