@@ -7755,14 +7755,7 @@ function App() {
 
       {activeModule === 'home' ? (
         <div className="home-shell">
-          <header className="home-topbar">
-            <div className="logo" onClick={goHome} style={{ cursor: 'pointer' }} title="Home">
-              <div className="logo-mark">{settings.logoDataUrl ? <img src={settings.logoDataUrl} alt="logo" className="logo-mark-img" /> : <AppLogo size={18} />}</div>
-              <div className="logo-text">
-                <div className="kb-title kb-display">{settings.businessName || 'PocketLedger'}</div>
-                <div className="kb-tag">Thrift, loans &amp; payments</div>
-              </div>
-            </div>
+          <header className="home-topbar" style={{ justifyContent: 'flex-end' }}>
             <div className="home-topbar-actions">
               {activeTab !== 'home' && (
                 <button className="icon-btn" onClick={goHome} title="Home"><Home size={17} /></button>
@@ -7789,7 +7782,6 @@ function App() {
       ) : (
         <div className="module-shell">
           <header className="module-topbar">
-            <button className="icon-btn" onClick={goHome} title="Home"><Home size={18} /></button>
             <div className="module-switcher">
               <button type="button" className="module-topbar-title module-topbar-title-btn" onClick={() => setModuleSwitcherOpen((v) => !v)} aria-expanded={moduleSwitcherOpen} aria-haspopup="true">
                 {(() => { const M = MODULE_META[activeModule].icon; return <M size={16} />; })()}
