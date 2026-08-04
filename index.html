@@ -1184,7 +1184,7 @@ function useEscClose(onClose) {
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 }
-function Modal({ title, onClose, children }) {
+function Modal({ title, onClose, children, className }) {
   useEscClose(onClose);
   const bodyRef = useRef(null);
   useEffect(() => {
@@ -1197,7 +1197,7 @@ function Modal({ title, onClose, children }) {
   }, []);
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+      <div className={`modal-card${className ? ` ${className}` : ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3 className="kb-display">{title}</h3>
           <button className="icon-btn" onClick={onClose} title="Close" aria-label="Close"><X size={18} /></button>
@@ -3315,6 +3315,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('home');
   const [selectedPlanId, setSelectedPlanId] = useState('tp1');
   const [selectedMemberId, setSelectedMemberId] = useState('m1');
+  const [memberDashboardOpen, setMemberDashboardOpen] = useState(false);
   const [checkedMemberIds, setCheckedMemberIds] = useState([]);
   const [expandedLoan, setExpandedLoan] = useState(null);
   const [expandedClient, setExpandedClient] = useState(null);
@@ -3350,7 +3351,6 @@ function App() {
   const [receiptDateTo, setReceiptDateTo] = useState('');
   const [expenseSort, setExpenseSort] = useState({ key: 'date', dir: 'desc' });
   const [expenseShowCount, setExpenseShowCount] = useState(20);
-  const [memberHistoryShowCount, setMemberHistoryShowCount] = useState(12);
   const [settings, setSettingsRaw] = useState(() => (PERSISTED && PERSISTED.settings) || seedSettings());
   const setSettings = (updater) => { if (guardWrite()) return; setSettingsRaw(updater); };
   useEffect(() => {
@@ -5990,7 +5990,7 @@ function App() {
     const history = selected ? contributions.filter((c) => c.memberId === selected.id).sort((a, b) => new Date(b.date) - new Date(a.date)) : [];
     const withdrawalHistory = selected ? plans.flatMap((p) => (p.withdrawals || []).filter((w) => w.memberId === selected.id).map((w) => ({ ...w, planId: p.id }))).sort((a, b) => new Date(b.date) - new Date(a.date)) : [];
     return (
-      <>
+      <div className="contributors-page">
         <SectionHeader eyebrow="Everyone in the book" title="Contributors"
           action={<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {checkedMemberIds.length > 0 && (
@@ -5998,8 +5998,8 @@ function App() {
             )}
             <button className="btn btn-primary" data-tour="contributors-new" onClick={() => openModal('newMember')}><Plus size={16} /> Add contributor</button>
           </div>} />
-        <div className="master-detail">
-          <div className="panel master-list">
+        <div className="contributors-shell">
+          <div className="panel master-list contributors-list-panel">
             <div className="panel-kicker"><span className="panel-kicker-dot" />Contributor list</div>
             <SearchBox placeholder="Search contributors…" value={memberSearch} onChange={setMemberSearch} />
             {filtered.length > 0 && (
@@ -6015,7 +6015,7 @@ function App() {
             ) : (
             <ul className="member-list">
               {filtered.map((m) => (
-                <li key={m.id} className={m.id === selected?.id ? 'member-row-active' : ''} onClick={() => { setSelectedMemberId(m.id); setMemberHistoryShowCount(12); }}>
+                <li key={m.id} className={m.id === selected?.id && memberDashboardOpen ? 'member-row-active' : ''} onClick={() => { setSelectedMemberId(m.id); setMemberDashboardOpen(true); }}>
                   <input type="checkbox" checked={checkedMemberIds.includes(m.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleMemberChecked(m.id)} style={{ marginRight: 4 }} />
                   <div className="member-avatar kb-display">{m.name.charAt(0)}</div>
                   <div>
@@ -6028,101 +6028,105 @@ function App() {
             </ul>
             )}
           </div>
+        </div>
 
-          {selected && (
-            <div className="panel detail-panel">
-              <div className="panel-kicker"><span className="panel-kicker-dot" />Member dashboard</div>
-              <div className="detail-head">
-                <div className="member-avatar-lg kb-display">{selected.name.charAt(0)}</div>
-                <div style={{ flex: 1 }}>
-                  <div className="kb-display detail-name">{selected.name}</div>
-                  <div className="panel-sub"><Phone size={12} style={{ verticalAlign: '-2px' }} /> {selected.phone ? <a className="tel-link" href={`tel:${selected.phone.replace(/[^0-9+]/g, '')}`}>{selected.phone}</a> : 'No phone on file'}</div>
-                  {selected.email && <div className="panel-sub"><Mail size={12} style={{ verticalAlign: '-2px' }} /> {selected.email}</div>}
-                  {selected.address && <div className="panel-sub"><MapPin size={12} style={{ verticalAlign: '-2px' }} /> {selected.address}</div>}
-                  {selected.note && <div className="panel-sub" style={{ marginTop: 4, fontStyle: 'italic' }}>{selected.note}</div>}
-                </div>
-                <button className="icon-btn" onClick={() => openModal('newMember', { id: selected.id, name: selected.name, phone: selected.phone || '', email: selected.email || '', address: selected.address || '', note: selected.note || '' })} title="Edit contributor" aria-label="Edit contributor">
-                  <Edit3 size={15} />
-                </button>
+        {selected && memberDashboardOpen && (
+          <div className="modal-backdrop" onClick={() => setMemberDashboardOpen(false)}>
+            <div className="modal-card modal-card-wide member-dashboard-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-head">
+                <h3 className="kb-display">Member dashboard</h3>
+                <button className="icon-btn" onClick={() => setMemberDashboardOpen(false)} title="Close" aria-label="Close"><X size={18} /></button>
               </div>
-              <div className="detail-actions">
-                <button className="btn btn-small btn-ghost" onClick={() => setBiodataDoc({
-                  name: selected.name, phone: selected.phone,
-                  fields: [
-                    { label: 'Total contributed', value: fmt(memberTotal(selected.id)) },
-                    { label: 'Payment consistency', value: `${memberConsistency(selected.id)}%` },
-                    { label: 'Plans joined', value: memberPlans.length ? memberPlans.map((p) => p.name).join(', ') : 'None yet' },
-                  ],
-                  filename: `biodata-${selected.name.replace(/\s+/g, '-').toLowerCase()}.png`,
-                })}>
-                  <ImageIcon size={13} /> Share biodata
-                </button>
-                {memberPlans.filter((p) => p.category !== 'Cycle').length > 0 && (
-                  <button className="btn btn-small btn-outline" onClick={() => openModal('thriftWithdrawal', { planId: memberPlans.filter((p) => p.category !== 'Cycle')[0].id, memberId: selected.id, date: todayISO() })}>
-                    <ArrowUpRight size={13} /> Take out
+              <div className="modal-body member-dashboard-body">
+                <div className="detail-head">
+                  <div className="member-avatar-lg kb-display">{selected.name.charAt(0)}</div>
+                  <div style={{ flex: 1 }}>
+                    <div className="kb-display detail-name">{selected.name}</div>
+                    <div className="panel-sub"><Phone size={12} style={{ verticalAlign: '-2px' }} /> {selected.phone ? <a className="tel-link" href={`tel:${selected.phone.replace(/[^0-9+]/g, '')}`}>{selected.phone}</a> : 'No phone on file'}</div>
+                    {selected.email && <div className="panel-sub"><Mail size={12} style={{ verticalAlign: '-2px' }} /> {selected.email}</div>}
+                    {selected.address && <div className="panel-sub"><MapPin size={12} style={{ verticalAlign: '-2px' }} /> {selected.address}</div>}
+                    {selected.note && <div className="panel-sub" style={{ marginTop: 4, fontStyle: 'italic' }}>{selected.note}</div>}
+                  </div>
+                  <button className="icon-btn" onClick={() => openModal('newMember', { id: selected.id, name: selected.name, phone: selected.phone || '', email: selected.email || '', address: selected.address || '', note: selected.note || '' })} title="Edit contributor" aria-label="Edit contributor">
+                    <Edit3 size={15} />
                   </button>
-                )}
-                <button className="btn btn-small btn-outline" onClick={() => setContributorStatementDoc(selected)}>
-                  <FileText size={13} /> Download statement
-                </button>
-                <button className="icon-btn" onClick={() => deleteMember(selected.id)} title="Delete contributor" aria-label="Delete contributor"><Trash2 size={15} /></button>
-              </div>
-              <div className="detail-stats">
-                <div><span className="kb-mono">{fmt(memberTotal(selected.id))}</span><label>Total contributed</label></div>
-                <div><span className="kb-mono">{fmt(memberBalance(selected.id))}</span><label>Running balance</label></div>
-                <div><span className="kb-mono">{memberConsistency(selected.id)}%</span><label>Payment consistency</label></div>
-                <div><span className="kb-mono">{memberPlans.length}</span><label>Plans joined</label></div>
-              </div>
-              <div className="tag-row">
-                {memberPlans.map((p) => <CategoryTag key={p.id} category={p.category} />)}
-                {memberPlans.length === 0 && <span className="panel-sub">Not on any thrift plan yet.</span>}
-              </div>
-              <div className="panel-title" style={{ marginTop: 18 }}>Contribution history</div>
-              {history.length === 0 ? <EmptyState text="No contributions recorded yet." /> : (
-                <>
-                  <table className="history-table">
-                    <thead><tr><th>Date</th><th>Plan</th><th>Amount</th><th></th></tr></thead>
-                    <tbody>
-                      {history.slice(0, memberHistoryShowCount).map((h) => (
-                        <tr key={h.id}>
-                          <td className="kb-mono">{new Date(h.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
-                          <td>{planById(h.planId)?.name}</td>
-                          <td className="kb-mono">{fmt(h.amount)}</td>
-                          <td><button className="link-btn receipt-link" onClick={() => setReceipt({ kind: 'contribution', member: selected, contribution: h })}><Receipt size={12} /> Receipt</button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {history.length > memberHistoryShowCount && (
-                    <button className="btn btn-outline btn-small" style={{ marginTop: 10 }} onClick={() => setMemberHistoryShowCount((n) => n + 12)}>
-                      Load more ({history.length - memberHistoryShowCount} remaining)
+                </div>
+                <div className="detail-actions">
+                  <button className="btn btn-small btn-ghost" onClick={() => setBiodataDoc({
+                    name: selected.name, phone: selected.phone,
+                    fields: [
+                      { label: 'Total contributed', value: fmt(memberTotal(selected.id)) },
+                      { label: 'Payment consistency', value: `${memberConsistency(selected.id)}%` },
+                      { label: 'Plans joined', value: memberPlans.length ? memberPlans.map((p) => p.name).join(', ') : 'None yet' },
+                    ],
+                    filename: `biodata-${selected.name.replace(/\s+/g, '-').toLowerCase()}.png`,
+                  })}>
+                    <ImageIcon size={13} /> Share biodata
+                  </button>
+                  {memberPlans.filter((p) => p.category !== 'Cycle').length > 0 && (
+                    <button className="btn btn-small btn-outline" onClick={() => openModal('thriftWithdrawal', { planId: memberPlans.filter((p) => p.category !== 'Cycle')[0].id, memberId: selected.id, date: todayISO() })}>
+                      <ArrowUpRight size={13} /> Take out
                     </button>
                   )}
-                </>
-              )}
-              {withdrawalHistory.length > 0 && (
-                <>
-                  <div className="panel-title" style={{ marginTop: 18 }}>Take-out history</div>
-                  <table className="history-table">
-                    <thead><tr><th>Date</th><th>Plan</th><th>Amount</th><th>Note</th><th></th></tr></thead>
-                    <tbody>
-                      {withdrawalHistory.map((w) => (
-                        <tr key={w.id}>
-                          <td className="kb-mono">{new Date(w.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
-                          <td>{planById(w.planId)?.name}</td>
-                          <td className="kb-mono">{fmt(w.amount)}</td>
-                          <td>{w.note || '—'}</td>
-                          <td><button className="icon-btn" onClick={() => deleteThriftWithdrawal(w.planId, w.id)} title="Delete" aria-label="Delete"><Trash2 size={13} /></button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </>
-              )}
+                  <button className="btn btn-small btn-outline" onClick={() => setContributorStatementDoc(selected)}>
+                    <FileText size={13} /> Download statement
+                  </button>
+                  <button className="icon-btn" onClick={() => deleteMember(selected.id)} title="Delete contributor" aria-label="Delete contributor"><Trash2 size={15} /></button>
+                </div>
+                <div className="detail-stats">
+                  <div><span className="kb-mono">{fmt(memberTotal(selected.id))}</span><label>Total contributed</label></div>
+                  <div><span className="kb-mono">{fmt(memberBalance(selected.id))}</span><label>Running balance</label></div>
+                  <div><span className="kb-mono">{memberConsistency(selected.id)}%</span><label>Payment consistency</label></div>
+                  <div><span className="kb-mono">{memberPlans.length}</span><label>Plans joined</label></div>
+                </div>
+                <div className="tag-row">
+                  {memberPlans.map((p) => <CategoryTag key={p.id} category={p.category} />)}
+                  {memberPlans.length === 0 && <span className="panel-sub">Not on any thrift plan yet.</span>}
+                </div>
+                <div className="panel-title" style={{ marginTop: 18 }}>Contribution history</div>
+                {history.length === 0 ? <EmptyState text="No contributions recorded yet." /> : (
+                  <div className="member-dashboard-scroll">
+                    <table className="history-table">
+                      <thead><tr><th>Date</th><th>Plan</th><th>Amount</th><th></th></tr></thead>
+                      <tbody>
+                        {history.map((h) => (
+                          <tr key={h.id}>
+                            <td className="kb-mono">{new Date(h.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+                            <td>{planById(h.planId)?.name}</td>
+                            <td className="kb-mono">{fmt(h.amount)}</td>
+                            <td><button className="link-btn receipt-link" onClick={() => setReceipt({ kind: 'contribution', member: selected, contribution: h })}><Receipt size={12} /> Receipt</button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {withdrawalHistory.length > 0 && (
+                  <>
+                    <div className="panel-title" style={{ marginTop: 18 }}>Take-out history</div>
+                    <div className="member-dashboard-scroll">
+                      <table className="history-table">
+                        <thead><tr><th>Date</th><th>Plan</th><th>Amount</th><th>Note</th><th></th></tr></thead>
+                        <tbody>
+                          {withdrawalHistory.map((w) => (
+                            <tr key={w.id}>
+                              <td className="kb-mono">{new Date(w.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+                              <td>{planById(w.planId)?.name}</td>
+                              <td className="kb-mono">{fmt(w.amount)}</td>
+                              <td>{w.note || '—'}</td>
+                              <td><button className="icon-btn" onClick={() => deleteThriftWithdrawal(w.planId, w.id)} title="Delete" aria-label="Delete"><Trash2 size={13} /></button></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
-          )}
-        </div>
-      </>
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -7875,6 +7879,14 @@ function App() {
         @keyframes cell-armed-pulse{0%,100%{opacity:1;}50%{opacity:.55;}}
         .kb-input{border:1px solid var(--paper-line);border-radius:8px;padding:8px 11px;font-size:13px;font-family:inherit;background:var(--surface);color:var(--ink);}
         .master-detail{display:grid;grid-template-columns:300px 1fr;gap:16px;align-items:start;}
+        .contributors-page{display:flex;flex-direction:column;height:100%;min-height:0;}
+        .contributors-page .section-header{flex-shrink:0;}
+        .contributors-shell{display:flex;flex-direction:column;flex:1;min-height:0;}
+        .contributors-list-panel{display:flex;flex-direction:column;max-width:420px;flex:1;min-height:0;}
+        .contributors-list-panel .panel-kicker,
+        .contributors-list-panel .search-box,
+        .contributors-list-panel > label{flex-shrink:0;}
+        .contributors-list-panel .member-list{flex:1;min-height:120px;max-height:none;overflow-y:auto;}
         .master-list{padding:14px;background:var(--steel-bg);border-color:var(--steel);border-left:4px solid var(--steel);}
         .panel-kicker{display:flex;align-items:center;gap:6px;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:10px;}
         .panel-kicker-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
@@ -7914,21 +7926,23 @@ function App() {
         .loan-search{max-width:320px;margin-bottom:16px;}
         .loan-groups{display:flex;flex-direction:column;gap:20px;}
         .person-group{background:var(--surface-2);border:1px solid var(--paper-line);border-radius:14px;padding:14px;}
-        .person-group-head{display:flex;align-items:center;gap:12px;padding:10px 12px;margin:-4px -6px 14px;background:var(--gold-bg);border-radius:10px;}
-        .person-group-info{flex:1;}
+        .person-group-head{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:10px 12px;margin:-4px -6px 14px;background:var(--gold-bg);border-radius:10px;}
+        .person-group-head>.btn,.person-group-head>.icon-btn{flex-shrink:0;}
+        .person-group-info{flex:1;min-width:160px;}
         .person-group-list-kicker{display:flex;align-items:center;gap:6px;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:8px;color:var(--steel);}
         .person-group-list-kicker span{width:7px;height:7px;border-radius:50%;background:var(--steel);flex-shrink:0;}
-        .person-group-name{font-size:16.5px;font-weight:600;}
-        .person-group-head .outstanding{font-size:17px;}
+        .person-group-name{font-size:16.5px;font-weight:600;overflow-wrap:anywhere;}
+        .person-group-head .outstanding{font-size:17px;flex-shrink:0;margin-left:auto;}
         .field-hint{font-size:11px;color:var(--ink-soft);margin-top:5px;line-height:1.4;}
         .loan-list{display:flex;flex-direction:column;gap:10px;}
         .loan-card{background:var(--surface);border:1px solid var(--paper-line);border-radius:12px;overflow:hidden;}
         .receipt-voided{opacity:.6;}
         .receipt-voided .loan-name{text-decoration:line-through;}
-        .loan-card-top{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;cursor:pointer;}
-        .loan-name{font-size:16px;font-weight:600;}
+        .loan-card-top{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px 14px;padding:16px 18px;cursor:pointer;}
+        .loan-card-top>div:first-child{min-width:0;flex:1 1 180px;overflow-wrap:anywhere;}
+        .loan-name{font-size:16px;font-weight:600;overflow-wrap:anywhere;}
         .linked-tag{display:inline-flex;align-items:center;gap:3px;margin-left:8px;color:var(--steel);font-weight:600;}
-        .loan-card-right{display:flex;align-items:center;gap:14px;}
+        .loan-card-right{display:flex;align-items:center;gap:14px;flex-shrink:0;margin-left:auto;}
         .outstanding{font-size:14px;font-weight:600;text-align:right;}
         .outstanding span{display:block;font-size:10.5px;font-weight:400;color:var(--ink-soft);font-family:'IBM Plex Sans',sans-serif;}
         .loan-card-body{padding:0 18px 18px;border-top:1px solid var(--paper-line);}
@@ -7948,6 +7962,11 @@ function App() {
         .empty-state{padding:26px 10px;text-align:center;color:var(--ink-soft);font-size:13px;}
         .modal-backdrop{position:fixed;inset:0;height:100vh;height:100dvh;background:rgba(27,42,74,0.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;}
         .modal-card{background:var(--paper);border-radius:14px;width:100%;max-width:460px;max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.25);}
+        .modal-card-wide{max-width:720px;}
+        .member-dashboard-body{gap:0;}
+        .member-dashboard-scroll{max-height:280px;overflow-y:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--paper-line);border-radius:8px;margin-top:6px;}
+        .member-dashboard-scroll .history-table{margin:0;}
+        .member-dashboard-scroll .history-table thead th{position:sticky;top:0;background:var(--paper);z-index:1;}
         .confirm-card{max-width:380px;}
         .modal-head{display:flex;justify-content:space-between;align-items:center;padding:18px 22px;border-bottom:1px solid var(--paper-line);}
         .modal-head h3{margin:0;font-size:18px;}
@@ -8179,6 +8198,8 @@ function App() {
           .stat-card{flex-basis:calc(50% - 8px);}
           .two-col{grid-template-columns:1fr;}
           .master-detail{grid-template-columns:1fr;}
+          .contributors-list-panel{max-width:none;}
+          .modal-card-wide{max-width:100%;}
           .home-card-grid{grid-template-columns:1fr;}
           .home-content, .module-content{padding:18px;}
           .home-topbar, .module-topbar{padding:16px 18px;}
