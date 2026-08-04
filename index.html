@@ -76,7 +76,7 @@ const {
   Upload, Send, Receipt, Image: ImageIcon, Printer, MessageCircle,
   RotateCcw, Home, LogOut, Mail, MapPin, Building2, FileText, CreditCard,
   UserPlus, Palette, Eye, EyeOff, LogIn, Wallet, ArrowRight, Edit3, Copy,
-  Fingerprint, Moon, Compass, FileMinus, Ban, Calculator, Delete, Check, Pipette
+  Fingerprint, Moon, Compass, FileMinus, Ban, Calculator, Delete, Check, Pipette, MoreVertical
 } = LucideReact;
 const {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
@@ -1133,6 +1133,40 @@ function SearchBox({ value, onChange, placeholder, className = '' }) {
         <button type="button" className="search-clear" onClick={() => onChange('')} title="Clear search" aria-label="Clear search">
           <X size={13} />
         </button>
+      )}
+    </div>
+  );
+}
+// Small "More" overflow menu — a single kebab button that reveals a dropdown of actions.
+// Closes on outside click, Escape, or after an item is chosen.
+function MoreMenu({ items, title = 'More actions' }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  return (
+    <div className="more-menu-wrap" ref={wrapRef} onClick={(e) => e.stopPropagation()}>
+      <button type="button" className="icon-btn" onClick={() => setOpen((o) => !o)} title={title} aria-label={title} aria-haspopup="true" aria-expanded={open}>
+        <MoreVertical size={16} />
+      </button>
+      {open && (
+        <div className="more-menu-dropdown" role="menu">
+          {items.filter(Boolean).map((it, i) => (
+            <button key={i} type="button" role="menuitem" className={`more-menu-item${it.danger ? ' more-menu-item-danger' : ''}`}
+              onClick={() => { setOpen(false); it.onClick(); }}>
+              {it.icon}<span>{it.label}</span>
+            </button>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -3368,6 +3402,7 @@ function App() {
   const [contribPrompt, setContribPrompt] = useState(null);
   const [contribAmountInput, setContribAmountInput] = useState('');
   const [contribDateInput, setContribDateInput] = useState('');
+  const [periodTotalPrompt, setPeriodTotalPrompt] = useState(null); // { planId, period, frequency }
   const [armedCell, setArmedCell] = useState(null);
   const armedCellTimerRef = useRef(null);
   const [expenseCategoryFilter, setExpenseCategoryFilter] = useState('All');
@@ -3894,6 +3929,12 @@ function App() {
     if (form.perMemberAmounts) {
       (form.memberIds || []).forEach((id) => { memberAmounts[id] = Number((form.memberAmounts || {})[id] || form.amount); });
     }
+    // Only kept if at least one field was filled in — an all-empty object would just
+    // clutter every plan with a meaningless "Held in" line.
+    const holdingAccountInput = form.holdingAccount || {};
+    const holdingAccount = (holdingAccountInput.bankName || holdingAccountInput.accountNumber || holdingAccountInput.accountName)
+      ? { bankName: holdingAccountInput.bankName || '', accountNumber: holdingAccountInput.accountNumber || '', accountName: holdingAccountInput.accountName || '' }
+      : null;
     if (isEdit) {
       const newStartDate = form.startDate || existing.startDate;
       const startDateChanged = newStartDate !== existing.startDate;
@@ -3910,6 +3951,7 @@ function App() {
         startDate: newStartDate, memberIds: form.memberIds || [],
         perMemberAmounts: !!form.perMemberAmounts, memberAmounts,
         fixedDueDay: form.fixedDueDay !== false, color: form.color || p.color || PLAN_COLORS[0],
+        holdingAccount,
       }), `Edited plan — ${form.name}`);
       setSelectedPlanId(form.id);
       closeModalSilently();
@@ -3923,6 +3965,7 @@ function App() {
       startDate: form.startDate || todayISO(), memberIds: form.memberIds || [],
       perMemberAmounts: !!form.perMemberAmounts, memberAmounts,
       fixedDueDay: form.fixedDueDay !== false, color: form.color || PLAN_COLORS[plans.length % PLAN_COLORS.length],
+      holdingAccount,
     };
     setPlans((p) => [...p, plan], `Created plan — ${form.name}`);
     setSelectedPlanId(plan.id);
@@ -4691,23 +4734,28 @@ function App() {
       return;
     }
     const recipientId = cycleCurrentRecipientId(plan);
-    const payout = { id: uid(), memberId: recipientId, amount: cyclePot(plan), date: todayISO() };
-    setPlans((prev) => prev.map((p) => p.id === planId ? { ...p, payouts: [...(p.payouts || []), payout] } : p));
     const recipient = memberById(recipientId);
-    flash(`Cycle payout of ${fmt(cyclePot(plan))} recorded for ${recipient ? recipient.name : 'member'}.`);
-    setReceipt({ kind: 'cyclePayout', plan: { ...plan, payouts: [...(plan.payouts || []), payout] }, payout });
+    const amount = cyclePot(plan);
+    askConfirm(`Record a payout of ${fmt(amount)} to ${recipient ? recipient.name : 'this member'} for "${plan.name}"?`, () => {
+      const payout = { id: uid(), memberId: recipientId, amount, date: todayISO() };
+      setPlans((prev) => prev.map((p) => p.id === planId ? { ...p, payouts: [...(p.payouts || []), payout] } : p), `Recorded cycle payout — ${plan.name}`);
+      flash(`Cycle payout of ${fmt(amount)} recorded for ${recipient ? recipient.name : 'member'}.`);
+      setReceipt({ kind: 'cyclePayout', plan: { ...plan, payouts: [...(plan.payouts || []), payout] }, payout });
+    }, { confirmLabel: 'Record payout', danger: false });
   };
   const restartCycle = (planId) => {
     if (guardWrite()) return;
     const plan = plans.find((p) => p.id === planId);
     if (!plan || !cycleComplete(plan)) return;
-    setPlans((prev) => prev.map((p) => p.id === planId ? {
-      ...p,
-      cycleHistory: [...(p.cycleHistory || []), { payouts: p.payouts, startDate: p.startDate, endDate: todayISO() }],
-      payouts: [],
-      startDate: todayISO(),
-    } : p));
-    flash(`${plan.name} — new cycle started. Round 1 of ${plan.memberIds.length} begins today.`);
+    askConfirm(`Start a new cycle for "${plan.name}"? The completed round moves to its history and round 1 begins today for the whole group.`, () => {
+      setPlans((prev) => prev.map((p) => p.id === planId ? {
+        ...p,
+        cycleHistory: [...(p.cycleHistory || []), { payouts: p.payouts, startDate: p.startDate, endDate: todayISO() }],
+        payouts: [],
+        startDate: todayISO(),
+      } : p), `Restarted cycle — ${plan.name}`);
+      flash(`${plan.name} — new cycle started. Round 1 of ${plan.memberIds.length} begins today.`);
+    }, { confirmLabel: 'Start new cycle', danger: false });
   };
   // Moves a member up/down in payout order (dir: -1 up, +1 down); safe if already paid.
   const movePayoutOrder = (planId, memberId, dir) => {
@@ -5474,7 +5522,7 @@ function App() {
     askConfirm('This deletes every plan, contributor, loan, client, invoice and receipt. This cannot be undone. Continue?', () => {
       setMembers([]); setPlans([]); setContributions([]); setLoansGiven([]); setLoansReceived([]); setLoanContacts([]); setLoanTabs([]); setExpenses([]); setBudgets([]); setClients([]); setInvoices([]); setReceipts([]); setCreditNotes([]);
       flash('All data cleared.');
-    }, { confirmLabel: 'Clear everything' });
+    }, { confirmLabel: 'Clear everything', requireText: 'CLEAR' });
   };
 
   /* ---------- WhatsApp messages ---------- */
@@ -5770,6 +5818,11 @@ function App() {
                 {p.category !== 'Cycle' && planWithdrawnTotal(p.id) > 0 && (
                   <div className="plan-card-meta" style={{ marginTop: 2 }}>{fmt(total - planWithdrawnTotal(p.id))} balance after take-outs</div>
                 )}
+                {p.holdingAccount && p.holdingAccount.bankName && (
+                  <div className="plan-card-meta plan-card-holding" style={{ marginTop: 2 }}>
+                    <Landmark size={11} style={{ verticalAlign: '-2px' }} /> Held in {p.holdingAccount.bankName}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -5796,6 +5849,11 @@ function App() {
                 <div className="panel-sub">
                   {plan.closed ? `Closed on ${new Date(plan.closedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} — no new contributions can be recorded.` : `Tap a cell to mark a round as paid · ${plan.perMemberAmounts ? 'amount varies per member' : `${fmt(plan.amount)} per round`}`}
                 </div>
+                {plan.holdingAccount && (plan.holdingAccount.bankName || plan.holdingAccount.accountNumber) && (
+                  <div className="panel-sub plan-holding-account">
+                    <Landmark size={12} style={{ verticalAlign: '-2px' }} /> Held in {[plan.holdingAccount.accountName, plan.holdingAccount.bankName, plan.holdingAccount.accountNumber].filter(Boolean).join(' · ')}
+                  </div>
+                )}
               </div>
               <div className="inline-add">
                 {!plan.closed && (
@@ -5816,13 +5874,13 @@ function App() {
                     )}
                   </>
                 )}
-                <button className="icon-btn" onClick={() => openModal('newPlan', { ...plan })} title="Edit plan" aria-label="Edit plan"><Edit3 size={15} /></button>
-                {plan.closed ? (
-                  <button className="icon-btn" onClick={() => reopenPlan(plan.id)} title="Reopen plan" aria-label="Reopen plan"><RotateCcw size={15} /></button>
-                ) : (
-                  <button className="icon-btn" onClick={() => closePlan(plan.id)} title="Close plan for the group" aria-label="Close plan for the group"><Ban size={15} /></button>
-                )}
-                <button className="icon-btn" onClick={() => deletePlan(plan.id)} title="Delete plan" aria-label="Delete plan"><Trash2 size={15} /></button>
+                <MoreMenu title="Plan actions" items={[
+                  { icon: <Edit3 size={15} />, label: 'Edit plan', onClick: () => openModal('newPlan', { ...plan, holdBankOtherMode: !!(plan.holdingAccount && plan.holdingAccount.bankName) && !NIGERIA_BANK_NAMES.includes(plan.holdingAccount.bankName) }) },
+                  plan.closed
+                    ? { icon: <RotateCcw size={15} />, label: 'Reopen plan', onClick: () => reopenPlan(plan.id) }
+                    : { icon: <Ban size={15} />, label: 'Close plan for the group', onClick: () => closePlan(plan.id) },
+                  { icon: <Trash2 size={15} />, label: 'Delete plan', onClick: () => deletePlan(plan.id), danger: true },
+                ]} />
               </div>
             </div>
 
@@ -5957,7 +6015,14 @@ function App() {
                 <thead>
                   <tr>
                     <th className="member-col">Contributor</th>
-                    {periods.map((p) => <th key={p} className="kb-mono">{periodLabel(p, plan.frequency)}</th>)}
+                    {periods.map((p) => (
+                      <th key={p} className="kb-mono">
+                        <button type="button" className="period-head-btn" title="Tap to see total collected for this round"
+                          onClick={() => setPeriodTotalPrompt({ planId: plan.id, period: p, frequency: plan.frequency })}>
+                          {periodLabel(p, plan.frequency)}
+                        </button>
+                      </th>
+                    ))}
                     {plan.category !== 'Cycle' && <th className="kb-mono">Balance</th>}
                   </tr>
                 </thead>
@@ -6132,9 +6197,10 @@ function App() {
                     {selected.address && <div className="panel-sub"><MapPin size={12} style={{ verticalAlign: '-2px' }} /> {selected.address}</div>}
                     {selected.note && <div className="panel-sub" style={{ marginTop: 4, fontStyle: 'italic' }}>{selected.note}</div>}
                   </div>
-                  <button className="icon-btn" onClick={() => openModal('newMember', { id: selected.id, name: selected.name, phone: selected.phone || '', email: selected.email || '', address: selected.address || '', note: selected.note || '' })} title="Edit contributor" aria-label="Edit contributor">
-                    <Edit3 size={15} />
-                  </button>
+                  <MoreMenu title="Contributor actions" items={[
+                    { icon: <Edit3 size={15} />, label: 'Edit contributor', onClick: () => openModal('newMember', { id: selected.id, name: selected.name, phone: selected.phone || '', email: selected.email || '', address: selected.address || '', note: selected.note || '' }) },
+                    { icon: <Trash2 size={15} />, label: 'Delete contributor', onClick: () => deleteMember(selected.id), danger: true },
+                  ]} />
                 </div>
                 <div className="detail-actions">
                   <button className="btn btn-small btn-ghost" onClick={() => setBiodataDoc({
@@ -6156,7 +6222,6 @@ function App() {
                   <button className="btn btn-small btn-outline" onClick={() => setContributorStatementDoc(selected)}>
                     <FileText size={13} /> Download statement
                   </button>
-                  <button className="icon-btn" onClick={() => deleteMember(selected.id)} title="Delete contributor" aria-label="Delete contributor"><Trash2 size={15} /></button>
                 </div>
                 <div className="detail-stats">
                   <div><span className="kb-mono">{fmt(memberTotal(selected.id))}</span><label>Total contributed</label></div>
@@ -7897,6 +7962,8 @@ function App() {
         .panel-title{font-size:14px;font-weight:600;margin-bottom:12px;}
         .panel-title-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
         .panel-sub{font-size:12px;color:var(--ink-soft);}
+        .plan-holding-account{margin-top:3px;}
+        .plan-card-holding{opacity:0.85;}
         .link-btn{background:none;border:none;color:var(--steel);font-size:12.5px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:3px;}
         .activity-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:11px;}
         .activity-item{display:flex;align-items:center;gap:9px;font-size:13px;}
@@ -8012,7 +8079,7 @@ function App() {
         .chev-open{transform:rotate(180deg);}
         .detail-panel{padding:22px 24px;border-color:var(--gold);border-top:4px solid var(--gold);}
         .detail-head{display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap;}
-        .detail-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:18px;}
+        .detail-actions{display:flex;align-items:center;justify-content:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:18px;}
         .member-avatar-lg{width:52px;height:52px;border-radius:50%;background:var(--gold-bg);color:var(--gold);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:20px;flex-shrink:0;}
         .detail-name{font-size:19px;font-weight:600;}
         .detail-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:20px;padding:14px 16px;background:var(--gold-bg);border-radius:10px;margin-bottom:14px;}
@@ -8089,6 +8156,16 @@ function App() {
         .modal-head h3{margin:0;font-size:18px;}
         .icon-btn{background:none;border:none;cursor:pointer;color:var(--ink-soft);}
         .icon-btn:disabled{opacity:0.3;cursor:not-allowed;}
+        .period-head-btn{background:none;border:none;padding:2px 4px;font:inherit;color:inherit;cursor:pointer;border-radius:5px;}
+        .period-head-btn:hover{background:var(--surface-2);color:var(--ink);}
+        .period-total-amount{font-size:28px;font-weight:600;margin-bottom:4px;}
+        .period-total-list{max-height:260px;overflow-y:auto;}
+        .more-menu-wrap{position:relative;display:inline-flex;}
+        .more-menu-dropdown{position:absolute;top:calc(100% + 6px);right:0;background:var(--surface);border:1px solid var(--paper-line);border-radius:10px;box-shadow:0 10px 26px rgba(0,0,0,0.14);padding:6px;min-width:190px;z-index:40;display:flex;flex-direction:column;gap:2px;}
+        .more-menu-item{display:flex;align-items:center;gap:9px;background:none;border:none;border-radius:7px;padding:9px 10px;font-size:13px;font-weight:500;color:var(--ink);cursor:pointer;text-align:left;font-family:inherit;}
+        .more-menu-item:hover{background:var(--surface-2);}
+        .more-menu-item-danger{color:var(--brick);}
+        .more-menu-item-danger:hover{background:var(--brick-bg);}
         .home-shell, .module-shell{height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden;}
         .welcome-shell{
           height:100vh; height:100dvh; width:100%; display:flex; flex-direction:column; align-items:center;
@@ -8491,6 +8568,38 @@ function App() {
             <label>Plan colour</label>
             <ColorSwatchPicker value={form.color || PLAN_COLORS[0]} onChange={(c) => setField('color', c)} />
             <div className="field-hint">Used to tell this plan apart at a glance on the plans page.</div>
+          </div>
+          <div className="field">
+            <label>Account holding this thrift's funds (optional)</label>
+            <select className="kb-input" value={form.holdBankOtherMode ? '__other__' : ((form.holdingAccount && form.holdingAccount.bankName) || '')} onChange={(e) => {
+              const v = e.target.value;
+              if (v === '__other__') {
+                setField('holdBankOtherMode', true);
+                setField('holdingAccount', { ...(form.holdingAccount || {}), bankName: NIGERIA_BANK_NAMES.includes((form.holdingAccount || {}).bankName) ? '' : (form.holdingAccount || {}).bankName || '' });
+              } else {
+                setField('holdBankOtherMode', false);
+                setField('holdingAccount', { ...(form.holdingAccount || {}), bankName: v });
+              }
+            }}>
+              <option value="">Select bank…</option>
+              {NIGERIA_BANK_NAMES_SORTED.map((b) => <option key={b} value={b}>{b}</option>)}
+              <option value="__other__">Other / not listed…</option>
+            </select>
+            {form.holdBankOtherMode && (
+              <input className="kb-input" style={{ marginTop: 8 }} value={(form.holdingAccount && form.holdingAccount.bankName) || ''}
+                onChange={(e) => setField('holdingAccount', { ...(form.holdingAccount || {}), bankName: e.target.value })} placeholder="Enter bank name" />
+            )}
+            <div className="field-row" style={{ marginTop: 8 }}>
+              <div className="field">
+                <input className="kb-input" value={(form.holdingAccount && form.holdingAccount.accountNumber) || ''}
+                  onChange={(e) => setField('holdingAccount', { ...(form.holdingAccount || {}), accountNumber: e.target.value.replace(/\D/g, '') })} placeholder="Account number" />
+              </div>
+              <div className="field">
+                <input className="kb-input" value={(form.holdingAccount && form.holdingAccount.accountName) || ''}
+                  onChange={(e) => setField('holdingAccount', { ...(form.holdingAccount || {}), accountName: e.target.value })} placeholder="Account name" />
+              </div>
+            </div>
+            <div className="field-hint">Shown on the plan so everyone knows where the collected money actually sits — separate from your Payments bank details in Settings.</div>
           </div>
           <div className="field">
             <label>Contribution schedule</label>
@@ -9484,6 +9593,41 @@ function App() {
           }}>Mark paid</button>
         </Modal>
       )}
+      {periodTotalPrompt && (() => {
+        const plan = planById(periodTotalPrompt.planId);
+        if (!plan) return null;
+        const period = periodTotalPrompt.period;
+        const periodContribs = contributions.filter((c) => c.planId === plan.id && c.period === period);
+        const total = periodContribs.reduce((s, c) => s + Number(c.amount || 0), 0);
+        const paidIds = new Set(periodContribs.map((c) => c.memberId));
+        const paidCount = plan.memberIds.filter((id) => paidIds.has(id)).length;
+        return (
+          <Modal title="Round total" onClose={() => setPeriodTotalPrompt(null)}>
+            <div className="field-hint" style={{ marginBottom: 14 }}>
+              {plan.name} — {periodLabel(period, plan.frequency)}
+            </div>
+            <div className="period-total-amount kb-display kb-mono">{fmt(total)}</div>
+            <div className="panel-sub" style={{ marginBottom: 14 }}>
+              {paidCount} of {plan.memberIds.length} contributor(s) paid this round
+            </div>
+            {periodContribs.length === 0 ? (
+              <EmptyState text="No contributions recorded for this round yet." />
+            ) : (
+              <div className="period-total-list">
+                {plan.memberIds.map((memberId) => {
+                  const c = periodContribs.find((x) => x.memberId === memberId);
+                  return (
+                    <div key={memberId} className="doc-line">
+                      <span>{memberById(memberId)?.name}</span>
+                      <span className="kb-mono">{c ? fmt(c.amount) : '—'}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Modal>
+        );
+      })()}
       {historyOpen && (
         <Modal title="Activity log" onClose={() => setHistoryOpen(false)}>
           <div className="panel-sub" style={{ marginBottom: 14 }}>
