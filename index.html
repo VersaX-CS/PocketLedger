@@ -3395,6 +3395,7 @@ function App() {
     };
   }, []);
   const [memberSearch, setMemberSearch] = useState('');
+  const [planSearch, setPlanSearch] = useState('');
   const [loanGivenSearch, setLoanGivenSearch] = useState('');
   const [loanReceivedSearch, setLoanReceivedSearch] = useState('');
   const [loanTabSearch, setLoanTabSearch] = useState('');
@@ -3408,6 +3409,7 @@ function App() {
   const [expenseCategoryFilter, setExpenseCategoryFilter] = useState('All');
   const [expenseSearch, setExpenseSearch] = useState('');
   const [invoiceStatusFilter, setInvoiceStatusFilter] = useState('All');
+  const [invoiceRecurringOnly, setInvoiceRecurringOnly] = useState(false);
   const [invoiceDateFrom, setInvoiceDateFrom] = useState('');
   const [invoiceDateTo, setInvoiceDateTo] = useState('');
   const [receiptDateFrom, setReceiptDateFrom] = useState('');
@@ -5785,6 +5787,7 @@ function App() {
     const plan = planById(selectedPlanId) || plans[0];
     const periods = plan ? periodsForPlan(plan) : [];
     const unassigned = plan ? members.filter((m) => !plan.memberIds.includes(m.id)) : [];
+    const visiblePlans = plans.filter((p) => p.name.toLowerCase().includes(planSearch.trim().toLowerCase()));
     return (
       <>
         <SectionHeader eyebrow="Personalised strategies" title="Thrift plans"
@@ -5793,9 +5796,11 @@ function App() {
             <button className="btn btn-primary" data-tour="plans-new" onClick={() => openModal('newPlan', { memberIds: [], color: PLAN_COLORS[plans.length % PLAN_COLORS.length] })}><Plus size={16} /> New thrift plan</button>
           </div>} />
         <input ref={thriftFileInputRef} type="file" accept=".csv,.txt,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.pdf,application/pdf" style={{ display: 'none' }} onChange={handleThriftFileSelected} />
+        {plans.length > 4 && <SearchBox placeholder="Search plans…" value={planSearch} onChange={setPlanSearch} className="loan-search" />}
 
         <div className="plan-card-grid" data-tour="plans-grid">
-          {plans.map((p) => {
+          {visiblePlans.length === 0 && <EmptyState text="No plans match your search." />}
+          {visiblePlans.map((p) => {
             const total = planTotal(p.id);
             return (
               <div key={p.id} className={`plan-card ${p.id === selectedPlanId && planDashboardOpen ? 'plan-card-active' : ''} ${p.closed ? 'plan-card-closed' : ''}`} style={{ borderLeft: `4px solid ${planColor(p)}` }} onClick={() => { setSelectedPlanId(p.id); setPlanDashboardOpen(true); }}>
@@ -6656,7 +6661,8 @@ function App() {
       const matchesStatus = invoiceStatusFilter === 'All' || invoiceStatusOf(i) === invoiceStatusFilter;
       const matchesFrom = !invoiceDateFrom || i.issueDate >= invoiceDateFrom;
       const matchesTo = !invoiceDateTo || i.issueDate <= invoiceDateTo;
-      return matchesSearch && matchesStatus && matchesFrom && matchesTo;
+      const matchesRecurring = !invoiceRecurringOnly || !!i.recurring;
+      return matchesSearch && matchesStatus && matchesFrom && matchesTo && matchesRecurring;
     }).sort((a, b) => {
       const { key, dir } = invoiceSort;
       const mul = dir === 'asc' ? 1 : -1;
@@ -6714,6 +6720,9 @@ function App() {
             <option value="total:asc">Total (lowest first)</option>
             <option value="status:asc">Status</option>
           </select>
+          <button type="button" className={`filter-chip ${invoiceRecurringOnly ? 'filter-chip-active' : ''}`} onClick={() => setInvoiceRecurringOnly((v) => !v)} aria-pressed={invoiceRecurringOnly}>
+            <Repeat size={13} /> Recurring only
+          </button>
         </div>
         <div className="field-row" style={{ marginBottom: 14 }}>
           <div className="field"><label>Issued from</label>
@@ -8142,7 +8151,7 @@ function App() {
         .member-dashboard-body .member-avatar-lg{width:40px;height:40px;font-size:16px;}
         .member-dashboard-body .detail-name{font-size:16px;}
         .member-dashboard-body .detail-actions{margin-bottom:10px;}
-        .member-dashboard-body .detail-stats{padding:9px 14px;gap:12px;margin-bottom:10px;}
+        .member-dashboard-body .detail-stats{grid-template-columns:repeat(2, 1fr);padding:9px 14px;gap:12px;margin-bottom:10px;}
         .member-dashboard-body .detail-stats span{font-size:15px;}
         .member-dashboard-body .member-plan-list{flex-shrink:0;}
         .member-dashboard-body .panel-title{flex-shrink:0;}
