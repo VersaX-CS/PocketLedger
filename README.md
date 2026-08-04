@@ -1,2 +1,2 @@
 # PocketLedger
-All in one finance manger 
+All in one financial manager
