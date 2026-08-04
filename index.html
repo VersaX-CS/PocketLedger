@@ -5834,6 +5834,20 @@ function App() {
               </div>
             )}
 
+            {plan.category !== 'Target' && plan.category !== 'Cycle' && (
+              <div style={{ marginBottom: 16 }}>
+                <div className="cycle-history-row cycle-history-total">
+                  <span>Total collected</span>
+                  <span className="kb-mono">{fmt(planTotal(plan.id))}</span>
+                </div>
+                {planWithdrawnTotal(plan.id) > 0 && (
+                  <div className="panel-sub" style={{ marginTop: 6 }}>
+                    {fmt(planTotal(plan.id) - planWithdrawnTotal(plan.id))} balance after {fmt(planWithdrawnTotal(plan.id))} in take-outs
+                  </div>
+                )}
+              </div>
+            )}
+
             {plan.category === 'Cycle' && (
               <div className="cycle-panel">
                 <div className="cycle-panel-top">
@@ -5954,13 +5968,6 @@ function App() {
                     <tr key={memberId}>
                       <td className="member-col">
                         {memberById(memberId)?.name}
-                        {!plan.closed && (
-                          <button className="icon-btn" style={{ marginLeft: 6, verticalAlign: '-3px' }}
-                            onClick={() => closeMemberOnPlan(plan.id, memberId)}
-                            title="Close this contributor's spot — they can't keep up" aria-label="Close this contributor's spot">
-                            <Ban size={13} />
-                          </button>
-                        )}
                       </td>
                       {periods.map((period) => {
                         const contribution = findContribution(plan.id, memberId, period);
@@ -6157,8 +6164,18 @@ function App() {
                   <div><span className="kb-mono">{memberConsistency(selected.id)}%</span><label>Payment consistency</label></div>
                   <div><span className="kb-mono">{memberPlans.length}</span><label>Plans joined</label></div>
                 </div>
-                <div className="tag-row">
-                  {memberPlans.map((p) => <CategoryTag key={p.id} category={p.category} />)}
+                <div className="member-plan-list">
+                  {memberPlans.map((p) => (
+                    <div key={p.id} className="member-plan-row">
+                      <CategoryTag category={p.category} />
+                      <span className="member-plan-row-name">{p.name}</span>
+                      {!p.closed && (
+                        <button className="icon-btn" onClick={() => closeMemberOnPlan(p.id, selected.id)} title="Close this contributor's spot on this plan" aria-label={`Close ${selected.name}'s spot on ${p.name}`}>
+                          <Ban size={13} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
                   {memberPlans.length === 0 && <span className="panel-sub">Not on any thrift plan yet.</span>}
                 </div>
                 <div className="member-dashboard-history">
@@ -7958,8 +7975,8 @@ function App() {
         .cell-paid-stamp{font-size:10px;font-weight:700;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;}
         .cell-armed{border-color:var(--gold);background:var(--gold-bg);box-shadow:0 0 0 2px var(--gold-bg),0 0 0 3.5px var(--gold);animation:cell-armed-pulse 1s ease-in-out infinite;}
         .cell-armed-dot{width:7px;height:7px;border-radius:50%;background:var(--gold);}
-        .cell-amount-flash{position:absolute;top:calc(100% + 7px);left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;white-space:nowrap;pointer-events:none;z-index:6;box-shadow:0 4px 10px rgba(0,0,0,0.22);animation:cell-flash-pop 1s ease-in-out infinite;}
-        .cell-amount-flash:after{content:'';position:absolute;bottom:100%;left:50%;transform:translateX(-50%);border:4px solid transparent;border-bottom-color:var(--ink);}
+        .cell-amount-flash{position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;white-space:nowrap;pointer-events:none;z-index:6;box-shadow:0 4px 10px rgba(0,0,0,0.22);animation:cell-flash-pop 1s ease-in-out infinite;}
+        .cell-amount-flash:after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);border:4px solid transparent;border-top-color:var(--ink);}
         @keyframes cell-armed-pulse{0%,100%{opacity:1;}50%{opacity:.55;}}
         @keyframes cell-flash-pop{0%,100%{opacity:1;transform:translateX(-50%) translateY(0);}50%{opacity:.75;transform:translateX(-50%) translateY(-2px);}}
         .kb-input{border:1px solid var(--paper-line);border-radius:8px;padding:8px 11px;font-size:13px;font-family:inherit;background:var(--surface);color:var(--ink);}
@@ -8002,6 +8019,9 @@ function App() {
         .detail-stats span{display:block;font-size:18px;font-weight:600;}
         .detail-stats label{font-size:11px;color:var(--ink-soft);}
         .tag-row{display:flex;gap:6px;flex-wrap:wrap;}
+        .member-plan-list{display:flex;flex-direction:column;gap:6px;}
+        .member-plan-row{display:flex;align-items:center;gap:8px;background:var(--surface-2);border-radius:8px;padding:6px 8px;}
+        .member-plan-row-name{flex:1;font-size:12.5px;font-weight:500;}
         .history-table{width:100%;border-collapse:collapse;font-size:13px;}
         .history-table th{text-align:left;color:var(--ink-soft);font-weight:600;font-size:11.5px;padding:6px 4px;border-bottom:1px solid var(--paper-line);}
         .sortable-th{cursor:pointer;user-select:none;white-space:nowrap;}
@@ -8057,7 +8077,7 @@ function App() {
         .member-dashboard-body .detail-actions{margin-bottom:10px;}
         .member-dashboard-body .detail-stats{padding:9px 14px;gap:12px;margin-bottom:10px;}
         .member-dashboard-body .detail-stats span{font-size:15px;}
-        .member-dashboard-body .tag-row{flex-shrink:0;}
+        .member-dashboard-body .member-plan-list{flex-shrink:0;}
         .member-dashboard-body .panel-title{flex-shrink:0;}
         .member-dashboard-history{flex:1;min-height:100px;overflow-y:auto;-webkit-overflow-scrolling:touch;margin-top:2px;}
         .member-dashboard-history .member-dashboard-scroll{max-height:none;overflow:visible;}
