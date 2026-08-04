@@ -6000,6 +6000,7 @@ function App() {
           </div>} />
         <div className="master-detail">
           <div className="panel master-list">
+            <div className="panel-kicker"><span className="panel-kicker-dot" />Contributor list</div>
             <SearchBox placeholder="Search contributors…" value={memberSearch} onChange={setMemberSearch} />
             {filtered.length > 0 && (
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px', fontSize: 13, color: 'var(--ink-soft)' }}>
@@ -6030,6 +6031,7 @@ function App() {
 
           {selected && (
             <div className="panel detail-panel">
+              <div className="panel-kicker"><span className="panel-kicker-dot" />Member dashboard</div>
               <div className="detail-head">
                 <div className="member-avatar-lg kb-display">{selected.name.charAt(0)}</div>
                 <div style={{ flex: 1 }}>
@@ -6178,6 +6180,7 @@ function App() {
                   })} title="Edit contact" aria-label="Edit contact"><Edit3 size={15} /></button>
                   <div className="kb-mono outstanding"><span>total outstanding</span>{fmt(g.totalOutstanding)}</div>
                 </div>
+                <div className="person-group-list-kicker"><span />Loan list</div>
                 <div className="loan-list">
                   {g.loans.map((l) => {
                     const status = loanStatus(l, key);
@@ -7872,7 +7875,13 @@ function App() {
         @keyframes cell-armed-pulse{0%,100%{opacity:1;}50%{opacity:.55;}}
         .kb-input{border:1px solid var(--paper-line);border-radius:8px;padding:8px 11px;font-size:13px;font-family:inherit;background:var(--surface);color:var(--ink);}
         .master-detail{display:grid;grid-template-columns:300px 1fr;gap:16px;align-items:start;}
-        .master-list{padding:14px;}
+        .master-list{padding:14px;background:var(--steel-bg);border-color:var(--steel);border-left:4px solid var(--steel);}
+        .panel-kicker{display:flex;align-items:center;gap:6px;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:10px;}
+        .panel-kicker-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+        .master-list .panel-kicker{color:var(--steel);}
+        .master-list .panel-kicker .panel-kicker-dot{background:var(--steel);}
+        .detail-panel .panel-kicker{color:var(--gold);}
+        .detail-panel .panel-kicker .panel-kicker-dot{background:var(--gold);}
         .search-box{display:flex;align-items:center;gap:7px;border:1px solid var(--paper-line);border-radius:8px;padding:7px 10px;margin-bottom:10px;color:var(--ink-soft);}
         .search-box input{flex:1;min-width:0;}
         .search-clear{background:none;border:none;padding:2px;margin:0;display:flex;align-items:center;color:var(--ink-soft);cursor:pointer;border-radius:50%;flex-shrink:0;}
@@ -7880,19 +7889,19 @@ function App() {
         .search-box input{border:none;outline:none;font-size:13px;width:100%;background:transparent;}
         .member-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px;max-height:520px;overflow-y:auto;}
         .member-list li{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;cursor:pointer;}
-        .member-list li:hover{background:var(--surface-2);}
-        .member-row-active{background:var(--steel-bg) !important;}
+        .member-list li:hover{background:var(--surface);}
+        .member-row-active{background:var(--surface) !important;box-shadow:inset 0 0 0 1.5px var(--steel);}
         .member-avatar{width:30px;height:30px;border-radius:50%;background:var(--gold-bg);color:var(--gold);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px;flex-shrink:0;}
         .member-name{font-size:13.5px;font-weight:500;}
         .member-sub{font-size:11px;color:var(--ink-soft);}
         .chev{margin-left:auto;color:var(--ink-soft);transition:transform .15s;}
         .chev-open{transform:rotate(180deg);}
-        .detail-panel{padding:22px 24px;}
+        .detail-panel{padding:22px 24px;border-color:var(--gold);border-top:4px solid var(--gold);}
         .detail-head{display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap;}
         .detail-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:18px;}
         .member-avatar-lg{width:52px;height:52px;border-radius:50%;background:var(--gold-bg);color:var(--gold);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:20px;flex-shrink:0;}
         .detail-name{font-size:19px;font-weight:600;}
-        .detail-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:20px;padding:14px 0;border-top:1px solid var(--paper-line);border-bottom:1px solid var(--paper-line);margin-bottom:14px;}
+        .detail-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:20px;padding:14px 16px;background:var(--gold-bg);border-radius:10px;margin-bottom:14px;}
         .detail-stats span{display:block;font-size:18px;font-weight:600;}
         .detail-stats label{font-size:11px;color:var(--ink-soft);}
         .tag-row{display:flex;gap:6px;flex-wrap:wrap;}
@@ -7905,8 +7914,10 @@ function App() {
         .loan-search{max-width:320px;margin-bottom:16px;}
         .loan-groups{display:flex;flex-direction:column;gap:20px;}
         .person-group{background:var(--surface-2);border:1px solid var(--paper-line);border-radius:14px;padding:14px;}
-        .person-group-head{display:flex;align-items:center;gap:12px;padding:4px 6px 14px;}
+        .person-group-head{display:flex;align-items:center;gap:12px;padding:10px 12px;margin:-4px -6px 14px;background:var(--gold-bg);border-radius:10px;}
         .person-group-info{flex:1;}
+        .person-group-list-kicker{display:flex;align-items:center;gap:6px;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;margin-bottom:8px;color:var(--steel);}
+        .person-group-list-kicker span{width:7px;height:7px;border-radius:50%;background:var(--steel);flex-shrink:0;}
         .person-group-name{font-size:16.5px;font-weight:600;}
         .person-group-head .outstanding{font-size:17px;}
         .field-hint{font-size:11px;color:var(--ink-soft);margin-top:5px;line-height:1.4;}
