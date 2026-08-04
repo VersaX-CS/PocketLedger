@@ -268,13 +268,30 @@ function periodsFromStart(startDate, stepDays, cap) {
   for (let i = 0; i < count; i++) arr.push(new Date(start.getTime() + i * stepDays * dayMs).toISOString().slice(0, 10));
   return arr.length ? arr : [start.toISOString().slice(0, 10)];
 }
+// Adds `months` calendar months to `date`, keeping the same day-of-month where possible
+// and clamping to the last day of the target month otherwise (e.g. 31 Jan + 1 month -> 28/29 Feb).
+function addMonthsClamped(date, months) {
+  const d = new Date(date);
+  const day = d.getDate();
+  const target = new Date(d.getFullYear(), d.getMonth() + months, 1);
+  const daysInTarget = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  target.setDate(Math.min(day, daysInTarget));
+  return target;
+}
 function monthsFromStart(startDate, cap) {
-  const start = new Date(startDate);
-  const today = new Date();
-  const totalMonths = Math.max(0, (today.getFullYear() - start.getFullYear()) * 12 + (today.getMonth() - start.getMonth()));
-  const count = Math.min(totalMonths + 1, cap);
+  const start = new Date(startDate); start.setHours(0, 0, 0, 0);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  // Anchored on the start date's actual day-of-month (not forced to the 1st), so the first
+  // recorded round lands exactly on the chosen start date. Counts forward only through
+  // rounds whose due date has actually arrived, always keeping at least the first round.
+  let count = 0;
+  while (count < cap) {
+    if (addMonthsClamped(start, count) > today) break;
+    count++;
+  }
+  count = Math.max(count, 1);
   const arr = [];
-  for (let i = 0; i < count; i++) arr.push(new Date(start.getFullYear(), start.getMonth() + i, 1).toISOString().slice(0, 10));
+  for (let i = 0; i < count; i++) arr.push(addMonthsClamped(start, i).toISOString().slice(0, 10));
   return arr;
 }
 function periodsForPlan(plan) {
@@ -849,12 +866,28 @@ function periodsForCount(startDate, frequency, count) {
   const start = new Date(startDate); start.setHours(0, 0, 0, 0);
   const arr = [];
   if (frequency === 'monthly') {
-    for (let i = 0; i < count; i++) arr.push(new Date(start.getFullYear(), start.getMonth() + i, 1).toISOString().slice(0, 10));
+    for (let i = 0; i < count; i++) arr.push(addMonthsClamped(start, i).toISOString().slice(0, 10));
   } else {
     const stepDays = frequency === 'weekly' ? 7 : 1;
     for (let i = 0; i < count; i++) arr.push(new Date(start.getTime() + i * stepDays * dayMs).toISOString().slice(0, 10));
   }
   return arr;
+}
+// When a plan's start date is edited, every round shifts with it. Contributions are keyed
+// by their exact due-date `period`, so each recorded contribution's period is re-anchored to
+// the new start date at the same round index it was originally recorded against — a monthly
+// round is matched by month offset (so day-of-month clamping stays consistent), daily/weekly
+// rounds by a constant day offset (both starts move by the same number of days).
+function remapPeriodToNewStart(period, oldStart, newStart, frequency) {
+  const os = new Date(oldStart); os.setHours(0, 0, 0, 0);
+  const ns = new Date(newStart); ns.setHours(0, 0, 0, 0);
+  const p = new Date(period); p.setHours(0, 0, 0, 0);
+  if (frequency === 'monthly') {
+    const monthIndex = (p.getFullYear() - os.getFullYear()) * 12 + (p.getMonth() - os.getMonth());
+    return addMonthsClamped(ns, monthIndex).toISOString().slice(0, 10);
+  }
+  const dayOffset = Math.round((ns - os) / dayMs);
+  return new Date(p.getTime() + dayOffset * dayMs).toISOString().slice(0, 10);
 }
 function excelRowsForImport(workbook) {
   let autoResult = null;
@@ -3834,16 +3867,25 @@ function App() {
       (form.memberIds || []).forEach((id) => { memberAmounts[id] = Number((form.memberAmounts || {})[id] || form.amount); });
     }
     if (isEdit) {
+      const newStartDate = form.startDate || existing.startDate;
+      const startDateChanged = newStartDate !== existing.startDate;
+      if (startDateChanged) {
+        // Shift every already-recorded round for this plan onto the new cadence before the
+        // plan's own startDate changes, so history stays lined up instead of going orphaned.
+        setContributions((prev) => prev.map((c) => c.planId !== form.id ? c : {
+          ...c, period: remapPeriodToNewStart(c.period, existing.startDate, newStartDate, existing.frequency),
+        }), `Edited plan — ${form.name} (shifted contribution dates)`);
+      }
       setPlans((prev) => prev.map((p) => p.id !== form.id ? p : {
         ...p, name: form.name, amount: Number(form.amount),
         targetAmount: category === 'Target' ? Number(form.targetAmount || 0) : p.targetAmount,
-        startDate: form.startDate || p.startDate, memberIds: form.memberIds || [],
+        startDate: newStartDate, memberIds: form.memberIds || [],
         perMemberAmounts: !!form.perMemberAmounts, memberAmounts,
         fixedDueDay: form.fixedDueDay !== false,
       }), `Edited plan — ${form.name}`);
       setSelectedPlanId(form.id);
       closeModalSilently();
-      flash('Plan updated.');
+      flash(startDateChanged ? 'Plan updated — contribution dates shifted to match the new start date.' : 'Plan updated.');
       return;
     }
     const plan = {
@@ -4592,6 +4634,22 @@ function App() {
       setLoansReceived((prev) => prev.filter((l) => l.id !== loanId), `Deleted loan received — ${loan?.lender || ''}`);
       flash('Loan record deleted.', loan ? () => setLoansReceived((prev) => [loan, ...prev]) : undefined);
     });
+  };
+  // Renaming/re-phoning a borrower or lender updates every loan record grouped under that
+  // person's name, since loansGiven/loansReceived store the contact inline per-loan rather
+  // than referencing a shared contact record.
+  const submitEditLoanPerson = () => {
+    if (guardWrite()) return;
+    if (!form.name || !form.name.trim()) { flash('Enter a name.'); return; }
+    const newName = form.name.trim();
+    const newPhone = form.phone || '';
+    if (form.personField === 'borrower') {
+      setLoansGiven((prev) => prev.map((l) => l.borrower === form.oldName ? { ...l, borrower: newName, phone: newPhone } : l), `Edited contact — ${form.oldName}`);
+    } else {
+      setLoansReceived((prev) => prev.map((l) => l.lender === form.oldName ? { ...l, lender: newName, phone: newPhone } : l), `Edited contact — ${form.oldName}`);
+    }
+    closeModalSilently();
+    flash('Contact updated.');
   };
 
   const recordCyclePayout = (planId) => {
@@ -6115,6 +6173,9 @@ function App() {
                   })}>
                     <ImageIcon size={13} /> Biodata
                   </button>
+                  <button className="icon-btn" onClick={() => openModal('editLoanPerson', {
+                    personField, oldName: g.name, name: g.name, phone: g.loans[0].phone || '',
+                  })} title="Edit contact" aria-label="Edit contact"><Edit3 size={15} /></button>
                   <div className="kb-mono outstanding"><span>total outstanding</span>{fmt(g.totalOutstanding)}</div>
                 </div>
                 <div className="loan-list">
@@ -8303,7 +8364,7 @@ function App() {
           <div className="field">
             <label>Start date</label>
             <input type="date" className="kb-input" value={form.startDate || todayISO()} onChange={(e) => setField('startDate', e.target.value)} />
-            {form.id && <div className="field-hint">Changing this shifts where future rounds fall — past recorded rounds stay as they are.</div>}
+            {form.id && <div className="field-hint">Changing this moves every round — including already-recorded ones — to line up with the new start date.</div>}
           </div>
           <div className="field">
             <label>Contributors</label>
@@ -8495,6 +8556,21 @@ function App() {
             <input className="kb-input" value={form.note || ''} onChange={(e) => setField('note', e.target.value)} placeholder="What was this loan for?" />
           </div>
           <button className="btn btn-primary" onClick={submitNewLoanReceived}>Save loan</button>
+        </Modal>
+      )}
+      {modal === 'editLoanPerson' && (
+        <Modal title="Edit contact" onClose={closeModal}>
+          <button type="button" className="btn btn-small btn-outline" style={{ marginBottom: 10 }} onClick={() => importDeviceContact((c) => { setField('name', c.name || form.name || ''); setField('phone', c.phone || form.phone || ''); })}>
+            <Phone size={13} /> Import from phone contacts
+          </button>
+          <div className="field"><label>Full name</label>
+            <input className="kb-input" value={form.name || ''} onChange={(e) => setField('name', e.target.value)} placeholder="e.g. Blessing Nwachukwu" autoFocus />
+          </div>
+          <div className="field"><label>Phone number</label>
+            <input className="kb-input" value={form.phone || ''} onChange={(e) => setField('phone', e.target.value)} placeholder="080…" />
+          </div>
+          <div className="field-hint" style={{ marginBottom: 4 }}>Renaming this person here updates every loan record grouped under them.</div>
+          <button className="btn btn-primary" onClick={submitEditLoanPerson}>Save changes</button>
         </Modal>
       )}
       {modal === 'newLoanTab' && (
