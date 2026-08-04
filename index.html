@@ -76,7 +76,7 @@ const {
   Upload, Send, Receipt, Image: ImageIcon, Printer, MessageCircle,
   RotateCcw, Home, LogOut, Mail, MapPin, Building2, FileText, CreditCard,
   UserPlus, Palette, Eye, EyeOff, LogIn, Wallet, ArrowRight, Edit3, Copy,
-  Fingerprint, Moon, Compass, FileMinus, Ban
+  Fingerprint, Moon, Compass, FileMinus, Ban, Calculator, Delete
 } = LucideReact;
 const {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
@@ -1252,6 +1252,209 @@ function ContactDeveloperCard() {
         <AccountRow field="bank" label="Bank" value={c.bank} />
       </div>
     </div>
+  );
+}
+
+// Self-contained calculator pad: standard four-function logic plus memory and a
+// reusable history, so it feels at home whether it's docked in a modal or a panel.
+function CalculatorPad() {
+  const [display, setDisplay] = useState('0');
+  const [prevValue, setPrevValue] = useState(null);
+  const [operator, setOperator] = useState(null);
+  const [waiting, setWaiting] = useState(false);
+  const [memory, setMemory] = useState(0);
+  const [history, setHistory] = useState([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [flash, setFlash] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    const t = setTimeout(() => { if (wrapRef.current) wrapRef.current.focus(); }, 30);
+    return () => clearTimeout(t);
+  }, []);
+
+  const fmt = (n) => {
+    if (n === null || n === undefined || !isFinite(n)) return 'Error';
+    let rounded = Math.round((n + Number.EPSILON) * 1e9) / 1e9;
+    let s = rounded.toString();
+    if (s.replace('-', '').replace('.', '').length > 14) s = rounded.toExponential(6);
+    return s;
+  };
+  const withCommas = (s) => {
+    if (s === 'Error' || s === undefined) return s || '0';
+    const neg = s.startsWith('-');
+    const body = neg ? s.slice(1) : s;
+    const [int, dec] = body.split('.');
+    const intCommas = int.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return (neg ? '-' : '') + intCommas + (dec !== undefined ? '.' + dec : '');
+  };
+  const calc = (a, b, op) => {
+    switch (op) {
+      case '+': return a + b;
+      case '−': return a - b;
+      case '×': return a * b;
+      case '÷': return b === 0 ? NaN : a / b;
+      default: return b;
+    }
+  };
+
+  const inputDigit = (d) => {
+    if (display === 'Error') { setDisplay(d === '.' ? '0.' : d); setWaiting(false); return; }
+    if (waiting) { setDisplay(d === '.' ? '0.' : d); setWaiting(false); return; }
+    if (d === '.') { if (!display.includes('.')) setDisplay(display + '.'); return; }
+    if (display.replace('-', '').replace('.', '').length >= 14) return;
+    setDisplay(display === '0' ? d : display + d);
+  };
+  const inputPercent = () => {
+    const v = parseFloat(display);
+    if (isNaN(v)) return;
+    setDisplay(fmt(operator && prevValue !== null ? (prevValue * v) / 100 : v / 100));
+    setWaiting(false);
+  };
+  const toggleSign = () => {
+    if (display === '0' || display === 'Error') return;
+    setDisplay(display.startsWith('-') ? display.slice(1) : '-' + display);
+  };
+  const backspace = () => {
+    if (waiting || display === 'Error') return;
+    if (display.length <= 1 || (display.length === 2 && display.startsWith('-'))) { setDisplay('0'); return; }
+    setDisplay(display.slice(0, -1));
+  };
+  const clearAll = () => { setDisplay('0'); setPrevValue(null); setOperator(null); setWaiting(false); };
+  const applyOperator = (nextOp) => {
+    const inputValue = parseFloat(display);
+    if (display === 'Error' || isNaN(inputValue)) return;
+    if (operator && !waiting) {
+      const result = calc(prevValue, inputValue, operator);
+      setDisplay(fmt(result));
+      setPrevValue(result);
+    } else {
+      setPrevValue(inputValue);
+    }
+    setOperator(nextOp);
+    setWaiting(true);
+  };
+  const equals = () => {
+    if (operator === null || prevValue === null || display === 'Error') return;
+    const inputValue = parseFloat(display);
+    const result = calc(prevValue, inputValue, operator);
+    const expr = `${withCommas(fmt(prevValue))} ${operator} ${withCommas(fmt(inputValue))}`;
+    setHistory((h) => [{ expr, result: fmt(result) }, ...h].slice(0, 30));
+    setDisplay(fmt(result));
+    setPrevValue(null);
+    setOperator(null);
+    setWaiting(true);
+  };
+  const flashMem = () => { setFlash(true); setTimeout(() => setFlash(false), 650); };
+  const memClear = () => setMemory(0);
+  const memRecall = () => { setDisplay(fmt(memory)); setWaiting(true); };
+  const memAdd = () => { const v = parseFloat(display); if (!isNaN(v)) setMemory((m) => m + v); flashMem(); };
+  const memSub = () => { const v = parseFloat(display); if (!isNaN(v)) setMemory((m) => m - v); flashMem(); };
+  const useHistoryEntry = (h) => { setDisplay(h.result); setWaiting(true); setPrevValue(null); setOperator(null); };
+
+  const handleKey = (e) => {
+    const k = e.key;
+    if (/^[0-9]$/.test(k)) { inputDigit(k); return; }
+    if (k === '.') { inputDigit('.'); return; }
+    if (k === '+') { applyOperator('+'); return; }
+    if (k === '-') { applyOperator('−'); return; }
+    if (k === '*') { applyOperator('×'); return; }
+    if (k === '/') { e.preventDefault(); applyOperator('÷'); return; }
+    if (k === '%') { inputPercent(); return; }
+    if (k === 'Enter' || k === '=') { e.preventDefault(); equals(); return; }
+    if (k === 'Backspace') { backspace(); return; }
+    if (k.toLowerCase() === 'c') { clearAll(); return; }
+  };
+
+  const Key = ({ label, onClick, variant }) => (
+    <button type="button" className={`calc-key${variant ? ` calc-key-${variant}` : ''}`} onClick={onClick}>{label}</button>
+  );
+
+  return (
+    <div className="calc-widget" ref={wrapRef} tabIndex={0} onKeyDown={handleKey}>
+      <style>{`
+        .calc-widget{outline:none;user-select:none;}
+        .calc-display-wrap{background:var(--ink);border-radius:12px;padding:16px 16px 14px;margin-bottom:12px;position:relative;}
+        .calc-expr{font-size:12px;color:rgba(255,255,255,0.55);min-height:16px;text-align:right;font-family:'IBM Plex Mono',monospace;}
+        .calc-display{font-size:34px;font-weight:600;color:#fff;text-align:right;font-family:'IBM Plex Mono',monospace;line-height:1.25;word-break:break-all;}
+        .calc-mem-badge{position:absolute;left:16px;top:16px;font-size:11px;font-weight:700;color:var(--gold);border:1px solid var(--gold);border-radius:5px;padding:1px 5px;}
+        .calc-mem-row{display:flex;gap:6px;margin-bottom:10px;}
+        .calc-mem-btn{flex:1;background:var(--surface-2);border:1px solid var(--paper-line);color:var(--ink-soft);font-size:11.5px;font-weight:700;border-radius:8px;padding:7px 0;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .12s;}
+        .calc-mem-btn:hover{background:var(--paper-line);}
+        .calc-mem-btn-active{color:var(--ink);background:var(--paper-line);}
+        .calc-mem-flash{color:var(--green);border-color:var(--green);}
+        .calc-history{background:var(--surface-2);border:1px solid var(--paper-line);border-radius:10px;padding:8px;margin-bottom:10px;max-height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;}
+        .calc-history-empty{font-size:12px;color:var(--ink-soft);padding:8px;text-align:center;}
+        .calc-history-row{display:flex;flex-direction:column;align-items:flex-end;background:none;border:none;border-radius:7px;padding:6px 8px;cursor:pointer;text-align:right;font-family:inherit;}
+        .calc-history-row:hover{background:var(--paper-line);}
+        .calc-history-expr{font-size:11px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;}
+        .calc-history-result{font-size:14.5px;font-weight:700;color:var(--ink);font-family:'IBM Plex Mono',monospace;}
+        .calc-history-clear{align-self:center;margin-top:4px;background:none;border:none;color:var(--brick);font-size:11.5px;font-weight:600;cursor:pointer;padding:4px 8px;}
+        .calc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+        .calc-key{aspect-ratio:1;border-radius:10px;border:1px solid var(--paper-line);background:var(--surface);color:var(--ink);font-size:17px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .06s,background .12s;font-family:'IBM Plex Mono',monospace;}
+        .calc-key:hover{background:var(--surface-2);}
+        .calc-key:active{transform:scale(0.94);}
+        .calc-key-func{background:var(--surface-2);color:var(--ink-soft);font-size:14px;}
+        .calc-key-op{background:var(--paper);color:var(--ink);font-size:20px;font-weight:700;}
+        .calc-key-equals{background:var(--ink);color:#fff;font-size:20px;}
+        .calc-key-equals:hover{opacity:0.9;background:var(--ink);}
+      `}</style>
+      <div className="calc-display-wrap">
+        {memory !== 0 && <span className="calc-mem-badge">M</span>}
+        <div className="calc-expr">{operator && prevValue !== null ? `${withCommas(fmt(prevValue))} ${operator}` : '\u00A0'}</div>
+        <div className="calc-display">{withCommas(display)}</div>
+      </div>
+      <div className="calc-mem-row">
+        <button type="button" className="calc-mem-btn" onClick={memClear} title="Memory clear">MC</button>
+        <button type="button" className="calc-mem-btn" onClick={memRecall} title="Memory recall">MR</button>
+        <button type="button" className={`calc-mem-btn${flash ? ' calc-mem-flash' : ''}`} onClick={memAdd} title="Memory add">M+</button>
+        <button type="button" className={`calc-mem-btn${flash ? ' calc-mem-flash' : ''}`} onClick={memSub} title="Memory subtract">M−</button>
+        <button type="button" className={`calc-mem-btn${historyOpen ? ' calc-mem-btn-active' : ''}`} onClick={() => setHistoryOpen((v) => !v)} title="History"><Clock size={13} /></button>
+      </div>
+      {historyOpen && (
+        <div className="calc-history">
+          {history.length === 0 && <div className="calc-history-empty">No calculations yet.</div>}
+          {history.map((h, i) => (
+            <button type="button" key={i} className="calc-history-row" onClick={() => useHistoryEntry(h)} title="Reuse this result">
+              <span className="calc-history-expr">{h.expr} =</span>
+              <span className="calc-history-result">{withCommas(h.result)}</span>
+            </button>
+          ))}
+          {history.length > 0 && <button type="button" className="calc-history-clear" onClick={() => setHistory([])}>Clear history</button>}
+        </div>
+      )}
+      <div className="calc-grid">
+        <Key label="C" variant="func" onClick={clearAll} />
+        <Key label={<Delete size={16} />} variant="func" onClick={backspace} />
+        <Key label="%" variant="func" onClick={inputPercent} />
+        <Key label="÷" variant="op" onClick={() => applyOperator('÷')} />
+        <Key label="7" onClick={() => inputDigit('7')} />
+        <Key label="8" onClick={() => inputDigit('8')} />
+        <Key label="9" onClick={() => inputDigit('9')} />
+        <Key label="×" variant="op" onClick={() => applyOperator('×')} />
+        <Key label="4" onClick={() => inputDigit('4')} />
+        <Key label="5" onClick={() => inputDigit('5')} />
+        <Key label="6" onClick={() => inputDigit('6')} />
+        <Key label="−" variant="op" onClick={() => applyOperator('−')} />
+        <Key label="1" onClick={() => inputDigit('1')} />
+        <Key label="2" onClick={() => inputDigit('2')} />
+        <Key label="3" onClick={() => inputDigit('3')} />
+        <Key label="+" variant="op" onClick={() => applyOperator('+')} />
+        <Key label="+/−" variant="func" onClick={toggleSign} />
+        <Key label="0" onClick={() => inputDigit('0')} />
+        <Key label="." onClick={() => inputDigit('.')} />
+        <Key label="=" variant="equals" onClick={equals} />
+      </div>
+    </div>
+  );
+}
+
+// Wraps CalculatorPad in the shared Modal chrome — used from every module's topbar.
+function CalculatorModal({ onClose }) {
+  return (
+    <Modal title="Calculator" onClose={onClose}>
+      <CalculatorPad />
+    </Modal>
   );
 }
 
@@ -3127,6 +3330,7 @@ function App() {
   const [showAccountKey, setShowAccountKey] = useState(false);
   const [bankOtherMode, setBankOtherMode] = useState(() => !!settings.bankName && !NIGERIA_BANK_NAMES.includes(settings.bankName));
   const [tourStep, setTourStep] = useState(null);
+  const [calculatorOpen, setCalculatorOpen] = useState(false);
   const [tabStatementDoc, setTabStatementDoc] = useState(null);
   const [clientStatementDoc, setClientStatementDoc] = useState(null);
   const [contributorStatementDoc, setContributorStatementDoc] = useState(null);
@@ -7356,6 +7560,14 @@ function App() {
         </div>
       </div>
 
+      <div className="panel" style={{ marginTop: 16 }} data-tour="settings-tour">
+        <div className="panel-title">Guided tour</div>
+        <div className="panel-sub" style={{ marginBottom: 12 }}>Walk back through the highlights of every screen.</div>
+        <div className="settings-actions">
+          <button className="btn btn-outline" onClick={startTour}><Compass size={15} /> Take a tour</button>
+        </div>
+      </div>
+
       <div className="panel" style={{ marginTop: 16 }}>
         <div className="panel-title">Session</div>
         <div className="panel-sub" style={{ marginBottom: 12 }}>Signed in as <strong>{currentUser.email}</strong>. Signing out just locks the app.</div>
@@ -7914,7 +8126,7 @@ function App() {
               {activeTab !== 'home' && (
                 <button className="icon-btn" onClick={goHome} title="Home"><Home size={17} /></button>
               )}
-              <button className="icon-btn" onClick={startTour} title="Take a tour"><Compass size={17} /></button>
+              <button className="icon-btn" onClick={() => setCalculatorOpen(true)} title="Calculator"><Calculator size={17} /></button>
               {alerts.length > 0 && (
                 <button className={`icon-btn ${activeTab === 'alerts' ? 'icon-btn-active' : ''}`} onClick={() => setActiveTab('alerts')} title="Alerts">
                   <Bell size={17} />
@@ -7974,6 +8186,7 @@ function App() {
                 <RotateCcw size={16} />
                 {undoStack.length > 0 && <span className="bell-dot">{undoStack.length}</span>}
               </button>
+              <button className="icon-btn" onClick={() => setCalculatorOpen(true)} title="Calculator"><Calculator size={16} /></button>
               <button className="icon-btn" onClick={() => setActiveTab('settings')} title="Settings"><SettingsIcon size={16} /></button>
               <button className="icon-btn" onClick={handleLogout} title="Log out"><LogOut size={16} /></button>
             </div>
@@ -8020,6 +8233,9 @@ function App() {
         )}
       {tourStep !== null && (
         <TourOverlay step={tourStep} onNext={tourNext} onBack={tourBack} onClose={() => { setTourStep(null); goHome(); }} />
+      )}
+      {calculatorOpen && (
+        <CalculatorModal onClose={() => setCalculatorOpen(false)} />
       )}
 
       {modal === 'newPlan' && (
