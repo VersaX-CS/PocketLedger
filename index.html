@@ -1028,6 +1028,10 @@ function buildRowsFromManualMap(dataRows, colMap) {
 
 /* ============================== app configuration ============================== */
 // Access key required to sign up for a real (non-demo) account.
+// NOTE: this is a casual "don't stumble in and sign up" speed bump, not real access
+// control — it's a plain string sitting in client-side JS, so anyone who opens dev
+// tools can read it. Do not rely on it to keep anyone out on purpose; the copy shown
+// to users is worded to avoid implying otherwise. A real gate would need a server.
 const SIGNUP_ACCESS_KEY = '12345678';
 const DEMO_EMAIL = 'demo@pocketledger.ng';
 // Contact-developer details shown on sign-up and in Settings.
@@ -1045,6 +1049,7 @@ const DEVELOPER_CONTACT = {
 /* ============================== persistence (localStorage) ============================== */
 const STORAGE_KEY = 'pocketledger:data:v1';
 const SESSION_KEY = 'pocketledger:session:v1';
+const CELL_TAP_HINT_SEEN_KEY = 'pocketledger:cellTapHintSeen:v1';
 
 function loadStoredData() {
   try {
@@ -2829,6 +2834,10 @@ function AuthScreen({ users, onLogin, onSignup, onImportBackup, flash }) {
         flash('Please fill in your name, email and password to create your account.');
         return;
       }
+      if (fields.password.length < 8) {
+        flash('Password must be at least 8 characters.');
+        return;
+      }
       if (!fields.accessKey) {
         flash('Enter the access key to create a new account. Contact the developer if you don\u2019t have one.');
         return;
@@ -2947,6 +2956,7 @@ function AuthScreen({ users, onLogin, onSignup, onImportBackup, flash }) {
                 <input className="auth-input" type={showPw ? 'text' : 'password'} value={fields.password} onChange={(e) => set('password', e.target.value)} placeholder="••••••••" style={{ paddingRight: 36 }} />
                 <button className="auth-eye" onClick={() => setShowPw((s) => !s)}>{showPw ? <EyeOff size={15} /> : <Eye size={15} />}</button>
               </div>
+              {mode === 'signup' && <div className="auth-field-hint">At least 8 characters. There's no "forgot password" recovery — if you lose this and don't have a backup file exported from Settings, the account can't be recovered.</div>}
             </div>
             {mode === 'signup' && (
               <div className="auth-field"><label>Access key</label>
@@ -3381,7 +3391,7 @@ function App() {
   const [expandedLoan, setExpandedLoan] = useState(null);
   const [expandedClient, setExpandedClient] = useState(null);
   const [checkedClientIds, setCheckedClientIds] = useState([]);
-  const [dismissed, setDismissed] = useState([]);
+  const [dismissed, setDismissed] = useState(() => (PERSISTED && PERSISTED.dismissedAlerts) || []);
   const [todayKey, setTodayKey] = useState(todayISO());
   useEffect(() => {
     const checkDay = () => setTodayKey((prev) => (prev !== todayISO() ? todayISO() : prev));
@@ -3481,14 +3491,14 @@ function App() {
     const payload = {
       savedAt: new Date().toISOString(),
       users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs, expenses, budgets,
-      clients, invoices, receipts, creditNotes, settings, taxTransactions, taxImports, taxReturns,
+      clients, invoices, receipts, creditNotes, settings, taxTransactions, taxImports, taxReturns, dismissedAlerts: dismissed,
     };
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch (err) {
       console.warn('PocketLedger: could not save data to this device.', err);
     }
-  }, [users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs, expenses, budgets, clients, invoices, receipts, creditNotes, settings, taxTransactions, taxImports, taxReturns]);
+  }, [users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs, expenses, budgets, clients, invoices, receipts, creditNotes, settings, taxTransactions, taxImports, taxReturns, dismissed]);
 
   // ---------- auto-log recurring expenses for the current month ----------
   useEffect(() => {
@@ -3769,6 +3779,15 @@ function App() {
       action();
       return;
     }
+    // First time ever a cell gets armed, surface a quick explanation — the pulsing highlight
+    // alone isn't an obvious enough signal that a second tap is needed, especially for a
+    // first-time / touch-screen user who taps once and sees nothing seem to "commit."
+    try {
+      if (!window.localStorage.getItem(CELL_TAP_HINT_SEEN_KEY)) {
+        flash('Tap again to confirm — it clears itself after a couple of seconds.');
+        window.localStorage.setItem(CELL_TAP_HINT_SEEN_KEY, '1');
+      }
+    } catch (err) {}
     setArmedCell(cellKey);
     clearTimeout(armedCellTimerRef.current);
     armedCellTimerRef.current = setTimeout(() => setArmedCell(null), 2000);
@@ -3796,7 +3815,7 @@ function App() {
   };
 
   /* ---------- alerts ---------- */
-  const alerts = useMemo(() => {
+  const rawAlerts = useMemo(() => {
     const list = [];
     loansGiven.forEach((l) => {
       const status = loanStatus(l, 'repayments');
@@ -3836,8 +3855,20 @@ function App() {
       if (pct >= 1) list.push({ id: 'bud-' + b.id, severity: 'high', group: 'Expense & Budgeting', text: `${b.category} is over its monthly budget — ${fmt(spent)} spent of ${fmt(b.monthlyLimit)}.`, target: { module: 'spending', tab: 'budgets' } });
       else if (pct >= 0.9) list.push({ id: 'buds-' + b.id, severity: 'medium', group: 'Expense & Budgeting', text: `${b.category} is close to its monthly budget — ${fmt(spent)} of ${fmt(b.monthlyLimit)} spent.`, target: { module: 'spending', tab: 'budgets' } });
     });
-    return list.filter((a) => !dismissed.includes(a.id));
-  }, [loansGiven, loansReceived, plans, contributions, dismissed, invoices, clients, expenses, budgets, todayKey]);
+    return list;
+  }, [loansGiven, loansReceived, plans, contributions, invoices, clients, expenses, budgets, todayKey]);
+  // Once a dismissed alert's underlying condition is gone (paid off, missed rounds caught up, etc.)
+  // its id stops showing up in rawAlerts — drop it from the dismissed list too, instead of keeping
+  // stale ids around forever. If the same condition reappears later it gets a fresh id-based alert.
+  useEffect(() => {
+    const rawIds = new Set(rawAlerts.map((a) => a.id));
+    setDismissed((prev) => {
+      const next = prev.filter((id) => rawIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawAlerts]);
+  const alerts = useMemo(() => rawAlerts.filter((a) => !dismissed.includes(a.id)), [rawAlerts, dismissed]);
 
   /* ---------- dashboard derived data ---------- */
   const totalCollected = contributions.reduce((s, c) => s + c.amount, 0);
@@ -4175,7 +4206,7 @@ function App() {
   };
   const updateLoginPassword = async () => {
     if (guardWrite()) return;
-    if (!newLoginPassword || newLoginPassword.length < 4) { flash('Password must be at least 4 characters.'); return; }
+    if (!newLoginPassword || newLoginPassword.length < 8) { flash('Password must be at least 8 characters.'); return; }
     const hash = await hashPassword(newLoginPassword);
     setUsers((prev) => prev.map((u) => u.id === currentUser.id ? { ...u, password: hash } : u));
     setCurrentUser((u) => ({ ...u, password: hash }));
@@ -4660,7 +4691,7 @@ function App() {
     const hasIssuedInvoice = invoices.some((i) => i.clientId === clientId && i.status !== 'draft' && i.status !== 'void');
     const hasIssuedReceipt = receipts.some((r) => r.clientId === clientId && r.status === 'issued' && !r.voided);
     if (hasIssuedInvoice || hasIssuedReceipt) {
-      flash('This client has an issued invoice or receipt on file, so they can\u2019t be deleted \u2014 you can still edit their details.');
+      flash('Has an issued invoice or receipt \u2014 edit only, can\u2019t delete.');
       return;
     }
     askConfirm(`Delete ${client.name}?`, () => {
@@ -5364,17 +5395,26 @@ function App() {
     const fileName = `pocketledger-auto-backup-${todayISO()}.json`;
     (async () => {
       const wroteToFolder = await writeBackupToFolder(fileName, payload);
+      let downloadOk = wroteToFolder;
       if (!wroteToFolder) {
-        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = fileName;
-        a.click();
-        URL.revokeObjectURL(url);
+        try {
+          const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = fileName;
+          a.click();
+          URL.revokeObjectURL(url);
+          downloadOk = true;
+        } catch (err) {
+          console.warn('PocketLedger: automatic backup download failed.', err);
+          downloadOk = false;
+        }
       }
-      setSettingsRaw((s) => ({ ...s, lastAutoBackupAt: new Date().toISOString() }));
-      flash(wroteToFolder ? `Automatic backup saved to "${backupDirName}".` : 'Automatic backup downloaded (scheduled).');
+      if (wroteToFolder || downloadOk) setSettingsRaw((s) => ({ ...s, lastAutoBackupAt: new Date().toISOString() }));
+      if (wroteToFolder) flash(`Automatic backup saved to "${backupDirName}".`);
+      else if (downloadOk) flash('Automatic backup downloaded (scheduled) — check your browser\u2019s downloads.');
+      else flash('Automatic backup was due but the download didn\u2019t start — back up manually from Settings when you can.');
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, settings.autoBackupEnabled]);
@@ -5635,10 +5675,10 @@ function App() {
                     <stop offset="95%" stopColor="#1F7A5C" stopOpacity={0.03} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E4DDC9" />
-                <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#5B6478' }} />
-                <YAxis tick={{ fontSize: 11, fill: '#5B6478' }} width={40} />
-                <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 8, border: '1px solid #E4DDC9', fontFamily: 'IBM Plex Mono, monospace', fontSize: 12 }} />
+                <CartesianGrid strokeDasharray="3 3" stroke={settings.darkMode ? '#2A3550' : '#E4DDC9'} />
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: settings.darkMode ? '#94A0C2' : '#5B6478' }} />
+                <YAxis tick={{ fontSize: 11, fill: settings.darkMode ? '#94A0C2' : '#5B6478' }} width={40} />
+                <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 8, border: `1px solid ${settings.darkMode ? '#2A3550' : '#E4DDC9'}`, background: settings.darkMode ? '#182140' : '#fff', color: settings.darkMode ? '#ECE9DF' : '#1B2A4A', fontFamily: 'IBM Plex Mono, monospace', fontSize: 12 }} />
                 <Area type="monotone" dataKey="total" stroke="#1F7A5C" strokeWidth={2} fill="url(#fillGreen)" />
               </AreaChart>
             </ResponsiveContainer>
@@ -7484,6 +7524,7 @@ function App() {
         <div className="field-row">
           <div className="field"><label>New password</label>
             <input className="kb-input" type="password" value={newLoginPassword} onChange={(e) => setNewLoginPassword(e.target.value)} placeholder="••••••••" />
+            <div className="field-hint">At least 8 characters. Mixing in a number or symbol makes it harder to guess.</div>
           </div>
           <div className="field" style={{ flex: '0 0 auto', alignSelf: 'flex-end' }}>
             <button className="btn btn-outline btn-small" onClick={updateLoginPassword}>Update password</button>
@@ -7503,6 +7544,10 @@ function App() {
               <button className="btn btn-outline btn-small" onClick={generateAccountKeyForCurrentUser}>Generate account key</button>
             )}
             <div className="field-hint">Generated for this account and included in your exported backup — it's how a new device recognises this account when you import.</div>
+            <div className="field-hint" style={{ marginTop: 6, color: 'var(--gold)' }}>
+              <AlertTriangle size={11} style={{ verticalAlign: '-1px', marginRight: 3 }} />
+              Nothing syncs automatically between devices — each device keeps its own separate copy of your data. If two people use this same account key on two phones (e.g. a shared thrift ledger), their entries won't merge; whoever imports last overwrites the other's changes. Export and share a backup file whenever you need the other device caught up.
+            </div>
           </div>
         </div>
         <div className="field-row" style={{ marginTop: 4 }}>
@@ -7762,6 +7807,7 @@ function App() {
                 ? `On — backs up ${settings.autoBackupFrequency}${settings.lastAutoBackupAt ? `. Last: ${new Date(settings.lastAutoBackupAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}.`
                 : 'Off — back up automatically on a schedule.'}
             </div>
+            <div className="field-hint" style={{ marginTop: 4 }}>Checked when you open the app, not continuously in the background — if a backup is overdue it runs right away. Leaving the app open for days without reopening it won't trigger one.</div>
           </div>
           <div className="field" style={{ flex: '0 0 auto', alignSelf: 'flex-end' }}>
             <button
@@ -8218,7 +8264,6 @@ function App() {
         .module-switcher-menu{position:absolute;top:calc(100% + 6px);left:0;min-width:220px;background:var(--surface);border:1px solid var(--paper-line);border-radius:14px;box-shadow:0 12px 32px rgba(27,42,74,0.18);padding:6px;z-index:40;display:flex;flex-direction:column;gap:2px;}
         .module-switcher-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;border:none;background:none;cursor:pointer;font-size:14px;font-weight:600;color:var(--ink);text-align:left;}
         .module-switcher-item:hover{background:var(--paper);}
-        .module-switcher-item-home{color:var(--ink-soft);border-top:1px solid var(--paper-line);margin-top:4px;padding-top:10px;border-radius:0 0 10px 10px;}
         .home-content, .module-content{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;padding:28px 36px 60px;background-image:repeating-linear-gradient(to bottom,transparent,transparent 37px,var(--paper-line) 38px);}
         .bottom-nav{display:flex;background:var(--surface);border-top:1px solid var(--paper-line);flex-shrink:0;padding:6px 4px calc(6px + env(safe-area-inset-bottom));}
         .bottom-nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;cursor:pointer;color:var(--ink-soft);padding:6px 2px;font-size:10.5px;font-weight:600;border-radius:10px;}
@@ -8259,6 +8304,12 @@ function App() {
         .tab-entry-note{flex:1;color:var(--ink-soft);font-size:12px;}
         .tab-entry-date{color:var(--ink-soft);font-size:11.5px;white-space:nowrap;}
         .tab-entry-actions{display:flex;gap:4px;}
+        .tab-entry-actions .icon-btn{padding:7px;margin:-7px;border-radius:7px;min-width:30px;min-height:30px;display:inline-flex;align-items:center;justify-content:center;}
+        .tab-entry-actions .icon-btn:active{background:var(--surface-2);}
+        @media (max-width:900px){
+          .tab-entry-actions{gap:10px;}
+          .tab-entry-actions .icon-btn{padding:9px;margin:-9px;min-width:34px;min-height:34px;}
+        }
         .tab-entry-type-toggle{display:flex;gap:8px;margin-bottom:8px;}
         .tab-type-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:7px 0;border-radius:8px;border:1.5px solid var(--paper-line);background:var(--surface);font-size:12.5px;font-weight:600;color:var(--ink-soft);cursor:pointer;}
         .tab-type-active-borrow{border-color:var(--steel);color:var(--steel);background:var(--steel-bg);}
@@ -8475,15 +8526,12 @@ function App() {
                         </button>
                       );
                     })}
-                    <button type="button" className="module-switcher-item module-switcher-item-home" role="menuitem" onClick={() => { goHome(); setModuleSwitcherOpen(false); }}>
-                      <Home size={16} />
-                      <span>Home</span>
-                    </button>
                   </div>
                 </>
               )}
             </div>
             <div className="module-topbar-actions">
+              <button className="icon-btn" onClick={goHome} title="Home"><Home size={16} /></button>
               <button className="icon-btn" onClick={() => setActiveTab('alerts')} title="Alerts">
                 <Bell size={16} />
                 {moduleAlerts(MODULE_ALERT_GROUPS[activeModule]).length > 0 && <span className="bell-dot">{moduleAlerts(MODULE_ALERT_GROUPS[activeModule]).length}</span>}
