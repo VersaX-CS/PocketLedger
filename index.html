@@ -76,7 +76,7 @@ const {
   Upload, Send, Receipt, Image: ImageIcon, Printer, MessageCircle,
   RotateCcw, Home, LogOut, Mail, MapPin, Building2, FileText, CreditCard,
   UserPlus, Palette, Eye, EyeOff, LogIn, Wallet, ArrowRight, Edit3, Copy,
-  Fingerprint, Moon, Compass, FileMinus, Ban, Calculator, Delete
+  Fingerprint, Moon, Compass, FileMinus, Ban, Calculator, Delete, Check, Pipette
 } = LucideReact;
 const {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
@@ -365,6 +365,8 @@ const CATEGORY_META = {
   Target: { cls: 'tag-ink' },
   Cycle: { cls: 'tag-brick' },
 };
+const PLAN_COLORS = ['#B78A2E', '#2F4B7C', '#1F7A5C', '#A6432D', '#7A5CBF', '#C75B8A', '#3E8FA8', '#4C7A3D', '#B5602C', '#5B6478'];
+function planColor(plan) { return (plan && plan.color) || PLAN_COLORS[0]; }
 function cyclePot(plan) {
   if (plan.perMemberAmounts) return (plan.memberIds || []).reduce((s, id) => s + Number((plan.memberAmounts || {})[id] ?? plan.amount ?? 0), 0);
   return Number(plan.amount || 0) * (plan.memberIds || []).length;
@@ -417,12 +419,12 @@ function seedMembers() {
 }
 function seedPlans() {
   return [
-    { id: 'tp1', name: 'Daily Market Ajo', category: 'Daily', frequency: 'daily', amount: 500, startDate: '2026-06-01', memberIds: ['m1', 'm2', 'm3'] },
-    { id: 'tp2', name: 'Weekly Esusu Circle', category: 'Weekly', frequency: 'weekly', amount: 5000, startDate: '2026-04-06', memberIds: ['m1', 'm4', 'm5'] },
-    { id: 'tp3', name: 'December Target Savings', category: 'Target', frequency: 'monthly', amount: 20000, targetAmount: 240000, startDate: '2026-01-01', memberIds: ['m2', 'm3', 'm5'] },
+    { id: 'tp1', name: 'Daily Market Ajo', category: 'Daily', frequency: 'daily', amount: 500, startDate: '2026-06-01', memberIds: ['m1', 'm2', 'm3'], color: '#B78A2E' },
+    { id: 'tp2', name: 'Weekly Esusu Circle', category: 'Weekly', frequency: 'weekly', amount: 5000, startDate: '2026-04-06', memberIds: ['m1', 'm4', 'm5'], color: '#2F4B7C' },
+    { id: 'tp3', name: 'December Target Savings', category: 'Target', frequency: 'monthly', amount: 20000, targetAmount: 240000, startDate: '2026-01-01', memberIds: ['m2', 'm3', 'm5'], color: '#1F7A5C' },
     {
       id: 'tp4', name: 'Monthly Rotating Ajo', category: 'Cycle', frequency: 'monthly', amount: 10000, startDate: '2026-03-01',
-      memberIds: ['m1', 'm2', 'm3', 'm4'],
+      memberIds: ['m1', 'm2', 'm3', 'm4'], color: '#A6432D',
       payouts: [{ id: uid(), memberId: 'm1', amount: 40000, date: '2026-04-01' }, { id: uid(), memberId: 'm2', amount: 40000, date: '2026-05-01' }],
     },
   ];
@@ -1071,6 +1073,29 @@ function ProgressBar({ value, max }) {
     <div className="progress-track">
       <div className="progress-fill" style={{ width: pct + '%' }} />
       <span className="progress-label kb-mono">{pct}%</span>
+    </div>
+  );
+}
+function ColorSwatchPicker({ value, onChange }) {
+  return (
+    <div className="swatch-picker">
+      {PLAN_COLORS.map((c) => (
+        <button
+          key={c}
+          type="button"
+          className={`swatch ${value === c ? 'swatch-active' : ''}`}
+          style={{ background: c }}
+          onClick={() => onChange(c)}
+          title={c}
+          aria-label={`Choose colour ${c}`}
+        >
+          {value === c && <Check size={13} />}
+        </button>
+      ))}
+      <label className="swatch swatch-custom" style={{ background: value || PLAN_COLORS[0] }} title="Pick a custom colour">
+        <input type="color" value={value || PLAN_COLORS[0]} onChange={(e) => onChange(e.target.value)} />
+        <Pipette size={12} />
+      </label>
     </div>
   );
 }
@@ -3314,6 +3339,7 @@ function App() {
 
   const [activeTab, setActiveTab] = useState('home');
   const [selectedPlanId, setSelectedPlanId] = useState('tp1');
+  const [planDashboardOpen, setPlanDashboardOpen] = useState(false);
   const [selectedMemberId, setSelectedMemberId] = useState('m1');
   const [memberDashboardOpen, setMemberDashboardOpen] = useState(false);
   const [checkedMemberIds, setCheckedMemberIds] = useState([]);
@@ -3881,7 +3907,7 @@ function App() {
         targetAmount: category === 'Target' ? Number(form.targetAmount || 0) : p.targetAmount,
         startDate: newStartDate, memberIds: form.memberIds || [],
         perMemberAmounts: !!form.perMemberAmounts, memberAmounts,
-        fixedDueDay: form.fixedDueDay !== false,
+        fixedDueDay: form.fixedDueDay !== false, color: form.color || p.color || PLAN_COLORS[0],
       }), `Edited plan — ${form.name}`);
       setSelectedPlanId(form.id);
       closeModalSilently();
@@ -3894,7 +3920,7 @@ function App() {
       payouts: category === 'Cycle' ? [] : undefined,
       startDate: form.startDate || todayISO(), memberIds: form.memberIds || [],
       perMemberAmounts: !!form.perMemberAmounts, memberAmounts,
-      fixedDueDay: form.fixedDueDay !== false,
+      fixedDueDay: form.fixedDueDay !== false, color: form.color || PLAN_COLORS[plans.length % PLAN_COLORS.length],
     };
     setPlans((p) => [...p, plan], `Created plan — ${form.name}`);
     setSelectedPlanId(plan.id);
@@ -5714,7 +5740,7 @@ function App() {
         <SectionHeader eyebrow="Personalised strategies" title="Thrift plans"
           action={<div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-outline" onClick={triggerThriftImport}><Upload size={16} /> Import plan</button>
-            <button className="btn btn-primary" data-tour="plans-new" onClick={() => openModal('newPlan', { memberIds: [] })}><Plus size={16} /> New thrift plan</button>
+            <button className="btn btn-primary" data-tour="plans-new" onClick={() => openModal('newPlan', { memberIds: [], color: PLAN_COLORS[plans.length % PLAN_COLORS.length] })}><Plus size={16} /> New thrift plan</button>
           </div>} />
         <input ref={thriftFileInputRef} type="file" accept=".csv,.txt,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.pdf,application/pdf" style={{ display: 'none' }} onChange={handleThriftFileSelected} />
 
@@ -5722,9 +5748,12 @@ function App() {
           {plans.map((p) => {
             const total = planTotal(p.id);
             return (
-              <div key={p.id} className={`plan-card ${p.id === selectedPlanId ? 'plan-card-active' : ''} ${p.closed ? 'plan-card-closed' : ''}`} onClick={() => setSelectedPlanId(p.id)}>
+              <div key={p.id} className={`plan-card ${p.id === selectedPlanId && planDashboardOpen ? 'plan-card-active' : ''} ${p.closed ? 'plan-card-closed' : ''}`} style={{ borderLeft: `4px solid ${planColor(p)}` }} onClick={() => { setSelectedPlanId(p.id); setPlanDashboardOpen(true); }}>
                 <div className="plan-card-top">
-                  <CategoryTag category={p.category} />
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <span className="plan-color-dot" style={{ background: planColor(p) }} />
+                    <CategoryTag category={p.category} />
+                  </span>
                   {p.closed ? <Stamp status="overdue" label="Closed" /> : <span className="kb-mono plan-amount">{fmt(p.amount)}</span>}
                 </div>
                 <div className="plan-card-name kb-display">{p.name}</div>
@@ -5744,8 +5773,18 @@ function App() {
           })}
         </div>
 
-        {plan && (
-          <div className="panel" style={{ marginTop: 24 }}>
+        {plan && planDashboardOpen && (
+          <div className="modal-backdrop" onClick={() => setPlanDashboardOpen(false)}>
+          <div className="modal-card modal-card-wide plan-dashboard-modal" onClick={(e) => e.stopPropagation()} style={{ borderTop: `4px solid ${planColor(plan)}` }}>
+            <div className="modal-head">
+              <h3 className="kb-display" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="plan-color-dot" style={{ background: planColor(plan) }} />
+                Thrift plan
+              </h3>
+              <button className="icon-btn" onClick={() => setPlanDashboardOpen(false)} title="Close" aria-label="Close"><X size={18} /></button>
+            </div>
+            <div className="modal-body">
+          <div className="panel" style={{ marginTop: 0, border: 'none', padding: 0 }}>
             <div className="panel-title-row">
               <div>
                 <div className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -5978,6 +6017,9 @@ function App() {
               </div>
             )}
           </div>
+          </div>
+          </div>
+          </div>
         )}
       </>
     );
@@ -6083,45 +6125,47 @@ function App() {
                   {memberPlans.map((p) => <CategoryTag key={p.id} category={p.category} />)}
                   {memberPlans.length === 0 && <span className="panel-sub">Not on any thrift plan yet.</span>}
                 </div>
-                <div className="panel-title" style={{ marginTop: 18 }}>Contribution history</div>
-                {history.length === 0 ? <EmptyState text="No contributions recorded yet." /> : (
-                  <div className="member-dashboard-scroll">
-                    <table className="history-table">
-                      <thead><tr><th>Date</th><th>Plan</th><th>Amount</th><th></th></tr></thead>
-                      <tbody>
-                        {history.map((h) => (
-                          <tr key={h.id}>
-                            <td className="kb-mono">{new Date(h.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
-                            <td>{planById(h.planId)?.name}</td>
-                            <td className="kb-mono">{fmt(h.amount)}</td>
-                            <td><button className="link-btn receipt-link" onClick={() => setReceipt({ kind: 'contribution', member: selected, contribution: h })}><Receipt size={12} /> Receipt</button></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-                {withdrawalHistory.length > 0 && (
-                  <>
-                    <div className="panel-title" style={{ marginTop: 18 }}>Take-out history</div>
+                <div className="member-dashboard-history">
+                  <div className="panel-title" style={{ marginTop: 4 }}>Contribution history</div>
+                  {history.length === 0 ? <EmptyState text="No contributions recorded yet." /> : (
                     <div className="member-dashboard-scroll">
                       <table className="history-table">
-                        <thead><tr><th>Date</th><th>Plan</th><th>Amount</th><th>Note</th><th></th></tr></thead>
+                        <thead><tr><th>Date</th><th>Plan</th><th>Amount</th><th></th></tr></thead>
                         <tbody>
-                          {withdrawalHistory.map((w) => (
-                            <tr key={w.id}>
-                              <td className="kb-mono">{new Date(w.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
-                              <td>{planById(w.planId)?.name}</td>
-                              <td className="kb-mono">{fmt(w.amount)}</td>
-                              <td>{w.note || '—'}</td>
-                              <td><button className="icon-btn" onClick={() => deleteThriftWithdrawal(w.planId, w.id)} title="Delete" aria-label="Delete"><Trash2 size={13} /></button></td>
+                          {history.map((h) => (
+                            <tr key={h.id}>
+                              <td className="kb-mono">{new Date(h.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+                              <td>{planById(h.planId)?.name}</td>
+                              <td className="kb-mono">{fmt(h.amount)}</td>
+                              <td><button className="link-btn receipt-link" onClick={() => setReceipt({ kind: 'contribution', member: selected, contribution: h })}><Receipt size={12} /> Receipt</button></td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
-                  </>
-                )}
+                  )}
+                  {withdrawalHistory.length > 0 && (
+                    <>
+                      <div className="panel-title" style={{ marginTop: 14 }}>Take-out history</div>
+                      <div className="member-dashboard-scroll">
+                        <table className="history-table">
+                          <thead><tr><th>Date</th><th>Plan</th><th>Amount</th><th>Note</th><th></th></tr></thead>
+                          <tbody>
+                            {withdrawalHistory.map((w) => (
+                              <tr key={w.id}>
+                                <td className="kb-mono">{new Date(w.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+                                <td>{planById(w.planId)?.name}</td>
+                                <td className="kb-mono">{fmt(w.amount)}</td>
+                                <td>{w.note || '—'}</td>
+                                <td><button className="icon-btn" onClick={() => deleteThriftWithdrawal(w.planId, w.id)} title="Delete" aria-label="Delete"><Trash2 size={13} /></button></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -7784,6 +7828,7 @@ function App() {
         .section-header h2{font-size:24px;margin:0;font-weight:600;}
         .section-header-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;margin-top:14px;}
         .section-header-actions>*{flex:0 0 auto;}
+        .section-header-actions>div{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:8px;}
         .stat-grid{display:flex;flex-wrap:wrap;gap:16px;margin-bottom:22px;}
         .stat-card{background:var(--surface);border:1px solid var(--paper-line);border-radius:12px;padding:16px 18px;position:relative;flex:1 1 200px;min-width:200px;}
         .stat-icon{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;margin-bottom:10px;}
@@ -7843,6 +7888,7 @@ function App() {
         .plan-card-closed{opacity:.62;}
         .plan-card-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
         .plan-amount{font-size:13px;color:var(--ink-soft);}
+        .plan-color-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;box-shadow:inset 0 0 0 1px rgba(0,0,0,0.12);}
         .plan-card-name{font-size:16.5px;font-weight:600;margin-bottom:4px;}
         .plan-card-meta{font-size:12px;color:var(--ink-soft);margin-bottom:10px;}
         .tel-link{color:var(--ink-soft);text-decoration:underline;text-decoration-color:transparent;transition:text-decoration-color .15s;}
@@ -7963,7 +8009,19 @@ function App() {
         .modal-backdrop{position:fixed;inset:0;height:100vh;height:100dvh;background:rgba(27,42,74,0.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;}
         .modal-card{background:var(--paper);border-radius:14px;width:100%;max-width:460px;max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.25);}
         .modal-card-wide{max-width:720px;}
-        .member-dashboard-body{gap:0;}
+        .modal-card.member-dashboard-modal{display:flex;flex-direction:column;overflow:hidden;}
+        .member-dashboard-modal .modal-head{flex-shrink:0;padding:14px 20px;}
+        .member-dashboard-body{gap:0;flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;padding:14px 22px 16px;}
+        .member-dashboard-body .detail-head{margin-bottom:10px;}
+        .member-dashboard-body .member-avatar-lg{width:40px;height:40px;font-size:16px;}
+        .member-dashboard-body .detail-name{font-size:16px;}
+        .member-dashboard-body .detail-actions{margin-bottom:10px;}
+        .member-dashboard-body .detail-stats{padding:9px 14px;gap:12px;margin-bottom:10px;}
+        .member-dashboard-body .detail-stats span{font-size:15px;}
+        .member-dashboard-body .tag-row{flex-shrink:0;}
+        .member-dashboard-body .panel-title{flex-shrink:0;}
+        .member-dashboard-history{flex:1;min-height:100px;overflow-y:auto;-webkit-overflow-scrolling:touch;margin-top:2px;}
+        .member-dashboard-history .member-dashboard-scroll{max-height:none;overflow:visible;}
         .member-dashboard-scroll{max-height:280px;overflow-y:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--paper-line);border-radius:8px;margin-top:6px;}
         .member-dashboard-scroll .history-table{margin:0;}
         .member-dashboard-scroll .history-table thead th{position:sticky;top:0;background:var(--paper);z-index:1;}
@@ -8026,6 +8084,13 @@ function App() {
         .field-row{display:flex;gap:10px;}
         .field-row .field{flex:1;}
         .checkbox-list{display:flex;flex-direction:column;gap:6px;max-height:150px;overflow-y:auto;border:1px solid var(--paper-line);border-radius:8px;padding:10px;}
+        .swatch-picker{display:flex;flex-wrap:wrap;gap:8px;}
+        .swatch{width:30px;height:30px;border-radius:50%;border:2px solid transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;box-shadow:inset 0 0 0 1px rgba(0,0,0,0.08);transition:transform .1s;padding:0;}
+        .swatch:hover{transform:scale(1.08);}
+        .swatch-active{border-color:var(--ink);box-shadow:0 0 0 2px var(--paper), 0 0 0 3px var(--ink);}
+        .swatch-custom{position:relative;overflow:hidden;color:#fff;}
+        .swatch-custom input[type="color"]{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;border:none;padding:0;}
+        .swatch-custom svg{pointer-events:none;filter:drop-shadow(0 0 2px rgba(0,0,0,0.5));}
         .checkbox-list label{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;color:var(--ink);}
         .balance-breakdown{background:#F8F5EB;border:1px solid var(--paper-line);border-radius:10px;padding:12px 14px;margin:12px 0 6px;display:flex;flex-direction:column;gap:6px;}
         .balance-breakdown div{display:flex;justify-content:space-between;font-size:12.5px;}
@@ -8360,6 +8425,11 @@ function App() {
             <input type="checkbox" checked={!!form.perMemberAmounts} onChange={(e) => setField('perMemberAmounts', e.target.checked)} />
             Members contribute different amounts
           </label>
+          <div className="field">
+            <label>Plan colour</label>
+            <ColorSwatchPicker value={form.color || PLAN_COLORS[0]} onChange={(c) => setField('color', c)} />
+            <div className="field-hint">Used to tell this plan apart at a glance on the plans page.</div>
+          </div>
           <div className="field">
             <label>Contribution schedule</label>
             <select className="kb-input" value={form.fixedDueDay === false ? 'random' : 'fixed'} onChange={(e) => setField('fixedDueDay', e.target.value === 'fixed')}>
