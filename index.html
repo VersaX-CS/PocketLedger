@@ -4170,6 +4170,14 @@ function App() {
     plans.forEach((p) => (p.payouts || []).forEach((po) => acts.push({ date: po.date, text: `${memberById(po.memberId)?.name} received the ${fmt(po.amount)} cycle payout from ${p.name}`, kind: 'out', scope: 'thrift' })));
     loansGiven.forEach((l) => l.repayments.forEach((r) => acts.push({ date: r.date, text: `${l.borrower} repaid ${fmt(r.amount)}`, kind: 'in', scope: 'loans' })));
     loansReceived.forEach((l) => l.refunds.forEach((r) => acts.push({ date: r.date, text: `You refunded ${fmt(r.amount)} to ${l.lender}`, kind: 'out', scope: 'loans' })));
+    loanTabs.forEach((t) => {
+      const contact = loanContacts.find((c) => c.id === t.contactId);
+      const name = contact ? contact.name : 'Unknown contact';
+      (t.entries || []).forEach((e) => {
+        if (e.type === 'borrow') acts.push({ date: e.date, text: `${name} borrowed ${fmt(e.amount)} from you${e.note ? ` (${e.note})` : ''}`, kind: 'out', scope: 'loans' });
+        else acts.push({ date: e.date, text: `${name} paid back ${fmt(e.amount)}${e.note ? ` (${e.note})` : ''}`, kind: 'in', scope: 'loans' });
+      });
+    });
     receipts.forEach((r) => {
       const client = clientById(r.clientId);
       acts.push({ date: r.date, text: `Received ${fmt(r.amount)} from ${client ? client.name : (r.clientName || 'a customer')} — ${r.receiptNo}`, kind: 'in', scope: 'payments' });
@@ -4180,7 +4188,7 @@ function App() {
     });
     expenses.forEach((e) => acts.push({ date: e.date, text: `Logged ${fmt(e.amount)} expense — ${e.category}${e.note ? ` (${e.note})` : ''}`, kind: 'out', scope: 'spending' }));
     return acts.sort((a, b) => new Date(b.date) - new Date(a.date));
-  }, [contributions, loansGiven, loansReceived, plans, receipts, clients, invoices, expenses]);
+  }, [contributions, loansGiven, loansReceived, loanTabs, loanContacts, plans, receipts, clients, invoices, expenses]);
 
   const todayActivity = useMemo(() => recentActivity.filter((a) => (a.date || '').slice(0, 10) === todayKey), [recentActivity, todayKey]);
 
