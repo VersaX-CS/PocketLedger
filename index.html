@@ -5791,6 +5791,35 @@ function App() {
     flash('GitHub Gist sync disconnected.');
   };
 
+  // Fetches the backup file currently stored in the connected Gist (not local state)
+  // and saves it to disk — useful for grabbing a copy of what's actually synced remotely.
+  const [githubDownloading, setGithubDownloading] = useState(false);
+  const githubDownloadBackup = async () => {
+    if (!githubConnected) return;
+    setGithubDownloading(true); setGithubError('');
+    try {
+      const res = await fetch(`https://api.github.com/gists/${githubGistId}`, {
+        headers: { Authorization: `token ${githubToken}`, Accept: 'application/vnd.github+json' },
+      });
+      if (!res.ok) { setGithubError('Could not fetch the Gist — it may have been deleted. Disconnect and reconnect.'); setGithubDownloading(false); return; }
+      const gist = await res.json();
+      const file = gist.files && gist.files['pocketledger-backup.json'];
+      if (!file || !file.content) { setGithubError('Gist has no backup file to download.'); setGithubDownloading(false); return; }
+      const blob = new Blob([file.content], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `pocketledger-backup-gist-${todayISO()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      flash('Backup downloaded from GitHub Gist.');
+    } catch (err) {
+      setGithubError('Network error — check your connection and try again.');
+      console.warn('PocketLedger: GitHub download error', err);
+    }
+    setGithubDownloading(false);
+  };
+
   // Auto-sync on data save when connected
   const githubAutoSyncRef = useRef(null);
   useEffect(() => {
@@ -8387,6 +8416,7 @@ function App() {
               </div>
               <div className="settings-actions">
                 <button className="btn btn-outline btn-small" onClick={githubSyncNow} disabled={githubSyncing}>{githubSyncing ? 'Syncing…' : <><Download size={13} /> Sync now</>}</button>
+                <button className="btn btn-outline btn-small" onClick={githubDownloadBackup} disabled={githubDownloading}>{githubDownloading ? 'Downloading…' : <><Download size={13} /> Download backup</>}</button>
                 <a className="btn btn-ghost btn-small" href={`https://gist.github.com/${githubGistId}`} target="_blank" rel="noopener noreferrer">View Gist ↗</a>
                 <button className="btn btn-ghost btn-small" onClick={githubDisconnect}>Disconnect</button>
               </div>
