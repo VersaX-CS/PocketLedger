@@ -76,7 +76,8 @@ const {
   Upload, Send, Receipt, Image: ImageIcon, Printer, MessageCircle,
   RotateCcw, Home, LogOut, Mail, MapPin, Building2, FileText, CreditCard,
   UserPlus, Palette, Eye, EyeOff, LogIn, Wallet, ArrowRight, Edit3, Copy,
-  Fingerprint, Moon, Compass, FileMinus, Ban, Calculator, Delete, Check, Pipette, MoreVertical
+  Fingerprint, Moon, Compass, FileMinus, Ban, Calculator, Delete, Check, Pipette, MoreVertical,
+  Eraser, PenLine
 } = LucideReact;
 const {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
@@ -1650,21 +1651,27 @@ function DocSignature({ settings }) {
     </div>
   );
 }
-// Canvas signature pad — draw with mouse or finger; each completed stroke is saved as a PNG data URL.
+// Canvas signature pad — draw with mouse or finger, erase parts of a stroke, then Save to
+// lock it in. While active it shows Pen/Eraser/Clear/Save; once saved it shows the signature
+// as a flat preview with an Edit button that reopens the pad (redrawn from the saved image).
 function SignaturePad({ value, onChange }) {
   const canvasRef = useRef(null);
   const drawingRef = useRef(false);
   const lastRef = useRef(null);
+  const [editing, setEditing] = useState(!value);
+  const [tool, setTool] = useState('pen');
 
   useEffect(() => {
+    if (!editing) return;
     const canvas = canvasRef.current;
-    if (!canvas || !value) return;
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!value) return;
     const img = new Image();
     img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     img.src = value;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [editing]);
 
   const posFromEvent = (e) => {
     const canvas = canvasRef.current;
@@ -1681,20 +1688,40 @@ function SignaturePad({ value, onChange }) {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     const pos = posFromEvent(e);
-    ctx.strokeStyle = '#1B2A4A'; ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    if (tool === 'eraser') {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.lineWidth = 16;
+    } else {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = '#1B2A4A';
+      ctx.lineWidth = 2.5;
+    }
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     ctx.beginPath(); ctx.moveTo(lastRef.current.x, lastRef.current.y); ctx.lineTo(pos.x, pos.y); ctx.stroke();
     lastRef.current = pos;
   };
-  const end = () => {
-    if (!drawingRef.current) return;
-    drawingRef.current = false;
-    onChange(canvasRef.current.toDataURL('image/png'));
-  };
+  const end = () => { drawingRef.current = false; };
   const clear = () => {
     const canvas = canvasRef.current;
     canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
-    onChange('');
   };
+  const save = () => {
+    onChange(canvasRef.current.toDataURL('image/png'));
+    setEditing(false);
+  };
+
+  if (!editing) {
+    return (
+      <div>
+        {value
+          ? <img src={value} alt="Signature" className="signature-canvas signature-canvas-preview" />
+          : <div className="signature-canvas signature-canvas-preview" />}
+        <button type="button" className="btn btn-ghost btn-small" style={{ marginTop: 6 }} onClick={() => setEditing(true)}>
+          <Edit3 size={13} /> Edit
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -1703,7 +1730,16 @@ function SignaturePad({ value, onChange }) {
         onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end}
         onTouchStart={start} onTouchMove={move} onTouchEnd={end}
       />
-      <button type="button" className="btn btn-ghost btn-small" style={{ marginTop: 6 }} onClick={clear}>Clear</button>
+      <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+        <button type="button" className={`btn btn-ghost btn-small ${tool === 'pen' ? 'sig-tool-active' : ''}`} onClick={() => setTool('pen')}>
+          <PenLine size={13} /> Pen
+        </button>
+        <button type="button" className={`btn btn-ghost btn-small ${tool === 'eraser' ? 'sig-tool-active' : ''}`} onClick={() => setTool('eraser')}>
+          <Eraser size={13} /> Eraser
+        </button>
+        <button type="button" className="btn btn-ghost btn-small" onClick={clear}>Clear</button>
+        <button type="button" className="btn btn-primary btn-small" onClick={save}>Save</button>
+      </div>
     </div>
   );
 }
@@ -3406,7 +3442,7 @@ function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, onAlertClick, t
           <Search size={15} /><span>Search</span>
         </button>
         <button className="home-qbtn" onClick={() => setOpenModal('activity')}>
-          <Clock size={15} /><span>Today\u2019s activity</span>
+          <Clock size={15} /><span>Today’s activity</span>
           {todayActs.length > 0 && <span className="home-qbadge">{todayActs.length}</span>}
         </button>
         <button className={`home-qbtn${highAlertCount > 0 ? ' home-qbtn-alert' : ''}`} onClick={() => setOpenModal('alerts')}>
@@ -3457,7 +3493,7 @@ function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, onAlertClick, t
         <div className="modal-backdrop" onClick={closeModal}>
           <div className="modal-card home-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">
-              <h3 className="kb-display" style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Clock size={16} /> Today\u2019s activity</h3>
+              <h3 className="kb-display" style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Clock size={16} /> Today’s activity</h3>
               <button className="icon-btn" onClick={closeModal} aria-label="Close"><X size={18} /></button>
             </div>
             <div className="modal-body">
@@ -8587,7 +8623,7 @@ function App() {
         .sh-action-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;}
         .sh-action-secondary{display:flex;flex-wrap:wrap;gap:8px;flex:1 1 auto;}
         .sh-action-secondary>.btn{flex:1 1 auto;}
-        .sh-action-primary{flex:1 1 100%;}
+        .sh-action-primary{flex:1 1 100%;justify-content:center;}
         .stat-grid{display:flex;flex-wrap:wrap;gap:16px;margin-bottom:22px;}
         .stat-card{background:var(--surface);border:1px solid var(--paper-line);border-radius:12px;padding:16px 18px;position:relative;flex:1 1 200px;min-width:200px;}
         .stat-icon{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;margin-bottom:10px;}
@@ -9069,6 +9105,8 @@ function App() {
         .sig-mode-active{border-color:var(--ink);color:var(--ink);background:var(--surface-2);}
         .signature-preview{margin-top:10px;border:1px solid var(--paper-line);border-radius:8px;padding:12px 14px;background:#fff;display:flex;justify-content:flex-end;}
         .signature-canvas{width:100%;max-width:340px;height:120px;background:#fff;border:1.5px dashed var(--paper-line);border-radius:8px;touch-action:none;cursor:crosshair;display:block;}
+        .signature-canvas-preview{object-fit:contain;cursor:default;border-style:solid;}
+        .sig-tool-active{border-color:var(--ink);color:var(--ink);background:var(--surface-2);}
         .invoice-items-edit{display:flex;flex-direction:column;gap:8px;}
         .invoice-item-row{display:flex;gap:6px;align-items:center;}
         .invoice-doc-head{display:flex;align-items:center;gap:12px;margin-bottom:6px;}
@@ -9127,6 +9165,7 @@ function App() {
                 <button className="icon-btn" onClick={goHome} title="Home"><Home size={17} /></button>
               )}
               <button className="icon-btn" onClick={() => setCalculatorOpen(true)} title="Calculator"><Calculator size={17} /></button>
+              <button className="icon-btn" onClick={startTour} title="Take a quick tour"><Compass size={17} /></button>
               {alerts.length > 0 && (
                 <button className={`icon-btn ${activeTab === 'alerts' ? 'icon-btn-active' : ''}`} onClick={() => setActiveTab('alerts')} title="Alerts">
                   <Bell size={17} />
@@ -9184,6 +9223,7 @@ function App() {
                 {undoStack.length > 0 && <span className="bell-dot">{undoStack.length}</span>}
               </button>
               <button className="icon-btn" onClick={() => setCalculatorOpen(true)} title="Calculator"><Calculator size={16} /></button>
+              <button className="icon-btn" onClick={startTour} title="Take a quick tour"><Compass size={16} /></button>
               <button className="icon-btn" onClick={() => setActiveTab('settings')} title="Settings"><SettingsIcon size={16} /></button>
               <button className="icon-btn" onClick={handleLogout} title="Log out"><LogOut size={16} /></button>
             </div>
