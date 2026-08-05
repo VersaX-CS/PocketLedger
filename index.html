@@ -4007,7 +4007,12 @@ function App() {
   /* ---------- submit handlers ---------- */
   const submitNewPlan = () => {
     if (guardWrite()) return;
-    if (!form.name || !form.amount) { flash('Enter a plan name and amount.'); return; }
+    if (!form.name) { flash('Enter a plan name.'); return; }
+    if (!form.perMemberAmounts && !form.amount) { flash('Enter an amount per round.'); return; }
+    if (form.perMemberAmounts) {
+      const missingAmount = (form.memberIds || []).some((id) => !(form.memberAmounts || {})[id] && !form.amount);
+      if (missingAmount) { flash('Enter an amount for each member, or set a default amount to fall back on.'); return; }
+    }
     const isEdit = !!form.id;
     const existing = isEdit ? planById(form.id) : null;
     if (isEdit && !existing) { closeModalSilently(); return; }
@@ -4024,7 +4029,7 @@ function App() {
       : 'monthly';
     const memberAmounts = {};
     if (form.perMemberAmounts) {
-      (form.memberIds || []).forEach((id) => { memberAmounts[id] = Number((form.memberAmounts || {})[id] || form.amount); });
+      (form.memberIds || []).forEach((id) => { memberAmounts[id] = Number((form.memberAmounts || {})[id] || form.amount || 0); });
     }
     // Only kept if at least one field was filled in — an all-empty object would just
     // clutter every plan with a meaningless "Held in" line.
@@ -4043,7 +4048,7 @@ function App() {
         }), `Edited plan — ${form.name} (shifted contribution dates)`);
       }
       setPlans((prev) => prev.map((p) => p.id !== form.id ? p : {
-        ...p, name: form.name, amount: Number(form.amount),
+        ...p, name: form.name, amount: Number(form.amount || 0),
         targetAmount: category === 'Target' ? Number(form.targetAmount || 0) : p.targetAmount,
         startDate: newStartDate, memberIds: form.memberIds || [],
         perMemberAmounts: !!form.perMemberAmounts, memberAmounts,
@@ -4056,7 +4061,7 @@ function App() {
       return;
     }
     const plan = {
-      id: uid(), name: form.name, category, frequency, amount: Number(form.amount),
+      id: uid(), name: form.name, category, frequency, amount: Number(form.amount || 0),
       targetAmount: category === 'Target' ? Number(form.targetAmount || 0) : undefined,
       payouts: category === 'Cycle' ? [] : undefined,
       startDate: form.startDate || todayISO(), memberIds: form.memberIds || [],
@@ -6166,7 +6171,7 @@ function App() {
                             );
                             return;
                           }
-                          setContribAmountInput(memberAmount ? String(memberAmount) : '');
+                          setContribAmountInput('');
                           setContribDateInput(todayISO());
                           setContribPrompt({ planId: plan.id, memberId, period, frequency: plan.frequency, defaultAmount: memberAmount });
                         };
@@ -8507,18 +8512,20 @@ function App() {
         .welcome-carousel-wrap .carousel-dot-active{background:#F7F3EA;}
         .welcome-start{width:100%;max-width:320px;justify-content:center;padding:14px 0;font-size:15px;flex-shrink:0;background:var(--gold);color:#1B2A4A;}
         .welcome-start:hover{background:#c99a37;}
-        .home-topbar, .module-topbar{display:flex;align-items:center;justify-content:space-between;padding:18px 28px;border-bottom:1px solid var(--paper-line);background:var(--surface);flex-shrink:0;}
-        .home-topbar .logo{border-bottom:none;padding:0;margin-bottom:0;}
-        .home-topbar .logo-text .kb-title{color:var(--ink);}
-        .home-topbar .logo-text .kb-tag{color:var(--ink-soft);}
-        .home-topbar-actions, .module-topbar-actions{display:flex;align-items:center;gap:10px;}
+        .home-topbar, .module-topbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;row-gap:10px;padding:18px 28px;border-bottom:1px solid var(--paper-line);background:var(--surface);flex-shrink:0;}
+        .home-topbar .logo{border-bottom:none;padding:0;margin-bottom:0;min-width:0;flex:1 1 auto;}
+        .home-topbar .logo-text{min-width:0;}
+        .home-topbar .logo-text .kb-title{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+        .home-topbar .logo-text .kb-tag{color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;}
+        .home-topbar-actions, .module-topbar-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end;flex-shrink:0;margin-left:auto;}
         .home-topbar-actions .icon-btn, .module-topbar-actions .icon-btn, .module-topbar > .icon-btn{
-          position:relative;background:var(--surface);border:1px solid var(--paper-line);border-radius:10px;width:36px;height:36px;
+          position:relative;background:var(--surface);border:1px solid var(--paper-line);border-radius:10px;width:36px;height:36px;flex-shrink:0;
           display:flex;align-items:center;justify-content:center;color:var(--ink);
         }
         .icon-btn-active{background:var(--ink) !important;color:#fff !important;border-color:var(--ink) !important;}
-        .module-topbar-title{display:flex;align-items:center;justify-content:flex-start;gap:8px;font-size:15px;font-weight:600;color:var(--ink);text-align:left;}
-        .module-switcher{position:relative;display:flex;justify-content:flex-start;margin-right:auto;}
+        .module-topbar-title{display:flex;align-items:center;justify-content:flex-start;gap:8px;font-size:15px;font-weight:600;color:var(--ink);text-align:left;min-width:0;}
+        .module-topbar-title span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+        .module-switcher{position:relative;display:flex;justify-content:flex-start;margin-right:auto;min-width:0;flex:0 1 auto;}
         .module-topbar-title-btn{background:none;border:none;padding:6px 8px;margin:-6px -8px;border-radius:10px;cursor:pointer;text-align:left;}
         .module-topbar-title-btn:hover{background:var(--paper);}
         .module-topbar-title-btn .chev{color:var(--ink-soft);transition:transform 0.15s ease;}
@@ -8729,7 +8736,9 @@ function App() {
           .modal-card-wide{max-width:100%;}
           .home-card-grid{grid-template-columns:1fr;}
           .home-content, .module-content{padding:18px;}
-          .home-topbar, .module-topbar{padding:16px 18px;}
+          .home-topbar, .module-topbar{padding:16px 18px;gap:8px;}
+          .home-topbar-actions, .module-topbar-actions{gap:6px;}
+          .home-topbar .logo-text .kb-title, .module-topbar-title span{max-width:38vw;}
           .carousel{padding:18px 44px;}
           .bottom-nav-item span{font-size:9.5px;}
         }
@@ -8877,8 +8886,9 @@ function App() {
               )}
             </div>
             <div className="field">
-              <label>{form.perMemberAmounts ? 'Default amount' : 'Amount per round'}</label>
+              <label>{form.perMemberAmounts ? 'Default amount (optional)' : 'Amount per round'}</label>
               <input type="number" min="0" inputMode="decimal" className="kb-input" placeholder="500" value={form.amount || ''} onChange={(e) => setField('amount', e.target.value)} />
+              {form.perMemberAmounts && <div className="field-hint">Used only as a fallback for any member you don't set an amount for below.</div>}
             </div>
           </div>
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
@@ -9897,7 +9907,7 @@ function App() {
               <label>Amount</label>
               <input type="number" min="0" inputMode="decimal" className="kb-input" autoFocus
                 value={contribAmountInput} onChange={(e) => setContribAmountInput(e.target.value)}
-                placeholder={contribPrompt.defaultAmount ? String(contribPrompt.defaultAmount) : '500'}
+                placeholder={contribPrompt.defaultAmount ? String(contribPrompt.defaultAmount) : '0'}
                 onKeyDown={(e) => { if (e.key === 'Enter') document.getElementById('contrib-prompt-submit')?.click(); }} />
             </div>
             <div className="field">
@@ -9908,7 +9918,7 @@ function App() {
           </div>
           <button id="contrib-prompt-submit" className="btn btn-primary" onClick={() => {
             const amt = Number(contribAmountInput || contribPrompt.defaultAmount || 0);
-            if (!amt) { flash('Enter an amount.'); return; }
+            if (!amt) { flash('Enter an amount, or close this window.'); return; }
             toggleContribution(contribPrompt.planId, contribPrompt.memberId, contribPrompt.period, amt, contribDateInput || todayISO());
             setContribPrompt(null);
           }}>Mark paid</button>
