@@ -2999,16 +2999,6 @@ function AuthScreen({ users, onLogin, onSignup, onImportBackup, flash }) {
               </div>
             )}
             {authError && <div className="auth-error">{authError}</div>}
-            {mode === 'login' && (
-              <div style={{ background: 'var(--brick-bg)', border: `1px solid var(--brick)`, borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 12, lineHeight: 1.5, color: 'var(--ink)' }}>
-                <div style={{ fontWeight: 600, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <AlertTriangle size={14} /> Password recovery not available
-                </div>
-                <div>
-                  There is <strong>no "forgot password" recovery</strong> — passwords are hashed on your device only. If you forget your password and don't have a backup file, your account is <strong>permanently locked</strong>. Keep backups safe.
-                </div>
-              </div>
-            )}
             <button className="auth-submit" onClick={submit}>
               {mode === 'signup' ? <><UserPlus size={16} /> Create account</> : <><LogIn size={16} /> Log in</>}
             </button>
@@ -3258,7 +3248,7 @@ function AutoSlider({ items, renderItem, interval = 2000 }) {
   );
 }
 
-function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, onAlertClick, todayActivity }) {
+function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, onAlertClick, todayActivity, onGlobalSearch }) {
   const cards = [
     { id: 'thrift', title: 'Thrift', desc: 'Run daily, weekly, monthly, rotating cycle or target savings circles and track every contribution.', icon: PiggyBank, tone: 'green', stat: `${stats.plans} active plan(s)` },
     { id: 'loans', title: 'Loan Tracking', desc: 'Track money you’ve lent out and personal loans you’ve received, with reminders.', icon: HandCoins, tone: 'steel', stat: `${stats.loans} loan(s) on file` },
@@ -3269,7 +3259,7 @@ function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, onAlertClick, t
   const topAlerts = (alerts || []).slice().sort((a, b) => (a.severity === 'high' ? -1 : 1) - (b.severity === 'high' ? -1 : 1));
   const todayActs = todayActivity || [];
   const [globalSearch, setGlobalSearch] = useState('');
-  const globalResults = globalSearch.trim() ? performGlobalSearch(globalSearch) : [];
+  const globalResults = globalSearch.trim() ? (onGlobalSearch ? onGlobalSearch(globalSearch) : []) : [];
   
   return (
     <>
@@ -6716,6 +6706,7 @@ function App() {
       onViewAlerts={() => setActiveTab('alerts')}
       onAlertClick={goToAlert}
       todayActivity={todayActivity}
+      onGlobalSearch={performGlobalSearch}
     />
   );
 
@@ -7784,6 +7775,14 @@ function App() {
           </div>
           <div className="field" style={{ flex: '0 0 auto', alignSelf: 'flex-end' }}>
             <button className="btn btn-outline btn-small" onClick={updateLoginPassword}>Update password</button>
+          </div>
+        </div>
+        <div style={{ background: 'var(--brick-bg)', border: `1px solid var(--brick)`, borderRadius: 8, padding: 12, marginBottom: 4, fontSize: 12, lineHeight: 1.5, color: 'var(--ink)' }}>
+          <div style={{ fontWeight: 600, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <AlertTriangle size={14} /> Password recovery not available
+          </div>
+          <div>
+            There is <strong>no "forgot password" recovery</strong> — passwords are hashed on your device only. If you forget your password and don't have a backup file, your account is <strong>permanently locked</strong>. Keep backups safe.
           </div>
         </div>
         <div className="field-row" style={{ marginTop: 4 }}>
