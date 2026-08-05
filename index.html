@@ -1600,6 +1600,97 @@ function CalculatorModal({ onClose }) {
   );
 }
 
+// Month-view calendar of everything with a due date — loan repayments/refunds, invoices,
+// and thrift collection days. Tapping a day shows what's due; tapping an item jumps there.
+function CalendarModal({ eventsByDate, onClose, onEventClick }) {
+  const [viewDate, setViewDate] = useState(() => new Date());
+  const [selectedDate, setSelectedDate] = useState(todayISO());
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
+  const monthLabel = viewDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+  const startOffset = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const keyFor = (d) => `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  const cells = [];
+  for (let i = 0; i < startOffset; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  const selectedEvents = eventsByDate[selectedDate] || [];
+
+  return (
+    <Modal title="Calendar" onClose={onClose}>
+      <style>{`
+        .cal-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+        .cal-month-label{font-size:15px;font-weight:600;color:var(--ink);}
+        .cal-weekdays{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px;}
+        .cal-weekdays div{text-align:center;font-size:10.5px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;}
+        .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:14px;}
+        .cal-cell{aspect-ratio:1;border-radius:9px;border:1px solid transparent;background:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:12.5px;font-weight:600;color:var(--ink);font-family:inherit;position:relative;}
+        .cal-cell:hover{background:var(--surface-2);}
+        .cal-cell-empty{cursor:default;}
+        .cal-cell-empty:hover{background:none;}
+        .cal-cell-today{border-color:var(--paper-line);font-weight:700;}
+        .cal-cell-selected{background:var(--ink);color:#fff;}
+        .cal-cell-selected:hover{background:var(--ink);}
+        .cal-cell-dot{width:5px;height:5px;border-radius:50%;background:var(--gold);}
+        .cal-cell-selected .cal-cell-dot{background:#fff;}
+        .cal-agenda{border-top:1px solid var(--paper-line);padding-top:12px;}
+        .cal-agenda-list{display:flex;flex-direction:column;gap:6px;}
+        .cal-agenda-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 10px;border-radius:9px;background:var(--surface-2);font-size:12.5px;color:var(--ink);}
+        .cal-agenda-item-clickable{cursor:pointer;}
+        .cal-agenda-item-clickable:hover{background:var(--paper-line);}
+        .cal-agenda-chevron{flex-shrink:0;color:var(--ink-soft);}
+      `}</style>
+      <div className="cal-nav">
+        <button type="button" className="icon-btn" onClick={() => setViewDate(new Date(year, month - 1, 1))} title="Previous month" aria-label="Previous month">
+          <ChevronDown size={16} style={{ transform: 'rotate(90deg)' }} />
+        </button>
+        <div className="cal-month-label kb-display">{monthLabel}</div>
+        <button type="button" className="icon-btn" onClick={() => setViewDate(new Date(year, month + 1, 1))} title="Next month" aria-label="Next month">
+          <ChevronDown size={16} style={{ transform: 'rotate(-90deg)' }} />
+        </button>
+      </div>
+      <div className="cal-weekdays">
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => <div key={i}>{d}</div>)}
+      </div>
+      <div className="cal-grid">
+        {cells.map((d, i) => {
+          if (d === null) return <div key={`e${i}`} className="cal-cell cal-cell-empty" />;
+          const key = keyFor(d);
+          const hasEvents = !!(eventsByDate[key] && eventsByDate[key].length);
+          const isToday = key === todayISO();
+          const isSelected = key === selectedDate;
+          return (
+            <button key={key} type="button" className={`cal-cell ${isToday ? 'cal-cell-today' : ''} ${isSelected ? 'cal-cell-selected' : ''}`} onClick={() => setSelectedDate(key)}>
+              <span>{d}</span>
+              {hasEvents && <span className="cal-cell-dot" />}
+            </button>
+          );
+        })}
+      </div>
+      <div className="cal-agenda">
+        <div className="field-hint" style={{ marginBottom: 8 }}>
+          {new Date(selectedDate).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+        </div>
+        {selectedEvents.length === 0 ? (
+          <EmptyState text="Nothing due this day." />
+        ) : (
+          <ul className="cal-agenda-list">
+            {selectedEvents.map((e, i) => (
+              <li key={i} className={`cal-agenda-item cal-agenda-${e.type} ${e.target ? 'cal-agenda-item-clickable' : ''}`}
+                onClick={e.target ? () => onEventClick(e) : undefined}
+                role={e.target ? 'button' : undefined} tabIndex={e.target ? 0 : undefined}
+                onKeyDown={e.target ? (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onEventClick(e); } } : undefined}>
+                <span>{e.label}</span>
+                {e.target && <ChevronRight size={14} className="cal-agenda-chevron" />}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 // Shared header block for invoices/receipts — logo, business name, address, RC number, gold rule.
 function DocHeader({ settings }) {
   const initials = (settings.businessName || 'B').trim().charAt(0).toUpperCase();
@@ -2243,59 +2334,71 @@ function TabStatementModal({ tab, contact, settings, fmt, onClose, shareImageToW
     `${balanceLabel}: ${fmt(Math.abs(balance))}`,
   ].join('\n');
 
+  const entriesScrollRef = useRef(null);
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
+    const entriesEl = entriesScrollRef.current;
     if (!node || !window.html2canvas) return;
+    // The entries list scrolls on screen (flex + overflow-y:auto) so the header stays put;
+    // lift that constraint just for the capture so the full list renders, then restore it.
+    const prevMaxHeight = entriesEl ? entriesEl.style.maxHeight : null;
+    const prevOverflow = entriesEl ? entriesEl.style.overflowY : null;
+    if (entriesEl) { entriesEl.style.maxHeight = 'none'; entriesEl.style.overflowY = 'visible'; }
     window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+      if (entriesEl) { entriesEl.style.maxHeight = prevMaxHeight || ''; entriesEl.style.overflowY = prevOverflow || ''; }
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = `statement-${statementNo}.png`; a.click();
+    }).catch(() => {
+      if (entriesEl) { entriesEl.style.maxHeight = prevMaxHeight || ''; entriesEl.style.overflowY = prevOverflow || ''; }
     });
   };
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card receipt-card" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-card receipt-card tab-statement-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3 className="kb-display">Transaction History</h3>
           <button className="icon-btn" onClick={onClose} title="Close" aria-label="Close"><X size={18} /></button>
         </div>
         <div className="modal-body">
           <div id="receipt-print-area" className="receipt-sheet">
-            <DocHeader settings={settings} />
-            <div className="doc-title-row">
-              <div>
-                <div className="doc-title">IOU Statement</div>
-                <div className="doc-title-meta">{statementNo} · {issuedOn}</div>
+            <div className="tab-statement-fixed-top">
+              <DocHeader settings={settings} />
+              <div className="doc-title-row">
+                <div>
+                  <div className="doc-title">IOU Statement</div>
+                  <div className="doc-title-meta">{statementNo} · {issuedOn}</div>
+                </div>
+                <div>
+                  <div className="doc-billed-label">Statement for</div>
+                  <div className="doc-billed-name">{personName}</div>
+                </div>
               </div>
               <div>
-                <div className="doc-billed-label">Statement for</div>
-                <div className="doc-billed-name">{personName}</div>
+                {personPhone && <div className="doc-line"><span>Phone</span><span className="kb-mono">{personPhone}</span></div>}
+                {tab.note && <div className="doc-line"><span>Note</span><span className="kb-mono">{tab.note}</span></div>}
               </div>
+              <div className="doc-summary-row">
+                <div className="doc-summary-chip doc-summary-chip-borrow">
+                  <div className="doc-summary-chip-label">Total borrowed</div>
+                  <div className="doc-summary-chip-value kb-mono">{fmt(totalBorrowed)}</div>
+                </div>
+                <div className="doc-summary-chip doc-summary-chip-payment">
+                  <div className="doc-summary-chip-label">Total paid back</div>
+                  <div className="doc-summary-chip-value kb-mono">{fmt(totalPaid)}</div>
+                </div>
+                <div className={`doc-summary-chip doc-summary-chip-balance-${balanceTone}`}>
+                  <div className="doc-summary-chip-label">{balanceLabel}</div>
+                  <div className="doc-summary-chip-value kb-mono">{fmt(Math.abs(balance))}</div>
+                </div>
+              </div>
+              <div className="doc-category">{rows.length} entr{rows.length === 1 ? 'y' : 'ies'} · oldest to newest</div>
             </div>
-            <div>
-              {personPhone && <div className="doc-line"><span>Phone</span><span className="kb-mono">{personPhone}</span></div>}
-              {tab.note && <div className="doc-line"><span>Note</span><span className="kb-mono">{tab.note}</span></div>}
-            </div>
-            <div className="doc-summary-row">
-              <div className="doc-summary-chip doc-summary-chip-borrow">
-                <div className="doc-summary-chip-label">Total borrowed</div>
-                <div className="doc-summary-chip-value kb-mono">{fmt(totalBorrowed)}</div>
-              </div>
-              <div className="doc-summary-chip doc-summary-chip-payment">
-                <div className="doc-summary-chip-label">Total paid back</div>
-                <div className="doc-summary-chip-value kb-mono">{fmt(totalPaid)}</div>
-              </div>
-              <div className={`doc-summary-chip doc-summary-chip-balance-${balanceTone}`}>
-                <div className="doc-summary-chip-label">{balanceLabel}</div>
-                <div className="doc-summary-chip-value kb-mono">{fmt(Math.abs(balance))}</div>
-              </div>
-            </div>
-            <div className="doc-category">{rows.length} entr{rows.length === 1 ? 'y' : 'ies'} · oldest to newest</div>
             {rows.length === 0 ? (
               <div className="panel-sub" style={{ marginTop: 10 }}>No transactions recorded yet.</div>
             ) : (
-              <div>
+              <div className="tab-statement-entries" ref={entriesScrollRef}>
                 {rows.map((r) => (
                   <div key={r.id} className={`doc-tx-row doc-tx-row-${r.type}`}>
                     <div className="doc-tx-row-main">
@@ -2317,8 +2420,10 @@ function TabStatementModal({ tab, contact, settings, fmt, onClose, shareImageToW
                 ))}
               </div>
             )}
-            <DocSignature settings={settings} />
-            <DocFooter settings={settings} />
+            <div className="tab-statement-fixed-bottom">
+              <DocSignature settings={settings} />
+              <DocFooter settings={settings} />
+            </div>
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
@@ -3441,11 +3546,11 @@ function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, onAlertClick, t
         <button className="home-qbtn" onClick={() => setOpenModal('search')}>
           <Search size={15} /><span>Search</span>
         </button>
-        <button className="home-qbtn" onClick={() => setOpenModal('activity')}>
+        <button className={`home-qbtn${todayActs.length > 0 ? ' home-qbtn-pulse-green' : ''}`} onClick={() => setOpenModal('activity')}>
           <Clock size={15} /><span>Today’s activity</span>
           {todayActs.length > 0 && <span className="home-qbadge">{todayActs.length}</span>}
         </button>
-        <button className={`home-qbtn${highAlertCount > 0 ? ' home-qbtn-alert' : ''}`} onClick={() => setOpenModal('alerts')}>
+        <button className={`home-qbtn${highAlertCount > 0 ? ' home-qbtn-pulse-red' : topAlerts.length > 0 ? ' home-qbtn-pulse-amber' : ''}`} onClick={() => setOpenModal('alerts')}>
           <AlertTriangle size={15} /><span>Needs attention</span>
           {topAlerts.length > 0 && <span className="home-qbadge">{topAlerts.length}</span>}
         </button>
@@ -3720,6 +3825,7 @@ function App() {
   const [bankOtherMode, setBankOtherMode] = useState(() => !!settings.bankName && !NIGERIA_BANK_NAMES.includes(settings.bankName));
   const [tourStep, setTourStep] = useState(null);
   const [calculatorOpen, setCalculatorOpen] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [tabStatementDoc, setTabStatementDoc] = useState(null);
   const [entryPreviewDoc, setEntryPreviewDoc] = useState(null);
   const [clientStatementDoc, setClientStatementDoc] = useState(null);
@@ -4052,6 +4158,13 @@ function App() {
       setContributions((prev) => [...prev, { id: uid(), planId, memberId, period, amount, date: date || todayISO() }], `Marked payment — ${who} (${fmt(amount)})`);
     }
   };
+  // Edits the amount/date of a contribution that's already marked paid, without unmarking
+  // and re-marking it (which would lose the original entry's identity in the undo log).
+  const editContribution = (planId, memberId, period, contributionId, amount, date) => {
+    if (guardWrite()) return;
+    const who = memberById(memberId)?.name || 'a contributor';
+    setContributions((prev) => prev.map((c) => c.id === contributionId ? { ...c, amount, date: date || c.date } : c), `Edited payment — ${who} (${fmt(amount)})`);
+  };
   // Requires two taps on the same grid cell (within 2s) before an edit actually fires —
   // guards against accidental taps while scrolling/swiping on a touch screen. First tap
   // just "arms" the cell (visual highlight); the second tap runs the real action.
@@ -4152,6 +4265,44 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawAlerts]);
   const alerts = useMemo(() => rawAlerts.filter((a) => !dismissed.includes(a.id)), [rawAlerts, dismissed]);
+
+  /* ---------- calendar ---------- */
+  // Pulls the same underlying due-dates the alerts above use (loan repayments/refunds,
+  // invoices, thrift collection days) into a day -> events map for the Calendar view.
+  const calendarEventsByDate = useMemo(() => {
+    const map = {};
+    const add = (date, entry) => {
+      if (!date) return;
+      const key = String(date).slice(0, 10);
+      (map[key] = map[key] || []).push(entry);
+    };
+    loansGiven.forEach((l) => {
+      if (outstandingOf(l, 'repayments') > 0) {
+        add(l.dueDate, { type: 'loan', label: `${l.borrower} — repayment due (${fmt(outstandingOf(l, 'repayments'))})`, target: { module: 'loans', tab: 'loansGiven' } });
+      }
+    });
+    loansReceived.forEach((l) => {
+      if (outstandingOf(l, 'refunds') > 0) {
+        add(l.dueDate, { type: 'loan', label: `${l.lender} — refund due (${fmt(outstandingOf(l, 'refunds'))})`, target: { module: 'loans', tab: 'loansReceived' } });
+      }
+    });
+    invoices.forEach((inv) => {
+      const net = invoiceNetTotal(inv);
+      if (net > 0 && invoiceStatusOf(inv) !== 'paid') {
+        const client = clientById(inv.clientId);
+        add(inv.dueDate, { type: 'invoice', label: `Invoice ${inv.number} due — ${client ? client.name : 'Client'} (${fmt(net)})`, target: { module: 'payments', tab: 'invoices' } });
+      }
+    });
+    plans.forEach((p) => {
+      if (p.closed) return;
+      periodsForPlan(p).forEach((period) => {
+        const days = daysFromToday(period);
+        if (days < -1 || days > 120) return; // keep the horizon light — recent past to ~4 months ahead
+        add(period, { type: 'thrift', label: `${p.name} — collection day`, target: { module: 'thrift', tab: 'plans', planId: p.id } });
+      });
+    });
+    return map;
+  }, [loansGiven, loansReceived, invoices, plans, clients, todayKey]);
 
   /* ---------- dashboard derived data ---------- */
   const totalCollected = contributions.reduce((s, c) => s + c.amount, 0);
@@ -6514,11 +6665,9 @@ function App() {
                         const runCellAction = () => {
                           if (plan.closed) return;
                           if (paid) {
-                            askConfirm(
-                              `Unmark ${memberById(memberId)?.name || 'this contributor'}'s payment of ${fmt(contribution.amount)} for ${periodLabel(period, plan.frequency)}?`,
-                              () => toggleContribution(plan.id, memberId, period),
-                              { confirmLabel: 'Unmark payment', danger: true }
-                            );
+                            setContribAmountInput(String(contribution.amount));
+                            setContribDateInput(contribution.date || todayISO());
+                            setContribPrompt({ planId: plan.id, memberId, period, frequency: plan.frequency, defaultAmount: memberAmount, editingId: contribution.id });
                             return;
                           }
                           setContribAmountInput('');
@@ -6530,7 +6679,7 @@ function App() {
                             <button
                               className={`cell-dot ${paid ? 'cell-paid' : 'cell-unpaid'} ${isToday ? 'cell-today' : ''} ${overdueUnpaid ? 'cell-overdue' : ''} ${armed ? 'cell-armed' : ''}`}
                               disabled={plan.closed && !paid}
-                              title={plan.closed ? (paid ? `Paid ${fmt(contribution.amount)} on ${paidOn}` : 'Plan is closed') : armed ? 'Tap again to confirm' : paid ? `Paid ${fmt(contribution.amount)} on ${paidOn} — tap twice to undo` : overdueUnpaid ? 'Overdue — tap twice to enter amount paid' : 'Tap twice to enter amount paid'}
+                              title={plan.closed ? (paid ? `Paid ${fmt(contribution.amount)} on ${paidOn}` : 'Plan is closed') : armed ? 'Tap again to confirm' : paid ? `Paid ${fmt(contribution.amount)} on ${paidOn} — tap twice to edit or unmark` : overdueUnpaid ? 'Overdue — tap twice to enter amount paid' : 'Tap twice to enter amount paid'}
                               onClick={() => handleCellTap(cellKey, runCellAction)}
                             >
                               {armed && paid ? (
@@ -8490,14 +8639,6 @@ function App() {
         </div>
       </div>
 
-      <div className="panel" style={{ marginTop: 16 }} data-tour="settings-tour">
-        <div className="panel-title">Guided tour</div>
-        <div className="panel-sub" style={{ marginBottom: 12 }}>Walk back through the highlights of every screen.</div>
-        <div className="settings-actions">
-          <button className="btn btn-outline" onClick={startTour}><Compass size={15} /> Take a tour</button>
-        </div>
-      </div>
-
       <div className="panel" style={{ marginTop: 16 }}>
         <div className="panel-title">Session</div>
         <div className="panel-sub" style={{ marginBottom: 12 }}>Signed in as <strong>{currentUser.email}</strong>. Signing out just locks the app.</div>
@@ -8908,14 +9049,12 @@ function App() {
         .welcome-carousel-wrap .carousel-dot-active{background:#F7F3EA;}
         .welcome-start{width:100%;max-width:320px;justify-content:center;padding:14px 0;font-size:15px;flex-shrink:0;background:var(--gold);color:#1B2A4A;}
         .welcome-start:hover{background:#c99a37;}
-        .home-topbar, .module-topbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;row-gap:10px;padding:18px 28px;border-bottom:1px solid var(--paper-line);background:var(--surface);flex-shrink:0;}
-        .module-topbar{justify-content:flex-start;}
+        .home-topbar, .module-topbar{display:flex;align-items:center;justify-content:flex-start;flex-wrap:wrap;row-gap:10px;padding:18px 28px;border-bottom:1px solid var(--paper-line);background:var(--surface);flex-shrink:0;}
         .home-topbar .logo{border-bottom:none;padding:0;margin-bottom:0;min-width:0;flex:1 1 auto;}
         .home-topbar .logo-text{min-width:0;}
         .home-topbar .logo-text .kb-title{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
         .home-topbar .logo-text .kb-tag{color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;}
-        .home-topbar-actions, .module-topbar-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end;flex-shrink:0;margin-left:auto;}
-        .module-topbar-actions{justify-content:flex-start;margin-left:0;}
+        .home-topbar-actions, .module-topbar-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-start;flex-shrink:0;margin-left:0;}
         .home-topbar-actions .icon-btn, .module-topbar-actions .icon-btn, .module-topbar > .icon-btn{
           position:relative;background:var(--surface);border:1px solid var(--paper-line);border-radius:10px;width:36px;height:36px;flex-shrink:0;
           display:flex;align-items:center;justify-content:center;color:var(--ink);
@@ -9002,6 +9141,16 @@ function App() {
         .toast-undo:hover{text-decoration:underline;}
         .receipt-card{max-width:420px;}
         .receipt-sheet{background:#fff;border:1px solid var(--paper-line);border-radius:12px;padding:18px 16px;}
+        .modal-card.tab-statement-modal{display:flex;flex-direction:column;overflow:hidden;}
+        .tab-statement-modal .modal-head{flex-shrink:0;}
+        .tab-statement-modal .modal-body{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;}
+        .tab-statement-modal .receipt-sheet{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;}
+        .tab-statement-modal .receipt-actions{flex-shrink:0;}
+        .tab-statement-fixed-top, .tab-statement-fixed-bottom{flex-shrink:0;}
+        .tab-statement-entries{flex:1;min-height:70px;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+        @media print{
+          .tab-statement-entries{max-height:none !important;overflow:visible !important;}
+        }
         .receipt-brand{font-size:19px;font-weight:600;}
         .receipt-sub{font-size:11.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-soft);margin-bottom:14px;}
         .receipt-lines{display:flex;flex-direction:column;gap:9px;}
@@ -9088,9 +9237,30 @@ function App() {
         .home-qbtn:hover{background:var(--surface-2);border-color:var(--ink-soft);box-shadow:0 2px 8px rgba(0,0,0,0.07);}
         .home-qbtn svg{flex-shrink:0;color:var(--ink-soft);}
         .home-qbtn span{overflow:hidden;text-overflow:ellipsis;}
-        .home-qbtn-alert{border-color:var(--brick);color:var(--brick);}
-        .home-qbtn-alert svg{color:var(--brick);}
-        .home-qbtn-alert:hover{background:var(--brick-bg);}
+        @keyframes qbtn-glow-amber{
+          0%, 100%{box-shadow:0 0 0 0 rgba(183,138,46,0.55);border-color:var(--gold);}
+          50%{box-shadow:0 0 0 7px rgba(183,138,46,0);border-color:var(--gold);}
+        }
+        @keyframes qbtn-glow-red{
+          0%, 100%{box-shadow:0 0 0 0 rgba(166,67,45,0.55);border-color:var(--brick);}
+          50%{box-shadow:0 0 0 7px rgba(166,67,45,0);border-color:var(--brick);}
+        }
+        @keyframes qbtn-glow-green{
+          0%, 100%{box-shadow:0 0 0 0 rgba(31,122,92,0.5);border-color:var(--green);}
+          50%{box-shadow:0 0 0 7px rgba(31,122,92,0);border-color:var(--green);}
+        }
+        .home-qbtn-pulse-amber{border-color:var(--gold);color:var(--gold);animation:qbtn-glow-amber 1.8s ease-in-out infinite;}
+        .home-qbtn-pulse-amber svg{color:var(--gold);}
+        .home-qbtn-pulse-amber:hover{background:var(--gold-bg);}
+        .home-qbtn-pulse-red{border-color:var(--brick);color:var(--brick);animation:qbtn-glow-red 1.8s ease-in-out infinite;}
+        .home-qbtn-pulse-red svg{color:var(--brick);}
+        .home-qbtn-pulse-red:hover{background:var(--brick-bg);}
+        .home-qbtn-pulse-green{border-color:var(--green);color:var(--green);animation:qbtn-glow-green 1.8s ease-in-out infinite;}
+        .home-qbtn-pulse-green svg{color:var(--green);}
+        .home-qbtn-pulse-green:hover{background:var(--green-bg);}
+        @media (prefers-reduced-motion: reduce){
+          .home-qbtn-pulse-amber, .home-qbtn-pulse-red, .home-qbtn-pulse-green{animation:none;}
+        }
         .home-qbadge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:20px;background:var(--brick);color:#fff;font-size:10px;font-weight:700;line-height:1;flex-shrink:0;}
         .home-modal{max-width:480px;}
         .home-modal .modal-body{padding-bottom:20px;}
@@ -9196,8 +9366,6 @@ function App() {
               {activeTab !== 'home' && (
                 <button className="icon-btn" onClick={goHome} title="Home"><Home size={17} /></button>
               )}
-              <button className="icon-btn" onClick={() => setCalculatorOpen(true)} title="Calculator"><Calculator size={17} /></button>
-              <button className="icon-btn" onClick={startTour} title="Take a quick tour"><Compass size={17} /></button>
               {alerts.length > 0 && (
                 <button className={`icon-btn ${activeTab === 'alerts' ? 'icon-btn-active' : ''}`} onClick={() => setActiveTab('alerts')} title="Alerts">
                   <Bell size={17} />
@@ -9208,6 +9376,9 @@ function App() {
                 <RotateCcw size={17} />
                 {undoStack.length > 0 && <span className="bell-dot">{undoStack.length}</span>}
               </button>
+              <button className="icon-btn" onClick={() => setCalculatorOpen(true)} title="Calculator"><Calculator size={17} /></button>
+              <button className="icon-btn" onClick={() => setCalendarOpen(true)} title="Calendar"><CalendarDays size={17} /></button>
+              <button className="icon-btn" onClick={startTour} title="Take a quick tour"><Compass size={17} /></button>
               <button className={`icon-btn ${activeTab === 'settings' ? 'icon-btn-active' : ''}`} data-tour="topbar-settings" onClick={() => setActiveTab('settings')} title="Settings"><SettingsIcon size={17} /></button>
               <button className="icon-btn" onClick={handleLogout} title="Log out"><LogOut size={17} /></button>
             </div>
@@ -9255,6 +9426,7 @@ function App() {
                 {undoStack.length > 0 && <span className="bell-dot">{undoStack.length}</span>}
               </button>
               <button className="icon-btn" onClick={() => setCalculatorOpen(true)} title="Calculator"><Calculator size={16} /></button>
+              <button className="icon-btn" onClick={() => setCalendarOpen(true)} title="Calendar"><CalendarDays size={16} /></button>
               <button className="icon-btn" onClick={startTour} title="Take a quick tour"><Compass size={16} /></button>
               <button className="icon-btn" onClick={() => setActiveTab('settings')} title="Settings"><SettingsIcon size={16} /></button>
               <button className="icon-btn" onClick={handleLogout} title="Log out"><LogOut size={16} /></button>
@@ -9306,6 +9478,9 @@ function App() {
       )}
       {calculatorOpen && (
         <CalculatorModal onClose={() => setCalculatorOpen(false)} />
+      )}
+      {calendarOpen && (
+        <CalendarModal eventsByDate={calendarEventsByDate} onClose={() => setCalendarOpen(false)} onEventClick={(e) => { goToAlert(e); setCalendarOpen(false); }} />
       )}
 
       {modal === 'newPlan' && (
@@ -10376,7 +10551,7 @@ function App() {
         </Modal>
       )}
       {contribPrompt && (
-        <Modal title="Enter amount paid" onClose={() => setContribPrompt(null)}>
+        <Modal title={contribPrompt.editingId ? 'Edit amount paid' : 'Enter amount paid'} onClose={() => setContribPrompt(null)}>
           <div className="field-hint" style={{ marginBottom: 14 }}>
             {memberById(contribPrompt.memberId)?.name} — {periodLabel(contribPrompt.period, contribPrompt.frequency)}
           </div>
@@ -10394,12 +10569,30 @@ function App() {
                 value={contribDateInput || todayISO()} onChange={(e) => setContribDateInput(e.target.value)} />
             </div>
           </div>
-          <button id="contrib-prompt-submit" className="btn btn-primary" onClick={() => {
-            const amt = Number(contribAmountInput || contribPrompt.defaultAmount || 0);
-            if (!amt) { flash('Enter an amount, or close this window.'); return; }
-            toggleContribution(contribPrompt.planId, contribPrompt.memberId, contribPrompt.period, amt, contribDateInput || todayISO());
-            setContribPrompt(null);
-          }}>Mark paid</button>
+          <div className="settings-actions">
+            <button id="contrib-prompt-submit" className="btn btn-primary" onClick={() => {
+              const amt = Number(contribAmountInput || contribPrompt.defaultAmount || 0);
+              if (!amt) { flash('Enter an amount, or close this window.'); return; }
+              if (contribPrompt.editingId) {
+                editContribution(contribPrompt.planId, contribPrompt.memberId, contribPrompt.period, contribPrompt.editingId, amt, contribDateInput || todayISO());
+                flash('Amount updated.');
+              } else {
+                toggleContribution(contribPrompt.planId, contribPrompt.memberId, contribPrompt.period, amt, contribDateInput || todayISO());
+              }
+              setContribPrompt(null);
+            }}>{contribPrompt.editingId ? 'Save changes' : 'Mark paid'}</button>
+            {contribPrompt.editingId && (
+              <button className="btn btn-outline" onClick={() => {
+                const p = contribPrompt;
+                setContribPrompt(null);
+                askConfirm(
+                  `Unmark ${memberById(p.memberId)?.name || 'this contributor'}'s payment for ${periodLabel(p.period, p.frequency)}?`,
+                  () => toggleContribution(p.planId, p.memberId, p.period),
+                  { confirmLabel: 'Unmark payment', danger: true }
+                );
+              }}>Unmark payment</button>
+            )}
+          </div>
         </Modal>
       )}
       {periodTotalPrompt && (() => {
