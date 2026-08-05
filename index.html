@@ -691,6 +691,10 @@ function guessTaxCategory(description, amount) {
   if (!isIn && /supplier|inventory|stock|business/.test(d)) return 'Business Expense (deductible)';
   return isIn ? 'Other Income' : 'Personal (non-deductible)';
 }
+// The two categories guessTaxCategory falls back to when nothing more specific matched the
+// description — these are genuine guesses, not pattern matches, and are the ones worth a
+// person's review time. Once someone confirms/changes a category by hand it's no longer a guess.
+const TAX_LOW_CONFIDENCE_CATEGORIES = ['Other Income', 'Personal (non-deductible)'];
 
 // Splits a delimited line, respecting quoted fields.
 function splitDelimitedLine(line, delim) {
@@ -1198,6 +1202,36 @@ function AddPaymentRow({ label, onAdd }) {
         </button>
       </div>
       {error && <div className="field-error">{error}</div>}
+    </div>
+  );
+}
+// Lets someone type a hypothetical payment amount and instantly see what it would leave
+// outstanding — a quick "what if I pay X today" check without doing the mental math
+// themselves. Interest here is simple daily-rate on the original principal (not amortized),
+// so it keeps accruing on that same principal regardless of partial payments — worth saying
+// plainly since it's easy to assume a part-payment slows down future interest when it doesn't.
+function LoanPaymentPreview({ outstanding, rate, fmt }) {
+  const [amount, setAmount] = useState('');
+  const n = Number(amount) || 0;
+  const remaining = Math.max(0, outstanding - n);
+  const clears = n > 0 && remaining <= 0;
+  return (
+    <div className="payment-preview">
+      <div className="payment-preview-head">
+        <Calculator size={13} /> <span>What if I pay this today?</span>
+      </div>
+      <div className="add-payment-row">
+        <input type="number" min="0" inputMode="decimal" placeholder="Amount" value={amount}
+          onChange={(e) => setAmount(e.target.value)} className="kb-input kb-mono" style={{ width: 130 }} />
+        {n > 0 && (
+          <div className="payment-preview-result kb-mono">
+            {clears ? 'Clears the loan' : `Leaves ${fmt(remaining)} outstanding`}
+          </div>
+        )}
+      </div>
+      {n > 0 && !clears && rate > 0 && (
+        <div className="field-hint">Interest keeps accruing on the original principal at {rate}%/yr until it's fully cleared — a part-payment doesn't slow that down.</div>
+      )}
     </div>
   );
 }
@@ -2965,6 +2999,16 @@ function AuthScreen({ users, onLogin, onSignup, onImportBackup, flash }) {
               </div>
             )}
             {authError && <div className="auth-error">{authError}</div>}
+            {mode === 'login' && (
+              <div style={{ background: 'var(--brick-bg)', border: `1px solid var(--brick)`, borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 12, lineHeight: 1.5, color: 'var(--ink)' }}>
+                <div style={{ fontWeight: 600, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <AlertTriangle size={14} /> Password recovery not available
+                </div>
+                <div>
+                  There is <strong>no "forgot password" recovery</strong> — passwords are hashed on your device only. If you forget your password and don't have a backup file, your account is <strong>permanently locked</strong>. Keep backups safe.
+                </div>
+              </div>
+            )}
             <button className="auth-submit" onClick={submit}>
               {mode === 'signup' ? <><UserPlus size={16} /> Create account</> : <><LogIn size={16} /> Log in</>}
             </button>
@@ -3224,9 +3268,36 @@ function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, onAlertClick, t
   ];
   const topAlerts = (alerts || []).slice().sort((a, b) => (a.severity === 'high' ? -1 : 1) - (b.severity === 'high' ? -1 : 1));
   const todayActs = todayActivity || [];
+  const [globalSearch, setGlobalSearch] = useState('');
+  const globalResults = globalSearch.trim() ? performGlobalSearch(globalSearch) : [];
+  
   return (
     <>
       <SectionHeader eyebrow={`Welcome back${user?.name ? ', ' + user.name.split(' ')[0] : ''}`} title="What would you like to open?" />
+      <div className="panel" style={{ marginBottom: 16 }}>
+        <div className="field-hint" style={{ marginBottom: 8 }}>Quick search</div>
+        <div className="search-box">
+          <Search size={16} />
+          <input type="text" placeholder="Search people, plans, loans, clients…" value={globalSearch} onChange={(e) => setGlobalSearch(e.target.value)} style={{ flex: 1, border: 'none', background: 'transparent' }} />
+          {globalSearch && <button type="button" className="search-clear" onClick={() => setGlobalSearch('')} title="Clear search" aria-label="Clear search"><X size={16} /></button>}
+        </div>
+        {globalResults.length > 0 && (
+          <div style={{ marginTop: 12, borderTop: '1px solid var(--paper-line)', paddingTop: 12 }}>
+            <div className="field-hint" style={{ marginBottom: 10, fontSize: 11 }}>Found {globalResults.length} result{globalResults.length === 1 ? '' : 's'}</div>
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {globalResults.map((result) => (
+                <li key={`${result.type}-${result.id}`} onClick={() => { onPick(result.module); setGlobalSearch(''); }} style={{ cursor: 'pointer', padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', transition: 'background 150ms' }} onMouseEnter={(e) => e.currentTarget.style.background = 'var(--paper-line)'} onMouseLeave={(e) => e.currentTarget.style.background = 'var(--surface-2)'}>
+                  <div>
+                    <div style={{ fontWeight: 500, fontSize: 14 }}>{result.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--ink-soft)', marginTop: 2 }}>{result.label}{result.phone ? ` · ${result.phone}` : ''}{result.email ? ` · ${result.email}` : ''}</div>
+                  </div>
+                  <ChevronRight size={14} color="var(--ink-soft)" />
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
       {topAlerts.length > 0 && (
         <div className="panel" style={{ marginBottom: 12 }}>
           <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -3392,6 +3463,8 @@ function App() {
   const [expandedClient, setExpandedClient] = useState(null);
   const [checkedClientIds, setCheckedClientIds] = useState([]);
   const [dismissed, setDismissed] = useState(() => (PERSISTED && PERSISTED.dismissedAlerts) || []);
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [globalSearchQuery, setGlobalSearchQuery] = useState('');
   const [todayKey, setTodayKey] = useState(todayISO());
   useEffect(() => {
     const checkDay = () => setTodayKey((prev) => (prev !== todayISO() ? todayISO() : prev));
@@ -3451,6 +3524,7 @@ function App() {
   const [confirmTypedText, setConfirmTypedText] = useState('');
   const [taxYearFilter, setTaxYearFilter] = useState(new Date().getFullYear());
   const [taxSourceFilter, setTaxSourceFilter] = useState('All');
+  const [taxNeedsReviewOnly, setTaxNeedsReviewOnly] = useState(false);
   const [taxTxnShowCount, setTaxTxnShowCount] = useState(30);
   const [taxImportSourceName, setTaxImportSourceName] = useState('');
   const [taxImportBankOtherMode, setTaxImportBankOtherMode] = useState(false);
@@ -5060,10 +5134,13 @@ function App() {
     ready.forEach((entry) => {
       const sourceName = ((entry.bankName || '').trim() || 'Bank statement') + ((entry.accountLabel || '').trim() ? ` — ${entry.accountLabel.trim()}` : '');
       const batchId = uid();
-      const newTxns = entry.rows.map((r) => ({
-        id: uid(), batchId, date: r.date, description: r.description, amount: r.amount,
-        source: sourceName, category: guessTaxCategory(r.description, r.amount),
-      }));
+      const newTxns = entry.rows.map((r) => {
+        const category = guessTaxCategory(r.description, r.amount);
+        return {
+          id: uid(), batchId, date: r.date, description: r.description, amount: r.amount,
+          source: sourceName, category, categoryIsGuess: TAX_LOW_CONFIDENCE_CATEGORIES.includes(category),
+        };
+      });
       allNewTxns = [...newTxns, ...allNewTxns];
       newImportRecords.push({ id: batchId, source: sourceName, fileName: entry.fileName, count: newTxns.length, importedAt: new Date().toISOString() });
       totalAdded += newTxns.length;
@@ -5128,7 +5205,7 @@ function App() {
   };
   const updateTaxTxnCategory = (id, category) => {
     if (guardWrite()) return;
-    setTaxTransactions((prev) => prev.map((t) => t.id === id ? { ...t, category } : t));
+    setTaxTransactions((prev) => prev.map((t) => t.id === id ? { ...t, category, categoryIsGuess: false } : t));
   };
   const deleteTaxTxn = (id) => {
     if (guardWrite()) return;
@@ -5151,7 +5228,7 @@ function App() {
     if (guardWrite()) return;
     if (!form.amount || !form.description || !form.category) { flash('Enter a description, amount and category.'); return; }
     const signedAmount = Math.abs(Number(form.amount)) * (form.direction === 'out' ? -1 : 1);
-    setTaxTransactions((prev) => prev.map((t) => t.id === form.id ? { ...t, date: form.date, description: form.description, amount: signedAmount, category: form.category, source: form.source } : t));
+    setTaxTransactions((prev) => prev.map((t) => t.id === form.id ? { ...t, date: form.date, description: form.description, amount: signedAmount, category: form.category, source: form.source, categoryIsGuess: false } : t));
     closeModalSilently();
     flash('Transaction updated.');
   };
@@ -5671,15 +5748,15 @@ function App() {
               <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                 <defs>
                   <linearGradient id="fillGreen" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#1F7A5C" stopOpacity={0.5} />
-                    <stop offset="95%" stopColor="#1F7A5C" stopOpacity={0.03} />
+                    <stop offset="5%" stopColor="var(--green)" stopOpacity={0.5} />
+                    <stop offset="95%" stopColor="var(--green)" stopOpacity={0.03} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke={settings.darkMode ? '#2A3550' : '#E4DDC9'} />
-                <XAxis dataKey="label" tick={{ fontSize: 11, fill: settings.darkMode ? '#94A0C2' : '#5B6478' }} />
-                <YAxis tick={{ fontSize: 11, fill: settings.darkMode ? '#94A0C2' : '#5B6478' }} width={40} />
-                <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 8, border: `1px solid ${settings.darkMode ? '#2A3550' : '#E4DDC9'}`, background: settings.darkMode ? '#182140' : '#fff', color: settings.darkMode ? '#ECE9DF' : '#1B2A4A', fontFamily: 'IBM Plex Mono, monospace', fontSize: 12 }} />
-                <Area type="monotone" dataKey="total" stroke="#1F7A5C" strokeWidth={2} fill="url(#fillGreen)" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--paper-line)" />
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'var(--ink-soft)' }} />
+                <YAxis tick={{ fontSize: 11, fill: 'var(--ink-soft)' }} width={40} />
+                <Tooltip formatter={(v) => fmt(v)} contentStyle={{ borderRadius: 8, border: `1px solid var(--paper-line)`, background: 'var(--surface)', color: 'var(--ink)', fontFamily: 'IBM Plex Mono, monospace', fontSize: 12 }} />
+                <Area type="monotone" dataKey="total" stroke="var(--green)" strokeWidth={2} fill="url(#fillGreen)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -5885,8 +5962,8 @@ function App() {
             </div>
             <div className="modal-body">
           <div className="panel" style={{ marginTop: 0, border: 'none', padding: 0 }}>
-            <div className="panel-title-row">
-              <div>
+            <div className="plan-dash-head">
+              <div className="plan-dash-title">
                 <div className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   {plan.name}
                   {plan.closed && <Stamp status="overdue" label="Closed" />}
@@ -5900,7 +5977,7 @@ function App() {
                   </div>
                 )}
               </div>
-              <div className="inline-add">
+              <div className="plan-dash-actions">
                 {!plan.closed && (
                   <select className="kb-input" defaultValue="" onChange={(e) => { addMemberToPlan(plan.id, e.target.value); e.target.value = ''; }}>
                     <option value="" disabled>Add contributor to plan…</option>
@@ -6457,6 +6534,7 @@ function App() {
                                 ))}
                               </ul>
                             )}
+                            {out > 0 && <LoanPaymentPreview outstanding={out} rate={l.interestRate} fmt={fmt} />}
                             {out > 0 && <AddPaymentRow label={addLabel} onAdd={(amount, date) => addFn(l.id, amount, date)} />}
                           </div>
                         )}
@@ -6577,6 +6655,56 @@ function App() {
         )}
       </>
     );
+  };
+
+  const performGlobalSearch = (query) => {
+    if (!query.trim()) return [];
+    const q = query.trim().toLowerCase();
+    const results = [];
+    
+    // Search members (thrift contributors)
+    members.forEach((m) => {
+      if (m.name.toLowerCase().includes(q) || (m.phone && m.phone.includes(query))) {
+        results.push({ type: 'member', id: m.id, name: m.name, phone: m.phone, module: 'thrift', tab: 'contributors', label: 'Thrift Contributor' });
+      }
+    });
+    
+    // Search clients (invoices/receipts)
+    clients.forEach((c) => {
+      if (c.name.toLowerCase().includes(q) || (c.phone && c.phone.includes(query)) || (c.email && c.email.toLowerCase().includes(q))) {
+        results.push({ type: 'client', id: c.id, name: c.name, phone: c.phone, email: c.email, module: 'payments', tab: 'clients', label: 'Client' });
+      }
+    });
+    
+    // Search loan contacts
+    loanContacts.forEach((lc) => {
+      if (lc.name.toLowerCase().includes(q) || (lc.phone && lc.phone.includes(query)) || (lc.email && lc.email.toLowerCase().includes(q))) {
+        results.push({ type: 'loanContact', id: lc.id, name: lc.name, phone: lc.phone, email: lc.email, module: 'loans', tab: 'loansGiven', label: 'Loan Contact' });
+      }
+    });
+    
+    // Search thrift plans
+    plans.forEach((p) => {
+      if (p.name.toLowerCase().includes(q)) {
+        results.push({ type: 'plan', id: p.id, name: p.name, module: 'thrift', tab: 'plans', label: 'Thrift Plan' });
+      }
+    });
+    
+    // Search loans (by name or contact info)
+    loansGiven.forEach((l) => {
+      const contact = loanContacts.find((c) => c.id === l.contactId);
+      if ((contact && contact.name.toLowerCase().includes(q)) || (contact && contact.phone && contact.phone.includes(query))) {
+        results.push({ type: 'loanGiven', id: l.id, name: contact?.name || 'Unnamed', amount: l.principal, module: 'loans', tab: 'loansGiven', label: 'Loan (Given)' });
+      }
+    });
+    loansReceived.forEach((l) => {
+      const contact = loanContacts.find((c) => c.id === l.contactId);
+      if ((contact && contact.name.toLowerCase().includes(q)) || (contact && contact.phone && contact.phone.includes(query))) {
+        results.push({ type: 'loanReceived', id: l.id, name: contact?.name || 'Unnamed', amount: l.principal, module: 'loans', tab: 'loansReceived', label: 'Loan (Received)' });
+      }
+    });
+    
+    return results.slice(0, 12); // Limit to 12 results
   };
 
   const renderHome = () => (
@@ -7091,6 +7219,118 @@ function App() {
     );
   };
 
+  const renderBudgetTrends = () => {
+    // Calculate spending per month per category over the last 12 months
+    const monthsData = [];
+    const today = new Date();
+    for (let i = 11; i >= 0; i--) {
+      const date = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      monthsData.push(monthKey);
+    }
+
+    // Build chart data: each month is a row, with columns for each budget category
+    const chartData = monthsData.map((monthKey) => {
+      const row = { month: new Date(monthKey + '-01').toLocaleDateString('en-GB', { month: 'short', year: '2-digit' }) };
+      budgets.forEach((b) => {
+        const spent = expenses
+          .filter((e) => e.date.slice(0, 7) === monthKey && e.category === b.category)
+          .reduce((s, e) => s + Number(e.amount || 0), 0);
+        row[b.category] = spent;
+        row[`limit-${b.category}`] = b.monthlyLimit;
+      });
+      return row;
+    });
+
+    // Get unique categories from budgets
+    const categories = budgets.map((b) => b.category);
+    const tones = ['green', 'gold', 'brick', 'steel', 'navy'];
+
+    return (
+      <>
+        <SectionHeader eyebrow="Spending over time" title="Budget trends" />
+        {budgets.length === 0 ? (
+          <EmptyState text="Set at least one budget to see spending trends." />
+        ) : (
+          <>
+            <div className="panel" style={{ marginBottom: 16 }}>
+              <div className="panel-title" style={{ marginBottom: 16 }}>Monthly spending vs budget limits (last 12 months)</div>
+              {chartData.length > 0 && (
+                <ResponsiveContainer width="100%" height={320}>
+                  <AreaChart data={chartData}>
+                    <defs>
+                      {categories.map((cat, idx) => (
+                        <linearGradient key={`grad-${idx}`} id={`grad-${idx}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor={
+                            tones[idx % tones.length] === 'green' ? 'var(--green)' :
+                            tones[idx % tones.length] === 'gold' ? 'var(--gold)' :
+                            tones[idx % tones.length] === 'brick' ? 'var(--brick)' :
+                            tones[idx % tones.length] === 'steel' ? 'var(--steel)' :
+                            'var(--navy)'
+                          } stopOpacity={0.8} />
+                          <stop offset="95%" stopColor={
+                            tones[idx % tones.length] === 'green' ? 'var(--green)' :
+                            tones[idx % tones.length] === 'gold' ? 'var(--gold)' :
+                            tones[idx % tones.length] === 'brick' ? 'var(--brick)' :
+                            tones[idx % tones.length] === 'steel' ? 'var(--steel)' :
+                            'var(--navy)'
+                          } stopOpacity={0.1} />
+                        </linearGradient>
+                      ))}
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--paper-line)" />
+                    <XAxis dataKey="month" stroke="var(--ink-soft)" style={{ fontSize: 12 }} />
+                    <YAxis stroke="var(--ink-soft)" style={{ fontSize: 12 }} />
+                    <Tooltip 
+                      contentStyle={{ background: 'var(--surface)', border: `1px solid var(--paper-line)` }}
+                      formatter={(value) => fmt(value)}
+                      labelStyle={{ color: 'var(--ink)' }}
+                    />
+                    {categories.map((cat, idx) => (
+                      <Area key={cat} type="monotone" dataKey={cat} fill={`url(#grad-${idx})`} 
+                        stroke={
+                          tones[idx % tones.length] === 'green' ? 'var(--green)' :
+                          tones[idx % tones.length] === 'gold' ? 'var(--gold)' :
+                          tones[idx % tones.length] === 'brick' ? 'var(--brick)' :
+                          tones[idx % tones.length] === 'steel' ? 'var(--steel)' :
+                          'var(--navy)'
+                        } isAnimationActive={false} />
+                    ))}
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+            <div className="two-col">
+              {categories.map((cat, idx) => {
+                const budget = budgetForCategory(cat);
+                if (!budget) return null;
+                const totalSpent = expenses
+                  .filter((e) => e.category === cat)
+                  .reduce((s, e) => s + Number(e.amount || 0), 0);
+                const avgMonthly = totalSpent / Math.max(1, expenses.filter((e) => e.category === cat).length > 0 ? 12 : 1);
+                const thisMonthSpent = spentThisMonthByCategory[cat] || 0;
+                const pct = (avgMonthly / budget.monthlyLimit * 100).toFixed(0);
+                return (
+                  <div key={cat} className="panel">
+                    <div className="panel-title">{cat}</div>
+                    <div style={{ marginBottom: 12 }}>
+                      <div className="panel-sub">Average monthly</div>
+                      <div className="kb-display" style={{ fontSize: 20, fontWeight: 600, marginBottom: 4 }}>{fmt(avgMonthly)}</div>
+                      <ProgressBar value={avgMonthly} max={budget.monthlyLimit} />
+                      <div className="panel-sub" style={{ marginTop: 8, fontSize: 11 }}>
+                        {pct}% of {fmt(budget.monthlyLimit)} limit · This month: {fmt(thisMonthSpent)}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </>
+    );
+  };
+
   const renderTaxOverview = () => {
     const year = taxYearFilter;
     const income = sumTaxCategoriesForYear(year, TAX_INCOME_CATEGORIES.filter((c) => c !== 'Non-Taxable Transfer'));
@@ -7378,7 +7618,9 @@ function App() {
     const filtered = taxTransactions
       .filter((t) => new Date(t.date).getFullYear() === Number(taxYearFilter))
       .filter((t) => taxSourceFilter === 'All' || t.source === taxSourceFilter)
+      .filter((t) => !taxNeedsReviewOnly || t.categoryIsGuess)
       .sort((a, b) => new Date(b.date) - new Date(a.date));
+    const guessCountThisYear = taxTransactions.filter((t) => new Date(t.date).getFullYear() === Number(taxYearFilter) && t.categoryIsGuess).length;
     const income = filtered.filter((t) => t.amount >= 0 && t.category !== 'Non-Taxable Transfer').reduce((s, t) => s + t.amount, 0);
     const deductible = filtered.filter((t) => TAX_DEDUCTION_CATEGORIES.includes(t.category) && t.category !== 'Personal (non-deductible)').reduce((s, t) => s + Math.abs(t.amount), 0);
     const visible = filtered.slice(0, taxTxnShowCount);
@@ -7396,6 +7638,15 @@ function App() {
           </select>
           <button className="btn btn-outline btn-small" onClick={() => exportTaxLedgerCsv(filtered, taxYearFilter)}><Download size={14} /> Export CSV</button>
           <button className="btn btn-outline btn-small" onClick={() => exportTaxLedgerExcel(filtered, taxYearFilter)}><Download size={14} /> Export Excel</button>
+          {guessCountThisYear > 0 && (
+            <button
+              className={`btn btn-small ${taxNeedsReviewOnly ? 'btn-primary' : 'btn-outline'}`}
+              onClick={() => { setTaxNeedsReviewOnly((v) => !v); setTaxTxnShowCount(30); }}
+              title="Only show transactions where the category was a low-confidence guess, not a clear pattern match"
+            >
+              <AlertTriangle size={13} /> {taxNeedsReviewOnly ? 'Showing' : 'Needs review'} ({guessCountThisYear})
+            </button>
+          )}
         </div>
         <div className="stat-grid" style={{ marginBottom: 18 }}>
           <StatCard label="Income (this filter)" value={fmt(income)} icon={TrendingUp} tone="green" />
@@ -7417,6 +7668,11 @@ function App() {
                       <optgroup label="Income">{TAX_INCOME_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</optgroup>
                       <optgroup label="Deductions / reliefs">{TAX_DEDUCTION_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</optgroup>
                     </select>
+                    {t.categoryIsGuess && (
+                      <span className="tag tag-gold" style={{ marginLeft: 6, fontSize: 10.5, whiteSpace: 'nowrap' }} title="Nothing in the description matched a known pattern — this category is a low-confidence guess, worth a second look.">
+                        <AlertTriangle size={10} style={{ verticalAlign: '-1px', marginRight: 2 }} /> Guessed
+                      </span>
+                    )}
                   </td>
                   <td className="kb-mono" style={{ color: t.amount >= 0 ? 'var(--green)' : 'var(--brick)' }}>{t.amount >= 0 ? '+' : '−'}{fmt(Math.abs(t.amount))}</td>
                   <td>
@@ -7896,6 +8152,7 @@ function App() {
       { id: 'spendingOverview', label: 'Overview', icon: LayoutDashboard },
       { id: 'expenses', label: 'Expenses', icon: CreditCard },
       { id: 'budgets', label: 'Budgets', icon: Target },
+      { id: 'budgetTrends', label: 'Trends', icon: TrendingUp },
     ],
     tax: [
       { id: 'taxOverview', label: 'Overview', icon: LayoutDashboard },
@@ -8079,6 +8336,10 @@ function App() {
         .progress-fill{height:100%;background:var(--green);border-radius:6px;}
         .progress-label{position:absolute;right:0;top:-16px;font-size:11px;color:var(--ink-soft);}
         .inline-add select{max-width:220px;}
+        .plan-dash-head{display:flex;flex-direction:column;gap:12px;margin-bottom:16px;}
+        .plan-dash-title{width:100%;}
+        .plan-dash-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+        .plan-dash-actions select{max-width:220px;}
         .grid-scroll{overflow-x:auto;}
         .contrib-grid-scroll{overflow:auto;max-height:min(60vh, 520px);border-radius:8px;}
         .contrib-grid{border-collapse:separate;border-spacing:0;width:100%;font-size:12.5px;}
@@ -8179,6 +8440,9 @@ function App() {
         .pay-icon{color:var(--green);}
         .add-payment-row{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;}
         .add-payment-row-wrap{display:flex;flex-direction:column;}
+        .payment-preview{background:var(--surface-2);border-radius:10px;padding:10px 12px;margin-top:12px;}
+        .payment-preview-head{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--ink-soft);margin-bottom:2px;}
+        .payment-preview-result{font-size:13px;font-weight:600;color:var(--ink);}
         .field-error{font-size:11.5px;color:var(--brick);margin-top:5px;font-weight:600;}
         .stamp{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border:1.5px solid;border-radius:4px;text-transform:uppercase;font-size:10.5px;letter-spacing:.07em;font-weight:700;transform:rotate(-2deg);font-family:'IBM Plex Mono',monospace;white-space:nowrap;}
         .stamp-completed{color:var(--green);border-color:var(--green);background:var(--green-bg);}
@@ -8560,6 +8824,7 @@ function App() {
             {activeTab === 'spendingOverview' && renderSpendingOverview()}
             {activeTab === 'expenses' && renderExpenses()}
             {activeTab === 'budgets' && renderBudgets()}
+            {activeTab === 'budgetTrends' && renderBudgetTrends()}
             {activeTab === 'taxOverview' && renderTaxOverview()}
             {activeTab === 'taxImport' && renderTaxImport()}
             {activeTab === 'taxTransactions' && renderTaxTransactions()}
