@@ -8879,11 +8879,13 @@ function App() {
         .welcome-start{width:100%;max-width:320px;justify-content:center;padding:14px 0;font-size:15px;flex-shrink:0;background:var(--gold);color:#1B2A4A;}
         .welcome-start:hover{background:#c99a37;}
         .home-topbar, .module-topbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;row-gap:10px;padding:18px 28px;border-bottom:1px solid var(--paper-line);background:var(--surface);flex-shrink:0;}
+        .module-topbar{justify-content:flex-start;}
         .home-topbar .logo{border-bottom:none;padding:0;margin-bottom:0;min-width:0;flex:1 1 auto;}
         .home-topbar .logo-text{min-width:0;}
         .home-topbar .logo-text .kb-title{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
         .home-topbar .logo-text .kb-tag{color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;}
         .home-topbar-actions, .module-topbar-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end;flex-shrink:0;margin-left:auto;}
+        .module-topbar-actions{justify-content:flex-start;margin-left:0;}
         .home-topbar-actions .icon-btn, .module-topbar-actions .icon-btn, .module-topbar > .icon-btn{
           position:relative;background:var(--surface);border:1px solid var(--paper-line);border-radius:10px;width:36px;height:36px;flex-shrink:0;
           display:flex;align-items:center;justify-content:center;color:var(--ink);
@@ -8891,7 +8893,7 @@ function App() {
         .icon-btn-active{background:var(--ink) !important;color:#fff !important;border-color:var(--ink) !important;}
         .module-topbar-title{display:flex;align-items:center;justify-content:flex-start;gap:8px;font-size:15px;font-weight:600;color:var(--ink);text-align:left;min-width:0;}
         .module-topbar-title span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-        .module-switcher{position:relative;display:flex;justify-content:flex-start;margin-right:auto;min-width:0;flex:0 1 auto;}
+        .module-switcher{position:relative;display:flex;justify-content:flex-start;min-width:0;flex:0 1 auto;}
         .module-topbar-title-btn{background:none;border:none;padding:6px 8px;margin:-6px -8px;border-radius:10px;cursor:pointer;text-align:left;}
         .module-topbar-title-btn:hover{background:var(--paper);}
         .module-topbar-title-btn .chev{color:var(--ink-soft);transition:transform 0.15s ease;}
