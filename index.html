@@ -439,6 +439,27 @@ function shareNodeImageToWhatsApp(elementId, filename, waHref) {
   }).catch(() => window.open(waHref, '_blank'));
 }
 
+// Makes "Print / Save PDF" suggest the same filename as "Download image" — browsers use
+// document.title as the default filename when someone chooses "Save as PDF" from the print
+// dialog, so this briefly swaps the page title to match, then restores it once printing is
+// done. The extension is stripped since the print dialog appends its own (.pdf).
+function printWithFilename(filename) {
+  const prevTitle = document.title;
+  const clean = String(filename || '').replace(/\.[^./]+$/, '').trim();
+  if (clean) document.title = clean;
+  let restored = false;
+  const restore = () => {
+    if (restored) return;
+    restored = true;
+    document.title = prevTitle;
+    window.removeEventListener('afterprint', restore);
+  };
+  window.addEventListener('afterprint', restore);
+  window.print();
+  // Fallback in case 'afterprint' doesn't fire on this browser (some mobile webviews).
+  setTimeout(restore, 30000);
+}
+
 /* ============================== seed data ============================== */
 function seedMembers() {
   return [
@@ -2005,7 +2026,7 @@ function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, s
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
-            <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
+            <button className="btn btn-outline btn-small" onClick={() => printWithFilename(downloadFilename)}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(personPhone, waText, downloadFilename)}><MessageCircle size={14} /> Share image on WhatsApp</button>
           </div>
         </div>
@@ -2118,7 +2139,7 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
             {status === 'void' && <button className="btn btn-secondary btn-small" onClick={() => onRestoreInvoice(invoice.id)}><RotateCcw size={14} /> Restore</button>}
             {status !== 'draft' && status !== 'void' && <button className="btn btn-outline btn-small" onClick={() => onIssueCreditNote(invoice)}><FileMinus size={14} /> Issue credit note</button>}
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
-            <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
+            <button className="btn btn-outline btn-small" onClick={() => printWithFilename(downloadFilename)}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(client?.phone, message, downloadFilename)}><MessageCircle size={14} /> Share image on WhatsApp</button>
           </div>
         </div>
@@ -2206,7 +2227,7 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
             {draft && <button className="btn btn-outline btn-small" onClick={() => onEditReceipt(receiptDoc)}><Edit3 size={14} /> Edit</button>}
             {draft && <button className="btn btn-secondary btn-small" onClick={() => onIssueReceipt(receiptDoc.id)}><Send size={14} /> Issue receipt</button>}
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
-            <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
+            <button className="btn btn-outline btn-small" onClick={() => printWithFilename(downloadFilename)}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(payerPhone, message, downloadFilename)}><MessageCircle size={14} /> Share image on WhatsApp</button>
           </div>
         </div>
@@ -2287,7 +2308,7 @@ function CreditNoteDocModal({ creditNoteDoc, client, invoice, settings, fmt, onC
               <button className="btn btn-outline btn-small" onClick={() => onVoidCreditNote(creditNoteDoc.id)}><Ban size={14} /> Void credit note</button>
             )}
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
-            <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
+            <button className="btn btn-outline btn-small" onClick={() => printWithFilename(downloadFilename)}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(client?.phone, message, downloadFilename)}><MessageCircle size={14} /> Share image on WhatsApp</button>
           </div>
         </div>
@@ -2348,7 +2369,7 @@ function ReminderDocModal({ reminderDoc, settings, fmt, onClose, queueRemaining 
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
-            <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
+            <button className="btn btn-outline btn-small" onClick={() => printWithFilename(filename)}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(personPhone, '', filename)}><MessageCircle size={14} /> Share image on WhatsApp</button>
             {queueRemaining > 0 && <button className="btn btn-outline btn-small" onClick={onClose}><ArrowRight size={14} /> Skip to next</button>}
           </div>
@@ -2374,6 +2395,7 @@ function TabStatementModal({ tab, contact, settings, fmt, onClose, shareImageToW
   const issuedOn = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   const balanceLabel = balance > 0 ? `${personName} owes` : balance < 0 ? 'You owe' : 'Balance';
   const balanceTone = balance > 0 ? 'owed' : balance < 0 ? 'owe' : 'clear';
+  const downloadFilename = `statement-${statementNo}.png`;
 
   const waText = [
     `*${settings.businessName}* — Transaction History`, '',
@@ -2398,7 +2420,7 @@ function TabStatementModal({ tab, contact, settings, fmt, onClose, shareImageToW
       if (entriesEl) { entriesEl.style.maxHeight = prevMaxHeight || ''; entriesEl.style.overflowY = prevOverflow || ''; }
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
-      a.href = url; a.download = `statement-${statementNo}.png`; a.click();
+      a.href = url; a.download = downloadFilename; a.click();
     }).catch(() => {
       if (entriesEl) { entriesEl.style.maxHeight = prevMaxHeight || ''; entriesEl.style.overflowY = prevOverflow || ''; }
     });
@@ -2477,8 +2499,8 @@ function TabStatementModal({ tab, contact, settings, fmt, onClose, shareImageToW
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
-            <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
-            <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(personPhone, waText, `statement-${statementNo}.png`)}><MessageCircle size={14} /> Share image on WhatsApp</button>
+            <button className="btn btn-outline btn-small" onClick={() => printWithFilename(downloadFilename)}><Printer size={14} /> Print / Save PDF</button>
+            <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(personPhone, waText, downloadFilename)}><MessageCircle size={14} /> Share image on WhatsApp</button>
           </div>
         </div>
       </div>
@@ -2660,7 +2682,7 @@ function ClientStatementModal({ client, invoices, receipts, creditNotes, setting
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
-            <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
+            <button className="btn btn-outline btn-small" onClick={() => printWithFilename(statementFilename)}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(client.phone, waText, statementFilename)}><MessageCircle size={14} /> Share image on WhatsApp</button>
           </div>
         </div>
@@ -2758,7 +2780,7 @@ function ContributorStatementModal({ member, plans, contributions, settings, fmt
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
             <button className="btn btn-outline btn-small" onClick={() => downloadNodeAsPdf('receipt-print-area', statementPdfFilename)}><FileText size={14} /> Download PDF</button>
-            <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
+            <button className="btn btn-outline btn-small" onClick={() => printWithFilename(statementImageFilename)}><Printer size={14} /> Print / Save PDF</button>
             {member.phone && <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(member.phone, waText, statementImageFilename)}><MessageCircle size={14} /> Share image on WhatsApp</button>}
           </div>
         </div>
@@ -2774,13 +2796,14 @@ function SummaryReportModal({ doc, settings, fmt, onClose, downloadNodeAsPdf }) 
   useEscClose(onClose);
   const issuedOn = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   const slug = doc.title.replace(/\s+/g, '-').toLowerCase();
+  const downloadFilename = `${slug}.png`;
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
     window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
-      a.href = url; a.download = `${slug}.png`; a.click();
+      a.href = url; a.download = downloadFilename; a.click();
     });
   };
   return (
@@ -2819,7 +2842,7 @@ function SummaryReportModal({ doc, settings, fmt, onClose, downloadNodeAsPdf }) 
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
             <button className="btn btn-outline btn-small" onClick={() => downloadNodeAsPdf('receipt-print-area', `${slug}.pdf`)}><FileText size={14} /> Download PDF</button>
-            <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
+            <button className="btn btn-outline btn-small" onClick={() => printWithFilename(downloadFilename)}><Printer size={14} /> Print / Save PDF</button>
           </div>
         </div>
       </div>
@@ -2876,7 +2899,7 @@ function BiodataDocModal({ doc, settings, fmt, onClose, shareImageToWhatsApp }) 
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
-            <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
+            <button className="btn btn-outline btn-small" onClick={() => printWithFilename(filename || 'biodata.png')}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(phone, '', filename || 'biodata.png')}><MessageCircle size={14} /> Share image on WhatsApp</button>
           </div>
         </div>
@@ -2888,6 +2911,7 @@ function TaxReturnDocModal({ taxReturn, settings, fmt, onClose, onMarkFiled }) {
   useEscClose(onClose);
   const isIndividual = taxReturn.taxpayerType === 'individual';
   const issuedOn = new Date(taxReturn.createdAt || Date.now()).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const downloadFilename = `tax-return-${taxReturn.year}-${taxReturn.taxpayerName.replace(/\s+/g, '-')}.png`;
 
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
@@ -2895,7 +2919,7 @@ function TaxReturnDocModal({ taxReturn, settings, fmt, onClose, onMarkFiled }) {
     window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
-      a.href = url; a.download = `tax-return-${taxReturn.year}-${taxReturn.taxpayerName.replace(/\s+/g, '-')}.png`; a.click();
+      a.href = url; a.download = downloadFilename; a.click();
     });
   };
 
@@ -2977,7 +3001,7 @@ function TaxReturnDocModal({ taxReturn, settings, fmt, onClose, onMarkFiled }) {
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
-            <button className="btn btn-outline btn-small" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button>
+            <button className="btn btn-outline btn-small" onClick={() => printWithFilename(downloadFilename)}><Printer size={14} /> Print / Save PDF</button>
             {taxReturn.status !== 'filed' && (
               <button className="btn btn-primary btn-small" onClick={() => onMarkFiled(taxReturn.id)}><CheckCircle2 size={14} /> Mark as filed</button>
             )}
@@ -3573,7 +3597,7 @@ function AutoSlider({ items, renderItem, interval = 2000 }) {
   );
 }
 
-function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, onAlertClick, todayActivity, onGlobalSearch }) {
+function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, onAlertClick, todayActivity, onGlobalSearch, openModal, setOpenModal }) {
   const cards = [
     { id: 'thrift', title: 'Thrift', desc: 'Run daily, weekly, monthly, rotating cycle or target savings circles and track every contribution.', icon: PiggyBank, tone: 'green', stat: `${stats.plans} active plan(s)` },
     { id: 'loans', title: 'Loan Tracking', desc: 'Track money you\u2019ve lent out and personal loans you\u2019ve received, with reminders.', icon: HandCoins, tone: 'steel', stat: `${stats.loans} loan(s) on file` },
@@ -3584,7 +3608,6 @@ function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, onAlertClick, t
   const topAlerts = (alerts || []).slice().sort((a, b) => (a.severity === 'high' ? -1 : 1) - (b.severity === 'high' ? -1 : 1));
   const todayActs = todayActivity || [];
 
-  const [openModal, setOpenModal] = useState(null); // 'search' | 'activity' | 'alerts'
   const [globalSearch, setGlobalSearch] = useState('');
   const globalResults = globalSearch.trim() ? (onGlobalSearch ? onGlobalSearch(globalSearch) : []) : [];
   const searchInputRef = React.useRef(null);
@@ -3726,6 +3749,7 @@ function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [activeModule, setActiveModule] = useState('home');
   const [moduleSwitcherOpen, setModuleSwitcherOpen] = useState(false);
+  const [homeOverlay, setHomeOverlay] = useState(null); // 'search' | 'activity' | 'alerts' — HomeScreen's quick-access panels; lifted up (rather than local to HomeScreen) so the back button can close them.
   const [preAuthWelcomeSeen, setPreAuthWelcomeSeen] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
 
@@ -4132,7 +4156,26 @@ function App() {
   }), [members, form.memberIds, form.perMemberAmounts, form.memberAmounts]);
 
   /* ---------- back button / swipe-back navigation ---------- */
-  const closeAllOverlays = () => { closeModal(); setInvoiceDoc(null); setReceipt(null); setPaymentReceiptDoc(null); setReminderDoc(null); setReminderQueue([]); setCreditNoteDoc(null); };
+  // Every piece of state that renders as a modal, doc viewer, dashboard sheet, or full-screen
+  // overlay — kept in one place so a hardware/gesture back press always has something to close
+  // before it falls through to page-level navigation or the exit-app flow.
+  const closeAllOverlays = () => {
+    closeModal();
+    setInvoiceDoc(null); setReceipt(null); setPaymentReceiptDoc(null);
+    setReminderDoc(null); setReminderQueue([]); setCreditNoteDoc(null);
+    setTabStatementDoc(null); setEntryPreviewDoc(null);
+    setClientStatementDoc(null); setContributorStatementDoc(null);
+    setInvoiceSummaryDoc(null); setReceiptSummaryDoc(null);
+    setBiodataDoc(null); setTaxReturnDoc(null);
+    setPlanDashboardOpen(false); setMemberDashboardOpen(false);
+    setHomeOverlay(null); setModuleSwitcherOpen(false);
+    setContribPrompt(null); setPeriodTotalPrompt(null);
+    setNewAccountKeyModal(null);
+    setCalculatorOpen(false); setCalendarOpen(false);
+    setHistoryOpen(false);
+    setConfirmDialog(null); setConfirmTypedText('');
+    setTourStep(null);
+  };
   const historyInitedRef = useRef(false);
   const isRestoringRef = useRef(false);
   const exitArmedRef = useRef(false);
@@ -4159,7 +4202,14 @@ function App() {
   useEffect(() => {
     const handlePopState = (e) => {
       if (!currentUser) return;
-      const overlayOpen = !!(modal || invoiceDoc || receipt || paymentReceiptDoc);
+      const overlayOpen = !!(
+        modal || invoiceDoc || receipt || paymentReceiptDoc || creditNoteDoc || reminderDoc ||
+        tabStatementDoc || entryPreviewDoc || clientStatementDoc || contributorStatementDoc ||
+        invoiceSummaryDoc || receiptSummaryDoc || biodataDoc || taxReturnDoc ||
+        planDashboardOpen || memberDashboardOpen || homeOverlay || moduleSwitcherOpen ||
+        contribPrompt || periodTotalPrompt || newAccountKeyModal ||
+        calculatorOpen || calendarOpen || historyOpen || confirmDialog || tourStep !== null
+      );
       if (overlayOpen) {
         // Back closes whatever's open first, without leaving the page.
         closeAllOverlays();
@@ -4188,7 +4238,16 @@ function App() {
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [currentUser, modal, invoiceDoc, receipt, paymentReceiptDoc, activeModule, activeTab, selectedPlanId]);
+  }, [
+    currentUser, modal, invoiceDoc, receipt, paymentReceiptDoc, creditNoteDoc, reminderDoc,
+    tabStatementDoc, entryPreviewDoc, clientStatementDoc, contributorStatementDoc,
+    invoiceSummaryDoc, receiptSummaryDoc, biodataDoc, taxReturnDoc,
+    planDashboardOpen, memberDashboardOpen, homeOverlay, moduleSwitcherOpen,
+    contribPrompt, periodTotalPrompt, newAccountKeyModal,
+    calculatorOpen, calendarOpen, historyOpen, confirmDialog, tourStep,
+    activeModule, activeTab, selectedPlanId,
+  ]);
+
 
   /* ---------- lookups ---------- */
   const memberById = (id) => members.find((m) => m.id === id);
@@ -7262,6 +7321,8 @@ function App() {
       onAlertClick={goToAlert}
       todayActivity={todayActivity}
       onGlobalSearch={performGlobalSearch}
+      openModal={homeOverlay}
+      setOpenModal={setHomeOverlay}
     />
   );
 
