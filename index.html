@@ -2632,7 +2632,7 @@ function TabEntryReceiptModal({ tab, entry, contact, settings, fmt, onClose, onE
   );
 }
 
-function ClientStatementModal({ client, invoices, receipts, creditNotes, settings, fmt, onClose, shareImageToWhatsApp }) {
+function ClientStatementModal({ client, invoices, receipts, creditNotes, settings, fmt, onClose, shareImageToWhatsApp, downloadNodeAsPdf }) {
   useEscClose(onClose);
   const clientInvoices = invoices.filter((i) => i.clientId === client.id && i.status !== 'draft' && i.status !== 'void');
   const clientReceipts = receipts.filter((r) => r.clientId === client.id && !r.voided && r.status !== 'draft');
@@ -2653,6 +2653,7 @@ function ClientStatementModal({ client, invoices, receipts, creditNotes, setting
   const balance = Math.max(0, totalInvoiced - totalReceived - totalCredited);
   const issuedOn = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   const statementFilename = makeDownloadFilename(settings, 'Payments', client.name, 'png');
+  const statementPdfFilename = statementFilename.replace(/\.png$/i, '.pdf');
 
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
@@ -2714,6 +2715,7 @@ function ClientStatementModal({ client, invoices, receipts, creditNotes, setting
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
+            <button className="btn btn-outline btn-small" onClick={() => downloadNodeAsPdf('receipt-print-area', statementPdfFilename)}><FileText size={14} /> Download PDF</button>
             <button className="btn btn-outline btn-small" onClick={() => printWithFilename(statementFilename)}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(client.phone, waText, statementFilename)}><MessageCircle size={14} /> Share image on WhatsApp</button>
           </div>
@@ -2882,10 +2884,11 @@ function SummaryReportModal({ doc, settings, fmt, onClose, downloadNodeAsPdf }) 
   );
 }
 
-function BiodataDocModal({ doc, settings, fmt, onClose, shareImageToWhatsApp }) {
+function BiodataDocModal({ doc, settings, fmt, onClose, shareImageToWhatsApp, downloadNodeAsPdf }) {
   useEscClose(onClose);
   const { name, phone, photoDataUrl, fields = [], filename, accentColor } = doc;
   const issuedOn = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const pdfFilename = (filename || 'biodata.png').replace(/\.png$/i, '.pdf');
 
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
@@ -2931,6 +2934,7 @@ function BiodataDocModal({ doc, settings, fmt, onClose, shareImageToWhatsApp }) 
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
+            <button className="btn btn-outline btn-small" onClick={() => downloadNodeAsPdf('receipt-print-area', pdfFilename)}><FileText size={14} /> Download PDF</button>
             <button className="btn btn-outline btn-small" onClick={() => printWithFilename(filename || 'biodata.png')}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(phone, '', filename || 'biodata.png')}><MessageCircle size={14} /> Share image on WhatsApp</button>
           </div>
@@ -2939,11 +2943,12 @@ function BiodataDocModal({ doc, settings, fmt, onClose, shareImageToWhatsApp }) 
     </div>
   );
 }
-function TaxReturnDocModal({ taxReturn, settings, fmt, onClose, onMarkFiled }) {
+function TaxReturnDocModal({ taxReturn, settings, fmt, onClose, onMarkFiled, downloadNodeAsPdf }) {
   useEscClose(onClose);
   const isIndividual = taxReturn.taxpayerType === 'individual';
   const issuedOn = new Date(taxReturn.createdAt || Date.now()).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   const downloadFilename = `tax-return-${taxReturn.year}-${taxReturn.taxpayerName.replace(/\s+/g, '-')}.png`;
+  const downloadPdfFilename = downloadFilename.replace(/\.png$/i, '.pdf');
 
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
@@ -3033,6 +3038,7 @@ function TaxReturnDocModal({ taxReturn, settings, fmt, onClose, onMarkFiled }) {
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
+            <button className="btn btn-outline btn-small" onClick={() => downloadNodeAsPdf('receipt-print-area', downloadPdfFilename)}><FileText size={14} /> Download PDF</button>
             <button className="btn btn-outline btn-small" onClick={() => printWithFilename(downloadFilename)}><Printer size={14} /> Print / Save PDF</button>
             {taxReturn.status !== 'filed' && (
               <button className="btn btn-primary btn-small" onClick={() => onMarkFiled(taxReturn.id)}><CheckCircle2 size={14} /> Mark as filed</button>
@@ -10581,6 +10587,7 @@ function App() {
           fmt={fmt}
           onClose={() => setClientStatementDoc(null)}
           shareImageToWhatsApp={shareImageToWhatsApp}
+          downloadNodeAsPdf={downloadNodeAsPdf}
         />
       )}
       {contributorStatementDoc && (
@@ -10602,7 +10609,7 @@ function App() {
         <SummaryReportModal doc={receiptSummaryDoc} settings={settings} fmt={fmt} onClose={() => setReceiptSummaryDoc(null)} downloadNodeAsPdf={downloadNodeAsPdf} />
       )}
       {biodataDoc && (
-        <BiodataDocModal doc={biodataDoc} settings={settings} fmt={fmt} onClose={() => setBiodataDoc(null)} shareImageToWhatsApp={shareImageToWhatsApp} />
+        <BiodataDocModal doc={biodataDoc} settings={settings} fmt={fmt} onClose={() => setBiodataDoc(null)} shareImageToWhatsApp={shareImageToWhatsApp} downloadNodeAsPdf={downloadNodeAsPdf} />
       )}
       {invoiceDoc && (
         <InvoiceDocModal
@@ -10688,6 +10695,7 @@ function App() {
           fmt={fmt}
           onClose={() => setTaxReturnDoc(null)}
           onMarkFiled={markTaxReturnFiled}
+          downloadNodeAsPdf={downloadNodeAsPdf}
         />
       )}
       {reminderDoc && (
