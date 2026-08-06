@@ -1901,7 +1901,7 @@ function DocFooter({ settings }) {
   return <div className="doc-footer">Powered by <strong>PocketLedger</strong><br />Generated {generated}</div>;
 }
 
-function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, shareToWhatsApp, shareImageToWhatsApp }) {
+function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, shareToWhatsApp, shareImageToWhatsApp, downloadNodeAsPdf }) {
   useEscClose(onClose);
   const isLoan = receipt.kind === 'loan';
   const isCycle = receipt.kind === 'cyclePayout';
@@ -1984,6 +1984,7 @@ function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, s
 
   const docCategory = isLoan ? 'Loans' : 'Thrift';
   const downloadFilename = makeDownloadFilename(settings, docCategory, personName, 'png', planName);
+  const downloadPdfFilename = downloadFilename.replace(/\.png$/i, '.pdf');
   const headerAccentColor = planAccentColor || MODULE_ACCENT_COLORS[docCategory];
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
@@ -2026,6 +2027,7 @@ function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, s
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
+            <button className="btn btn-outline btn-small" onClick={() => downloadNodeAsPdf('receipt-print-area', downloadPdfFilename)}><FileText size={14} /> Download PDF</button>
             <button className="btn btn-outline btn-small" onClick={() => printWithFilename(downloadFilename)}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(personPhone, waText, downloadFilename)}><MessageCircle size={14} /> Share image on WhatsApp</button>
           </div>
@@ -2035,7 +2037,7 @@ function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, s
   );
 }
 
-function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, shareToWhatsApp, shareImageToWhatsApp, message, receipts, creditNotes, onIssueCreditNote, onOpenCreditNote, onEditInvoice, onIssueInvoice, onVoidInvoice, onRestoreInvoice }) {
+function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, shareToWhatsApp, shareImageToWhatsApp, message, receipts, creditNotes, onIssueCreditNote, onOpenCreditNote, onEditInvoice, onIssueInvoice, onVoidInvoice, onRestoreInvoice, downloadNodeAsPdf }) {
   useEscClose(onClose);
   const status = invoiceStatusOf(invoice);
   const voided = status === 'void';
@@ -2052,6 +2054,7 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
   const balance = Math.max(0, netTotal - paid);
   const creditSettled = invoiceSettledByCreditOnly(invoice, receipts, creditNotes);
   const downloadFilename = makeDownloadFilename(settings, 'Payments', client ? client.name : invoice.number, 'png');
+  const downloadPdfFilename = downloadFilename.replace(/\.png$/i, '.pdf');
 
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
@@ -2139,6 +2142,7 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
             {status === 'void' && <button className="btn btn-secondary btn-small" onClick={() => onRestoreInvoice(invoice.id)}><RotateCcw size={14} /> Restore</button>}
             {status !== 'draft' && status !== 'void' && <button className="btn btn-outline btn-small" onClick={() => onIssueCreditNote(invoice)}><FileMinus size={14} /> Issue credit note</button>}
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
+            <button className="btn btn-outline btn-small" onClick={() => downloadNodeAsPdf('receipt-print-area', downloadPdfFilename)}><FileText size={14} /> Download PDF</button>
             <button className="btn btn-outline btn-small" onClick={() => printWithFilename(downloadFilename)}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(client?.phone, message, downloadFilename)}><MessageCircle size={14} /> Share image on WhatsApp</button>
           </div>
@@ -2148,7 +2152,7 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
   );
 }
 
-function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClose, shareToWhatsApp, shareImageToWhatsApp, onEditReceipt, onIssueReceipt }) {
+function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClose, shareToWhatsApp, shareImageToWhatsApp, onEditReceipt, onIssueReceipt, downloadNodeAsPdf }) {
   useEscClose(onClose);
   const payerName = client ? client.name : (receiptDoc.clientName || 'Walk-in customer');
   const payerPhone = client ? client.phone : '';
@@ -2167,6 +2171,7 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
     ...(voided ? ['This receipt has been voided and is no longer valid.'] : []),
   ].join('\n');
   const downloadFilename = makeDownloadFilename(settings, 'Payments', payerName, 'png');
+  const downloadPdfFilename = downloadFilename.replace(/\.png$/i, '.pdf');
 
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
@@ -2227,6 +2232,7 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
             {draft && <button className="btn btn-outline btn-small" onClick={() => onEditReceipt(receiptDoc)}><Edit3 size={14} /> Edit</button>}
             {draft && <button className="btn btn-secondary btn-small" onClick={() => onIssueReceipt(receiptDoc.id)}><Send size={14} /> Issue receipt</button>}
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
+            <button className="btn btn-outline btn-small" onClick={() => downloadNodeAsPdf('receipt-print-area', downloadPdfFilename)}><FileText size={14} /> Download PDF</button>
             <button className="btn btn-outline btn-small" onClick={() => printWithFilename(downloadFilename)}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(payerPhone, message, downloadFilename)}><MessageCircle size={14} /> Share image on WhatsApp</button>
           </div>
@@ -2236,7 +2242,7 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
   );
 }
 
-function CreditNoteDocModal({ creditNoteDoc, client, invoice, settings, fmt, onClose, shareImageToWhatsApp, onVoidCreditNote, onRestoreCreditNote }) {
+function CreditNoteDocModal({ creditNoteDoc, client, invoice, settings, fmt, onClose, shareImageToWhatsApp, onVoidCreditNote, onRestoreCreditNote, downloadNodeAsPdf }) {
   useEscClose(onClose);
   const issuedOn = new Date(creditNoteDoc.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   const voided = !!creditNoteDoc.voided;
@@ -2252,6 +2258,7 @@ function CreditNoteDocModal({ creditNoteDoc, client, invoice, settings, fmt, onC
     ...(voided ? ['This credit note has been voided and is no longer valid.'] : []),
   ].join('\n');
   const downloadFilename = makeDownloadFilename(settings, 'Payments', client ? client.name : creditNoteDoc.number, 'png');
+  const downloadPdfFilename = downloadFilename.replace(/\.png$/i, '.pdf');
 
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
@@ -2308,6 +2315,7 @@ function CreditNoteDocModal({ creditNoteDoc, client, invoice, settings, fmt, onC
               <button className="btn btn-outline btn-small" onClick={() => onVoidCreditNote(creditNoteDoc.id)}><Ban size={14} /> Void credit note</button>
             )}
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
+            <button className="btn btn-outline btn-small" onClick={() => downloadNodeAsPdf('receipt-print-area', downloadPdfFilename)}><FileText size={14} /> Download PDF</button>
             <button className="btn btn-outline btn-small" onClick={() => printWithFilename(downloadFilename)}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(client?.phone, message, downloadFilename)}><MessageCircle size={14} /> Share image on WhatsApp</button>
           </div>
@@ -2317,11 +2325,12 @@ function CreditNoteDocModal({ creditNoteDoc, client, invoice, settings, fmt, onC
   );
 }
 
-function ReminderDocModal({ reminderDoc, settings, fmt, onClose, queueRemaining = 0, shareImageToWhatsApp }) {
+function ReminderDocModal({ reminderDoc, settings, fmt, onClose, queueRemaining = 0, shareImageToWhatsApp, downloadNodeAsPdf }) {
   useEscClose(onClose);
   const { title, personName, personPhone, message, amountDue, dueDate, filename, accentColor } = reminderDoc;
   const issuedOn = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   const bodyLines = (message || '').split('\n').filter(Boolean);
+  const pdfFilename = (filename || 'reminder.png').replace(/\.png$/i, '.pdf');
 
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
@@ -2369,7 +2378,8 @@ function ReminderDocModal({ reminderDoc, settings, fmt, onClose, queueRemaining 
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
-            <button className="btn btn-outline btn-small" onClick={() => printWithFilename(filename)}><Printer size={14} /> Print / Save PDF</button>
+            <button className="btn btn-outline btn-small" onClick={() => downloadNodeAsPdf('receipt-print-area', pdfFilename)}><FileText size={14} /> Download PDF</button>
+            <button className="btn btn-outline btn-small" onClick={() => printWithFilename(filename || 'reminder.png')}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(personPhone, '', filename)}><MessageCircle size={14} /> Share image on WhatsApp</button>
             {queueRemaining > 0 && <button className="btn btn-outline btn-small" onClick={onClose}><ArrowRight size={14} /> Skip to next</button>}
           </div>
@@ -2378,7 +2388,7 @@ function ReminderDocModal({ reminderDoc, settings, fmt, onClose, queueRemaining 
     </div>
   );
 }
-function TabStatementModal({ tab, contact, settings, fmt, onClose, shareImageToWhatsApp, onEditEntry, onDeleteEntry }) {
+function TabStatementModal({ tab, contact, settings, fmt, onClose, shareImageToWhatsApp, onEditEntry, onDeleteEntry, downloadNodeAsPdf }) {
   useEscClose(onClose);
   const sortedEntries = [...(tab.entries || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
   let running = 0;
@@ -2421,6 +2431,27 @@ function TabStatementModal({ tab, contact, settings, fmt, onClose, shareImageToW
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = downloadFilename; a.click();
+    }).catch(() => {
+      if (entriesEl) { entriesEl.style.maxHeight = prevMaxHeight || ''; entriesEl.style.overflowY = prevOverflow || ''; }
+    });
+  };
+  const downloadPdf = () => {
+    const node = document.getElementById('receipt-print-area');
+    const entriesEl = entriesScrollRef.current;
+    const JsPdf = window.jspdf && window.jspdf.jsPDF;
+    if (!node || !window.html2canvas || !JsPdf) return;
+    const prevMaxHeight = entriesEl ? entriesEl.style.maxHeight : null;
+    const prevOverflow = entriesEl ? entriesEl.style.overflowY : null;
+    if (entriesEl) { entriesEl.style.maxHeight = 'none'; entriesEl.style.overflowY = 'visible'; }
+    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 3 }).then((canvas) => {
+      if (entriesEl) { entriesEl.style.maxHeight = prevMaxHeight || ''; entriesEl.style.overflowY = prevOverflow || ''; }
+      const imgData = canvas.toDataURL('image/png');
+      const pxToMm = 0.264583;
+      const wMm = canvas.width * pxToMm;
+      const hMm = canvas.height * pxToMm;
+      const pdf = new JsPdf({ orientation: wMm > hMm ? 'landscape' : 'portrait', unit: 'mm', format: [wMm, hMm] });
+      pdf.addImage(imgData, 'PNG', 0, 0, wMm, hMm);
+      pdf.save(downloadFilename.replace(/\.png$/i, '.pdf'));
     }).catch(() => {
       if (entriesEl) { entriesEl.style.maxHeight = prevMaxHeight || ''; entriesEl.style.overflowY = prevOverflow || ''; }
     });
@@ -2499,6 +2530,7 @@ function TabStatementModal({ tab, contact, settings, fmt, onClose, shareImageToW
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
+            <button className="btn btn-outline btn-small" onClick={downloadPdf}><FileText size={14} /> Download PDF</button>
             <button className="btn btn-outline btn-small" onClick={() => printWithFilename(downloadFilename)}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(personPhone, waText, downloadFilename)}><MessageCircle size={14} /> Share image on WhatsApp</button>
           </div>
