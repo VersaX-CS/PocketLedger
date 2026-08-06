@@ -3680,17 +3680,21 @@ function HomeScreen({ user, stats, onPick, alerts, onViewAlerts, onAlertClick, t
       <SectionHeader eyebrow={`Welcome back${user?.name ? ', ' + user.name.split(' ')[0] : ''}`} title="What would you like to open?" />
 
       <div className="home-quickbar">
-        <button className="home-qbtn" onClick={() => setOpenModal('search')}>
-          <Search size={15} /><span>Search</span>
-        </button>
-        <button className={`home-qbtn${todayActs.length > 0 ? ' home-qbtn-pulse-green' : ''}`} onClick={() => setOpenModal('activity')}>
-          <Clock size={15} /><span>Today’s activity</span>
-          {todayActs.length > 0 && <span className="home-qbadge">{todayActs.length}</span>}
-        </button>
-        <button className={`home-qbtn${highAlertCount > 0 ? ' home-qbtn-pulse-red' : topAlerts.length > 0 ? ' home-qbtn-pulse-amber' : ''}`} onClick={() => setOpenModal('alerts')}>
-          <AlertTriangle size={15} /><span>Needs attention</span>
-          {topAlerts.length > 0 && <span className="home-qbadge">{topAlerts.length}</span>}
-        </button>
+        <div className="home-quickbar-row">
+          <button className="home-qbtn home-qbtn-wide" onClick={() => setOpenModal('search')}>
+            <Search size={15} /><span>Search</span>
+          </button>
+        </div>
+        <div className="home-quickbar-row">
+          <button className={`home-qbtn${todayActs.length > 0 ? ' home-qbtn-pulse-green' : ''}`} onClick={() => setOpenModal('activity')}>
+            <Clock size={15} /><span>Today’s activity</span>
+            {todayActs.length > 0 && <span className="home-qbadge">{todayActs.length}</span>}
+          </button>
+          <button className={`home-qbtn${highAlertCount > 0 ? ' home-qbtn-pulse-red' : topAlerts.length > 0 ? ' home-qbtn-pulse-amber' : ''}`} onClick={() => setOpenModal('alerts')}>
+            <AlertTriangle size={15} /><span>Needs attention</span>
+            {topAlerts.length > 0 && <span className="home-qbadge">{topAlerts.length}</span>}
+          </button>
+        </div>
       </div>
 
       {openModal === 'search' && (
@@ -9409,8 +9413,10 @@ function App() {
         }
         .logo-mark-img{width:100%;height:100%;object-fit:cover;border-radius:50%;}
         .home-card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;}
-        .home-quickbar{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;}
+        .home-quickbar{display:flex;flex-direction:column;gap:10px;margin-bottom:20px;}
+        .home-quickbar-row{display:flex;gap:10px;width:100%;}
         .home-qbtn{display:flex;align-items:center;gap:7px;flex:1 1 0;min-width:0;padding:10px 14px;border-radius:10px;border:1.5px solid var(--paper-line);background:var(--surface);font-size:13px;font-weight:600;color:var(--ink);cursor:pointer;transition:background .12s,border-color .12s,box-shadow .12s;position:relative;white-space:nowrap;justify-content:center;}
+        .home-qbtn-wide{width:100%;}
         .home-qbtn:hover{background:var(--surface-2);border-color:var(--ink-soft);box-shadow:0 2px 8px rgba(0,0,0,0.07);}
         .home-qbtn svg{flex-shrink:0;color:var(--ink-soft);}
         .home-qbtn span{overflow:hidden;text-overflow:ellipsis;}
