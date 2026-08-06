@@ -2467,92 +2467,60 @@ function TabStatementModal({ tab, contact, settings, fmt, onClose, shareImageToW
     `${balanceLabel}: ${fmt(Math.abs(balance))}`,
   ].join('\n');
 
-  const entriesScrollRef = useRef(null);
+  const downloadPdfFilename = downloadFilename.replace(/\.png$/i, '.pdf');
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
-    const entriesEl = entriesScrollRef.current;
     if (!node || !window.html2canvas) return;
-    // The entries list scrolls on screen (flex + overflow-y:auto) so the header stays put;
-    // lift that constraint just for the capture so the full list renders, then restore it.
-    const prevMaxHeight = entriesEl ? entriesEl.style.maxHeight : null;
-    const prevOverflow = entriesEl ? entriesEl.style.overflowY : null;
-    if (entriesEl) { entriesEl.style.maxHeight = 'none'; entriesEl.style.overflowY = 'visible'; }
     withExpandedCapture(node, () => window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 })).then((canvas) => {
-      if (entriesEl) { entriesEl.style.maxHeight = prevMaxHeight || ''; entriesEl.style.overflowY = prevOverflow || ''; }
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = downloadFilename; a.click();
-    }).catch(() => {
-      if (entriesEl) { entriesEl.style.maxHeight = prevMaxHeight || ''; entriesEl.style.overflowY = prevOverflow || ''; }
-    });
-  };
-  const downloadPdf = () => {
-    const node = document.getElementById('receipt-print-area');
-    const entriesEl = entriesScrollRef.current;
-    const JsPdf = window.jspdf && window.jspdf.jsPDF;
-    if (!node || !window.html2canvas || !JsPdf) return;
-    const prevMaxHeight = entriesEl ? entriesEl.style.maxHeight : null;
-    const prevOverflow = entriesEl ? entriesEl.style.overflowY : null;
-    if (entriesEl) { entriesEl.style.maxHeight = 'none'; entriesEl.style.overflowY = 'visible'; }
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 3 }).then((canvas) => {
-      if (entriesEl) { entriesEl.style.maxHeight = prevMaxHeight || ''; entriesEl.style.overflowY = prevOverflow || ''; }
-      const imgData = canvas.toDataURL('image/png');
-      const pxToMm = 0.264583;
-      const wMm = canvas.width * pxToMm;
-      const hMm = canvas.height * pxToMm;
-      const pdf = new JsPdf({ orientation: wMm > hMm ? 'landscape' : 'portrait', unit: 'mm', format: [wMm, hMm] });
-      pdf.addImage(imgData, 'PNG', 0, 0, wMm, hMm);
-      pdf.save(downloadFilename.replace(/\.png$/i, '.pdf'));
-    }).catch(() => {
-      if (entriesEl) { entriesEl.style.maxHeight = prevMaxHeight || ''; entriesEl.style.overflowY = prevOverflow || ''; }
     });
   };
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card receipt-card tab-statement-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-card receipt-card" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3 className="kb-display">Transaction History</h3>
           <button className="icon-btn" onClick={onClose} title="Close" aria-label="Close"><X size={18} /></button>
         </div>
         <div className="modal-body">
           <div id="receipt-print-area" className="receipt-sheet">
-            <div className="tab-statement-fixed-top">
-              <DocHeader settings={settings} accentColor={MODULE_ACCENT_COLORS.Loans} />
-              <div className="doc-title-row">
-                <div>
-                  <div className="doc-title">IOU Statement</div>
-                  <div className="doc-title-meta">{statementNo} · {issuedOn}</div>
-                </div>
-                <div>
-                  <div className="doc-billed-label">Statement for</div>
-                  <div className="doc-billed-name">{personName}</div>
-                </div>
+            <DocHeader settings={settings} accentColor={MODULE_ACCENT_COLORS.Loans} />
+            <div className="doc-title-row">
+              <div>
+                <div className="doc-title">IOU Statement</div>
+                <div className="doc-title-meta">{statementNo} · {issuedOn}</div>
               </div>
               <div>
-                {personPhone && <div className="doc-line"><span>Phone</span><span className="kb-mono">{personPhone}</span></div>}
-                {tab.note && <div className="doc-line"><span>Note</span><span className="kb-mono">{tab.note}</span></div>}
+                <div className="doc-billed-label">Statement for</div>
+                <div className="doc-billed-name">{personName}</div>
               </div>
-              <div className="doc-summary-row">
-                <div className="doc-summary-chip doc-summary-chip-borrow">
-                  <div className="doc-summary-chip-label">Total borrowed</div>
-                  <div className="doc-summary-chip-value kb-mono">{fmt(totalBorrowed)}</div>
-                </div>
-                <div className="doc-summary-chip doc-summary-chip-payment">
-                  <div className="doc-summary-chip-label">Total paid back</div>
-                  <div className="doc-summary-chip-value kb-mono">{fmt(totalPaid)}</div>
-                </div>
-                <div className={`doc-summary-chip doc-summary-chip-balance-${balanceTone}`}>
-                  <div className="doc-summary-chip-label">{balanceLabel}</div>
-                  <div className="doc-summary-chip-value kb-mono">{fmt(Math.abs(balance))}</div>
-                </div>
-              </div>
-              <div className="doc-category">{rows.length} entr{rows.length === 1 ? 'y' : 'ies'} · oldest to newest</div>
             </div>
+            <div>
+              {personPhone && <div className="doc-line"><span>Phone</span><span className="kb-mono">{personPhone}</span></div>}
+              {tab.note && <div className="doc-line"><span>Note</span><span className="kb-mono">{tab.note}</span></div>}
+            </div>
+            <div className="doc-summary-row">
+              <div className="doc-summary-chip doc-summary-chip-borrow">
+                <div className="doc-summary-chip-label">Total borrowed</div>
+                <div className="doc-summary-chip-value kb-mono">{fmt(totalBorrowed)}</div>
+              </div>
+              <div className="doc-summary-chip doc-summary-chip-payment">
+                <div className="doc-summary-chip-label">Total paid back</div>
+                <div className="doc-summary-chip-value kb-mono">{fmt(totalPaid)}</div>
+              </div>
+              <div className={`doc-summary-chip doc-summary-chip-balance-${balanceTone}`}>
+                <div className="doc-summary-chip-label">{balanceLabel}</div>
+                <div className="doc-summary-chip-value kb-mono">{fmt(Math.abs(balance))}</div>
+              </div>
+            </div>
+            <div className="doc-category">{rows.length} entr{rows.length === 1 ? 'y' : 'ies'} · oldest to newest</div>
             {rows.length === 0 ? (
               <div className="panel-sub" style={{ marginTop: 10 }}>No transactions recorded yet.</div>
             ) : (
-              <div className="tab-statement-entries" ref={entriesScrollRef}>
+              <div>
                 {rows.map((r) => (
                   <div key={r.id} className={`doc-tx-row doc-tx-row-${r.type}`}>
                     <div className="doc-tx-row-main">
@@ -2574,14 +2542,12 @@ function TabStatementModal({ tab, contact, settings, fmt, onClose, shareImageToW
                 ))}
               </div>
             )}
-            <div className="tab-statement-fixed-bottom">
-              <DocSignature settings={settings} />
-              <DocFooter settings={settings} />
-            </div>
+            <DocSignature settings={settings} />
+            <DocFooter settings={settings} />
           </div>
           <div className="receipt-actions">
             <button className="btn btn-outline btn-small" onClick={downloadImage}><ImageIcon size={14} /> Download image</button>
-            <button className="btn btn-outline btn-small" onClick={downloadPdf}><FileText size={14} /> Download PDF</button>
+            <button className="btn btn-outline btn-small" onClick={() => downloadNodeAsPdf('receipt-print-area', downloadPdfFilename)}><FileText size={14} /> Download PDF</button>
             <button className="btn btn-outline btn-small" onClick={() => printWithFilename(downloadFilename)}><Printer size={14} /> Print / Save PDF</button>
             <button className="btn btn-ghost btn-small" onClick={() => shareImageToWhatsApp(personPhone, waText, downloadFilename)}><MessageCircle size={14} /> Share image on WhatsApp</button>
           </div>
@@ -9355,24 +9321,6 @@ function App() {
         .toast-undo:hover{text-decoration:underline;}
         .receipt-card{max-width:420px;}
         .receipt-sheet{background:#fff;border:1px solid var(--paper-line);border-radius:12px;padding:18px 16px;}
-        .modal-card.tab-statement-modal{display:flex;flex-direction:column;overflow:hidden;}
-        .tab-statement-modal .modal-head{flex-shrink:0;}
-        .tab-statement-modal .modal-body{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;}
-        .tab-statement-modal .receipt-sheet{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;}
-        .tab-statement-modal .receipt-actions{flex-shrink:0;}
-        .tab-statement-fixed-top, .tab-statement-fixed-bottom{flex-shrink:0;}
-        .tab-statement-entries{flex:1;min-height:70px;overflow-y:auto;-webkit-overflow-scrolling:touch;}
-        @media print{
-          .tab-statement-entries{max-height:none !important;overflow:visible !important;}
-          /* .tab-statement-entries isn't the only thing clipping the statement — its own
-             container chain (receipt-sheet, modal-body, modal-card) is also height/overflow
-             constrained so the header can stay pinned on screen. Freeing only the entries
-             list still left it capped by those outer boxes, so printing showed just the
-             on-screen preview instead of the full statement. Free the whole chain here. */
-          .modal-card, .tab-statement-modal .modal-body, .tab-statement-modal .receipt-sheet{
-            max-height:none !important;height:auto !important;overflow:visible !important;
-          }
-        }
         .receipt-brand{font-size:19px;font-weight:600;}
         .receipt-sub{font-size:11.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-soft);margin-bottom:14px;}
         .receipt-lines{display:flex;flex-direction:column;gap:9px;}
@@ -10603,6 +10551,7 @@ function App() {
             fmt={fmt}
             onClose={() => setTabStatementDoc(null)}
             shareImageToWhatsApp={shareImageToWhatsApp}
+            downloadNodeAsPdf={downloadNodeAsPdf}
             onEditEntry={(entry) => {
               setTabStatementDoc(null);
               openModal('editTabEntry', { tabId: liveTab.id, entryId: entry.id, type: entry.type, amount: entry.amount, date: entry.date, note: entry.note || '' });
