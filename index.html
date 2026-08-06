@@ -419,10 +419,43 @@ function cycleCurrentRecipientId(plan) {
   return cyclePayoutOrder(plan).find((id) => !paidIds.has(id)) || null;
 }
 
+// Some document nodes (e.g. the IOU statement's entries list) scroll on screen so a fixed
+// header stays put — overflow-y:auto plus a max-height. Left as-is, html2canvas would only
+// capture what's visibly scrolled into view, silently cutting off older entries. This finds
+// any such clipped descendants inside `node`, temporarily lifts the clipping so the *entire*
+// content renders, runs `fn`, then restores the original styles no matter how `fn` resolves.
+// Used by every export path (download image, download PDF, share) so full data always goes
+// out, not just what happens to be scrolled into view on screen.
+function withExpandedCapture(node, fn) {
+  if (!node) return fn();
+  const clipped = Array.from(node.querySelectorAll('*')).filter((el) => {
+    const cs = window.getComputedStyle(el);
+    return (cs.overflowY === 'auto' || cs.overflowY === 'scroll' || cs.overflow === 'auto' || cs.overflow === 'scroll')
+      && el.scrollHeight > el.clientHeight;
+  });
+  const prev = clipped.map((el) => ({ el, maxHeight: el.style.maxHeight, overflowY: el.style.overflowY, overflow: el.style.overflow }));
+  clipped.forEach((el) => { el.style.maxHeight = 'none'; el.style.overflowY = 'visible'; el.style.overflow = 'visible'; });
+  const restore = () => prev.forEach(({ el, maxHeight, overflowY, overflow }) => {
+    el.style.maxHeight = maxHeight; el.style.overflowY = overflowY; el.style.overflow = overflow;
+  });
+  let result;
+  try {
+    result = fn();
+  } catch (e) {
+    restore();
+    throw e;
+  }
+  if (result && typeof result.then === 'function') {
+    return result.then((v) => { restore(); return v; }, (e) => { restore(); throw e; });
+  }
+  restore();
+  return result;
+}
+
 function shareNodeImageToWhatsApp(elementId, filename, waHref) {
   const node = document.getElementById(elementId);
   if (!node || !window.html2canvas) { window.open(waHref, '_blank'); return; }
-  window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+  withExpandedCapture(node, () => window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 })).then((canvas) => {
     canvas.toBlob((blob) => {
       if (!blob) { window.open(waHref, '_blank'); return; }
       const file = new File([blob], filename, { type: 'image/png' });
@@ -1989,7 +2022,7 @@ function ReceiptModal({ receipt, onClose, fmt, settings, planById, memberById, s
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+    withExpandedCapture(node, () => window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 })).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = downloadFilename; a.click();
@@ -2059,7 +2092,7 @@ function InvoiceDocModal({ invoice, client, settings, fmt, onClose, onMarkPaid, 
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+    withExpandedCapture(node, () => window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 })).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = downloadFilename; a.click();
@@ -2176,7 +2209,7 @@ function PaymentReceiptModal({ receiptDoc, client, invoice, settings, fmt, onClo
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+    withExpandedCapture(node, () => window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 })).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = downloadFilename; a.click();
@@ -2263,7 +2296,7 @@ function CreditNoteDocModal({ creditNoteDoc, client, invoice, settings, fmt, onC
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+    withExpandedCapture(node, () => window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 })).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = downloadFilename; a.click();
@@ -2335,7 +2368,7 @@ function ReminderDocModal({ reminderDoc, settings, fmt, onClose, queueRemaining 
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+    withExpandedCapture(node, () => window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 })).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = filename || 'reminder.png'; a.click();
@@ -2426,7 +2459,7 @@ function TabStatementModal({ tab, contact, settings, fmt, onClose, shareImageToW
     const prevMaxHeight = entriesEl ? entriesEl.style.maxHeight : null;
     const prevOverflow = entriesEl ? entriesEl.style.overflowY : null;
     if (entriesEl) { entriesEl.style.maxHeight = 'none'; entriesEl.style.overflowY = 'visible'; }
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+    withExpandedCapture(node, () => window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 })).then((canvas) => {
       if (entriesEl) { entriesEl.style.maxHeight = prevMaxHeight || ''; entriesEl.style.overflowY = prevOverflow || ''; }
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
@@ -2570,7 +2603,7 @@ function TabEntryReceiptModal({ tab, entry, contact, settings, fmt, onClose, onE
   const downloadImage = () => {
     const node = document.getElementById('entry-receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+    withExpandedCapture(node, () => window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 })).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = `iou-entry-${receiptNo}.png`; a.click();
@@ -2658,7 +2691,7 @@ function ClientStatementModal({ client, invoices, receipts, creditNotes, setting
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+    withExpandedCapture(node, () => window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 })).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = statementFilename; a.click();
@@ -2757,7 +2790,7 @@ function ContributorStatementModal({ member, plans, contributions, settings, fmt
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+    withExpandedCapture(node, () => window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 })).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = statementImageFilename; a.click();
@@ -2834,7 +2867,7 @@ function SummaryReportModal({ doc, settings, fmt, onClose, downloadNodeAsPdf }) 
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+    withExpandedCapture(node, () => window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 })).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = downloadFilename; a.click();
@@ -2893,7 +2926,7 @@ function BiodataDocModal({ doc, settings, fmt, onClose, shareImageToWhatsApp, do
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+    withExpandedCapture(node, () => window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 })).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = filename || 'biodata.png'; a.click();
@@ -2953,7 +2986,7 @@ function TaxReturnDocModal({ taxReturn, settings, fmt, onClose, onMarkFiled, dow
   const downloadImage = () => {
     const node = document.getElementById('receipt-print-area');
     if (!node || !window.html2canvas) return;
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 }).then((canvas) => {
+    withExpandedCapture(node, () => window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 16 })).then((canvas) => {
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url; a.download = downloadFilename; a.click();
@@ -6192,7 +6225,7 @@ function App() {
     const node = document.getElementById(nodeId);
     const JsPdf = window.jspdf && window.jspdf.jsPDF;
     if (!node || !window.html2canvas || !JsPdf) { flash('PDF export isn\u2019t available right now.'); return; }
-    window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 3 }).then((canvas) => {
+    withExpandedCapture(node, () => window.html2canvas(node, { backgroundColor: '#F7F3EA', scale: 3 })).then((canvas) => {
       const imgData = canvas.toDataURL('image/png');
       const pxToMm = 0.264583;
       const wMm = canvas.width * pxToMm;
