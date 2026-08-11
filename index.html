@@ -6968,7 +6968,7 @@ function App() {
                             setContribPrompt({ planId: plan.id, memberId, period, frequency: plan.frequency, defaultAmount: memberAmount, editingId: contribution.id });
                             return;
                           }
-                          setContribAmountInput('');
+                          setContribAmountInput(memberAmount ? String(memberAmount) : '');
                           setContribDateInput(todayISO());
                           setContribPrompt({ planId: plan.id, memberId, period, frequency: plan.frequency, defaultAmount: memberAmount });
                         };
