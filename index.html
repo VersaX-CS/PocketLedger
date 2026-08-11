@@ -6128,12 +6128,17 @@ function App() {
     if (!token || !owner || !repo) { setGithubError('Enter the repo owner, repository name, and a personal access token.'); return; }
     setGithubSyncing(true); setGithubError('');
     try {
+      // Note: GET /user is only used to sanity-check the token is well-formed and not revoked.
+      // Fine-grained PATs commonly show "This token does not have any user permissions" (that's
+      // expected and fine — repo-scoped fine-grained tokens aren't meant to carry user scopes).
+      // If GitHub ever 403s this specific call for that reason, don't block setup on it —
+      // fall through to the repo/branch checks, which are the checks that actually matter.
       const meRes = await fetch('https://api.github.com/user', { headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github+json' } });
-      if (!meRes.ok) { setGithubError('Token rejected — make sure it has repo access.'); setGithubSyncing(false); return; }
+      if (!meRes.ok && meRes.status === 401) { setGithubError('Token rejected — it looks invalid or revoked.'); setGithubSyncing(false); return; }
       const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github+json' } });
-      if (!repoRes.ok) { setGithubError('Repo not found — check the owner and repository name.'); setGithubSyncing(false); return; }
+      if (!repoRes.ok) { setGithubError(await githubErrorFromResponse(repoRes, 'repo not found — check the owner and repository name, and that the token was granted access to this repo.')); setGithubSyncing(false); return; }
       const branchRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}`, { headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github+json' } });
-      if (!branchRes.ok) { setGithubError(`Branch "${branch}" not found on that repo.`); setGithubSyncing(false); return; }
+      if (!branchRes.ok) { setGithubError(await githubErrorFromResponse(branchRes, `branch "${branch}" not found on that repo.`)); setGithubSyncing(false); return; }
       githubSaveToken(token);
       githubSaveRepoConfig({ owner, repo, branch, filepath });
       closeModalSilently();
@@ -6143,6 +6148,25 @@ function App() {
       console.warn('PocketLedger: GitHub config error', err);
     }
     setGithubSyncing(false);
+  };
+
+  // Turns a failed GitHub API response into a specific, actionable message instead of a
+  // generic "it didn't work" — the status code plus whatever message GitHub sent back
+  // (rate limit, branch protection, bad credentials, oversized file, etc.) tells us and
+  // the user exactly what's wrong, instead of sending them back to re-check permissions
+  // that were already fine.
+  const githubErrorFromResponse = async (res, fallbackContext) => {
+    let apiMessage = '';
+    try { const body = await res.json(); apiMessage = body && body.message ? body.message : ''; } catch {}
+    if (res.status === 401) return 'Save failed (401) — the token is invalid or was revoked. Reconnect with a new token.';
+    if (res.status === 403) {
+      if (/rate limit/i.test(apiMessage)) return 'Save failed (403) — GitHub API rate limit hit. Wait a bit and try again.';
+      return `Save failed (403) — the token was rejected for this write${apiMessage ? `: "${apiMessage}"` : ''}. This usually means branch protection on that branch, or (for an org repo) the token hasn't been authorized for SSO.`;
+    }
+    if (res.status === 404) return `Save failed (404) — repo, branch, or path not found${apiMessage ? `: "${apiMessage}"` : ''}. Double-check the owner/repo/branch in Configure GitHub.`;
+    if (res.status === 409) return 'Save failed (409) — the file changed on GitHub between reading and writing. Try Save again.';
+    if (res.status === 422) return `Save failed (422) — ${apiMessage || 'GitHub rejected the request (often an sha mismatch or oversized file).'}`;
+    return `Save failed (${res.status})${apiMessage ? ` — ${apiMessage}` : ` — ${fallbackContext}`}`;
   };
 
   const githubSaveData = async () => {
@@ -6161,12 +6185,36 @@ function App() {
         headers: { Authorization: `token ${githubToken}`, Accept: 'application/vnd.github+json' },
       });
       if (existingRes.ok) { const existing = await existingRes.json(); sha = existing.sha; }
-      const saveRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filepath}`, {
+      else if (existingRes.status !== 404) {
+        // A non-404 failure here (401/403/etc.) means we never even got to the write —
+        // surface that instead of silently treating it like "file doesn't exist yet".
+        setGithubError(await githubErrorFromResponse(existingRes, 'could not read the current file to get its sha.'));
+        setGithubSyncing(false);
+        return;
+      }
+      let saveRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filepath}`, {
         method: 'PUT',
         headers: { Authorization: `token ${githubToken}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: `PocketLedger sync - ${new Date().toISOString()}`, content, branch, ...(sha ? { sha } : {}) }),
       });
-      if (!saveRes.ok) { setGithubError('Save failed — check the token still has write access to this repo/branch.'); setGithubSyncing(false); return; }
+      // A 409/422 sha-mismatch can happen if the file was changed on GitHub (or from another
+      // device) after we fetched the sha above. Re-fetch the current sha once and retry —
+      // this is what "someone else pushed in between" looks like, and a silent retry fixes
+      // it without making the user click Save twice.
+      if ((saveRes.status === 409 || saveRes.status === 422) && sha) {
+        const retryRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filepath}?ref=${encodeURIComponent(branch)}`, {
+          headers: { Authorization: `token ${githubToken}`, Accept: 'application/vnd.github+json' },
+        });
+        if (retryRes.ok) {
+          const retryExisting = await retryRes.json();
+          saveRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filepath}`, {
+            method: 'PUT',
+            headers: { Authorization: `token ${githubToken}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: `PocketLedger sync - ${new Date().toISOString()}`, content, branch, sha: retryExisting.sha }),
+          });
+        }
+      }
+      if (!saveRes.ok) { setGithubError(await githubErrorFromResponse(saveRes, 'check the token still has write access to this repo/branch.')); setGithubSyncing(false); return; }
       const ts = new Date().toISOString();
       githubSaveLastSync(ts);
       flash('Data saved to GitHub!');
@@ -6185,7 +6233,7 @@ function App() {
       const loadRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filepath}?ref=${encodeURIComponent(branch)}`, {
         headers: { Authorization: `token ${githubToken}`, Accept: 'application/vnd.github.raw+json' },
       });
-      if (!loadRes.ok) { setGithubError('Could not load data — file not found on that branch.'); setGithubSyncing(false); return; }
+      if (!loadRes.ok) { setGithubError(await githubErrorFromResponse(loadRes, 'file not found on that branch.')); setGithubSyncing(false); return; }
       const backupText = await loadRes.text();
       const backup = JSON.parse(backupText);
       if (!backup.members || !backup.plans) throw new Error('Invalid backup format');
