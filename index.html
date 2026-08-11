@@ -135,6 +135,14 @@ const todayISO = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
+// Formats a Date object as YYYY-MM-DD from its LOCAL calendar fields (same approach as
+// todayISO above). This matters anywhere a date was normalized to local midnight via
+// setHours(0,0,0,0) or the Date(year, month, day) constructor and then serialized with
+// .toISOString() — toISOString() always converts to UTC first, which silently rolls the
+// date back by one day for anyone in a timezone ahead of UTC (e.g. WAT, UTC+1) once that
+// local midnight crosses back over the UTC day boundary. That's what caused a thrift plan's
+// chosen start date (e.g. 2 Aug) to generate its first period one day early (1 Aug).
+const toISODateLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 // Hashes a password with SHA-256 before it's ever stored or compared — the app has no
 // server, so this is client-side hashing (not salted/peppered like a real backend would do),
 // but it means the raw password is never written to localStorage or an exported backup.
@@ -269,7 +277,7 @@ function lastNDates(n, stepDays) {
   base.setHours(0, 0, 0, 0);
   for (let i = n - 1; i >= 0; i--) {
     const d = new Date(base.getTime() - i * stepDays * dayMs);
-    arr.push(d.toISOString().slice(0, 10));
+    arr.push(toISODateLocal(d));
   }
   return arr;
 }
@@ -278,7 +286,7 @@ function lastNMonths(n) {
   const base = new Date();
   for (let i = n - 1; i >= 0; i--) {
     const d = new Date(base.getFullYear(), base.getMonth() - i, 1);
-    arr.push(d.toISOString().slice(0, 10));
+    arr.push(toISODateLocal(d));
   }
   return arr;
 }
@@ -288,7 +296,7 @@ function periodsFromStart(startDate, stepDays, cap) {
   const totalDays = Math.max(0, Math.round((today - start) / dayMs));
   const count = Math.min(Math.max(1, Math.floor(totalDays / stepDays) + 1), cap);
   const arr = [];
-  for (let i = 0; i < count; i++) arr.push(new Date(start.getTime() + i * stepDays * dayMs).toISOString().slice(0, 10));
+  for (let i = 0; i < count; i++) arr.push(toISODateLocal(new Date(start.getTime() + i * stepDays * dayMs)));
   return arr;
 }
 // Adds `months` calendar months to `date`, keeping the same day-of-month where possible
@@ -312,7 +320,7 @@ function monthsFromStart(startDate, cap) {
     count++;
   }
   const arr = [];
-  for (let i = 0; i < count; i++) arr.push(addMonthsClamped(start, i).toISOString().slice(0, 10));
+  for (let i = 0; i < count; i++) arr.push(toISODateLocal(addMonthsClamped(start, i)));
   return arr;
 }
 function periodsForPlan(plan) {
@@ -974,10 +982,10 @@ function periodsForCount(startDate, frequency, count) {
   const start = new Date(startDate); start.setHours(0, 0, 0, 0);
   const arr = [];
   if (frequency === 'monthly') {
-    for (let i = 0; i < count; i++) arr.push(addMonthsClamped(start, i).toISOString().slice(0, 10));
+    for (let i = 0; i < count; i++) arr.push(toISODateLocal(addMonthsClamped(start, i)));
   } else {
     const stepDays = frequency === 'weekly' ? 7 : 1;
-    for (let i = 0; i < count; i++) arr.push(new Date(start.getTime() + i * stepDays * dayMs).toISOString().slice(0, 10));
+    for (let i = 0; i < count; i++) arr.push(toISODateLocal(new Date(start.getTime() + i * stepDays * dayMs)));
   }
   return arr;
 }
@@ -992,10 +1000,10 @@ function remapPeriodToNewStart(period, oldStart, newStart, frequency) {
   const p = new Date(period); p.setHours(0, 0, 0, 0);
   if (frequency === 'monthly') {
     const monthIndex = (p.getFullYear() - os.getFullYear()) * 12 + (p.getMonth() - os.getMonth());
-    return addMonthsClamped(ns, monthIndex).toISOString().slice(0, 10);
+    return toISODateLocal(addMonthsClamped(ns, monthIndex));
   }
   const dayOffset = Math.round((ns - os) / dayMs);
-  return new Date(p.getTime() + dayOffset * dayMs).toISOString().slice(0, 10);
+  return toISODateLocal(new Date(p.getTime() + dayOffset * dayMs));
 }
 function excelRowsForImport(workbook) {
   let autoResult = null;
