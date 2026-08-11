@@ -4156,7 +4156,7 @@ function App() {
   // In-app replacement for window.confirm; onConfirm runs only if confirmed.
   // opts.requireText: if set, the person must type this exact text before the confirm button unlocks.
   const askConfirm = (message, onConfirm, opts) => {
-    setConfirmDialog({ message, onConfirm, confirmLabel: (opts && opts.confirmLabel) || 'Delete', danger: !opts || opts.danger !== false, requireText: (opts && opts.requireText) || null });
+    setConfirmDialog({ message, onConfirm, onCancel: (opts && opts.onCancel) || null, confirmLabel: (opts && opts.confirmLabel) || 'Delete', danger: !opts || opts.danger !== false, requireText: (opts && opts.requireText) || null });
   };
   const digitsOnly = (s) => (s || '').replace(/\D/g, '');
   const waHref = (phone, text) => {
@@ -4814,7 +4814,48 @@ function App() {
     return s + 1;
   });
   const tourBack = () => setTourStep((s) => Math.max(0, s - 1));
-  const handleLogout = () => { setCurrentUser(null); setActiveModule('home'); setActiveTab('home'); };
+  
+  const handleLogout = () => {
+    if (githubConnected) {
+      askConfirm(
+        'Save your data to GitHub before signing out?',
+        () => {
+          githubSaveData();
+          setTimeout(() => {
+            setCurrentUser(null);
+            setActiveModule('home');
+            setActiveTab('home');
+          }, 500);
+        },
+        {
+          confirmLabel: 'Save & sign out',
+          danger: false,
+          onCancel: () => {
+            setCurrentUser(null);
+            setActiveModule('home');
+            setActiveTab('home');
+          }
+        }
+      );
+    } else {
+      setCurrentUser(null);
+      setActiveModule('home');
+      setActiveTab('home');
+    }
+  };
+  
+  // Auto-save on page exit if connected to GitHub
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (githubConnected && currentUser) {
+        e.preventDefault();
+        e.returnValue = 'Save your data to GitHub before leaving?';
+        return e.returnValue;
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [githubConnected, currentUser]);
   const updateLoginEmail = () => {
     if (guardWrite()) return;
     if (!newLoginEmail || !newLoginEmail.includes('@')) { flash('Enter a valid email address.'); return; }
@@ -6049,72 +6090,129 @@ function App() {
   }, [currentUser, settings.autoBackupEnabled]);
   /* ===== GitHub Gist sync ===== */
   const [githubToken, setGithubToken] = useState(() => { try { return window.localStorage.getItem('pl:github:token') || ''; } catch { return ''; } });
-  const [githubGistId, setGithubGistId] = useState(() => { try { return window.localStorage.getItem('pl:github:gistId') || ''; } catch { return ''; } });
+  const [githubRepoConfig, setGithubRepoConfig] = useState(() => { try { return JSON.parse(window.localStorage.getItem('pl:github:repoConfig') || 'null') || { owner: '', repo: '', filepath: 'pocketledger-backup.json' }; } catch { return { owner: '', repo: '', filepath: 'pocketledger-backup.json' }; } });
   const [githubSyncing, setGithubSyncing] = useState(false);
   const [githubLastSync, setGithubLastSync] = useState(() => { try { return window.localStorage.getItem('pl:github:lastSync') || ''; } catch { return ''; } });
   const [githubTokenInput, setGithubTokenInput] = useState('');
+  const [githubOwnerInput, setGithubOwnerInput] = useState('');
+  const [githubRepoInput, setGithubRepoInput] = useState('');
   const [githubError, setGithubError] = useState('');
-  const githubConnected = !!(githubToken && githubGistId);
+  const githubConnected = !!(githubToken && githubRepoConfig?.owner && githubRepoConfig?.repo);
 
   const githubSaveToken = (token) => { try { window.localStorage.setItem('pl:github:token', token); } catch {} setGithubToken(token); };
-  const githubSaveGistId = (id) => { try { window.localStorage.setItem('pl:github:gistId', id); } catch {} setGithubGistId(id); };
+  const githubSaveRepoConfig = (config) => { try { window.localStorage.setItem('pl:github:repoConfig', JSON.stringify(config)); } catch {} setGithubRepoConfig(config); };
   const githubSaveLastSync = (ts) => { try { window.localStorage.setItem('pl:github:lastSync', ts); } catch {} setGithubLastSync(ts); };
 
   const githubConnect = async () => {
     const token = githubTokenInput.trim();
-    if (!token) { setGithubError('Paste your GitHub Personal Access Token first.'); return; }
+    const owner = githubOwnerInput.trim();
+    const repo = githubRepoInput.trim();
+    if (!token || !owner || !repo) { setGithubError('Enter your token, GitHub username, and repo name.'); return; }
     setGithubSyncing(true); setGithubError('');
     try {
-      // Check token is valid
       const meRes = await fetch('https://api.github.com/user', { headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github+json' } });
-      if (!meRes.ok) { setGithubError('Token rejected — make sure it has the "gist" scope.'); setGithubSyncing(false); return; }
-      // Create a private gist
+      if (!meRes.ok) { setGithubError('Token rejected — make sure it has repo access.'); setGithubSyncing(false); return; }
+      const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github+json' } });
+      if (!repoRes.ok) { setGithubError('Repo not found — check owner and repo name.'); setGithubSyncing(false); return; }
       const payload = backupPayload();
-      const createRes = await fetch('https://api.github.com/gists', {
-        method: 'POST',
+      const filepath = 'pocketledger-backup.json';
+      const content = btoa(JSON.stringify(payload, null, 2));
+      const saveRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filepath}`, {
+        method: 'PUT',
         headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description: 'PocketLedger auto-sync backup', public: false, files: { 'pocketledger-backup.json': { content: JSON.stringify(payload, null, 2) } } }),
+        body: JSON.stringify({ message: 'PocketLedger sync', content: content }),
       });
-      if (!createRes.ok) { setGithubError('Could not create a Gist — check token permissions.'); setGithubSyncing(false); return; }
-      const gist = await createRes.json();
+      if (!saveRes.ok) { setGithubError('Could not save to repo — check permissions.'); setGithubSyncing(false); return; }
+      const config = { owner, repo, filepath };
       githubSaveToken(token);
-      githubSaveGistId(gist.id);
+      githubSaveRepoConfig(config);
       const ts = new Date().toISOString();
       githubSaveLastSync(ts);
       setGithubTokenInput('');
-      flash('Connected! Data synced to a new private GitHub Gist.');
+      setGithubOwnerInput('');
+      setGithubRepoInput('');
+      flash('Connected to GitHub repo! Click Save to sync your data anytime.');
     } catch (err) {
-      setGithubError('Network error — check your connection and try again.');
+      setGithubError('Network error — check your connection.');
       console.warn('PocketLedger: GitHub connect error', err);
     }
     setGithubSyncing(false);
   };
 
-  const githubSyncNow = async () => {
+  const githubSaveData = async () => {
     if (!githubConnected) return;
     setGithubSyncing(true); setGithubError('');
     try {
       const payload = backupPayload();
-      const patchRes = await fetch(`https://api.github.com/gists/${githubGistId}`, {
-        method: 'PATCH',
+      const content = btoa(JSON.stringify(payload, null, 2));
+      const saveRes = await fetch(`https://api.github.com/repos/${githubRepoConfig.owner}/${githubRepoConfig.repo}/contents/${githubRepoConfig.filepath}`, {
+        method: 'PUT',
         headers: { Authorization: `token ${githubToken}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files: { 'pocketledger-backup.json': { content: JSON.stringify(payload, null, 2) } } }),
+        body: JSON.stringify({ message: `PocketLedger sync - ${new Date().toISOString()}`, content: content }),
       });
-      if (!patchRes.ok) { setGithubError('Sync failed — Gist may have been deleted. Disconnect and reconnect.'); setGithubSyncing(false); return; }
+      if (!saveRes.ok) { setGithubError('Save failed — repo may have changed. Disconnect and reconnect.'); setGithubSyncing(false); return; }
       const ts = new Date().toISOString();
       githubSaveLastSync(ts);
-      flash('Synced to GitHub Gist.');
+      flash('Data saved to GitHub!');
     } catch (err) {
       setGithubError('Network error — check your connection.');
-      console.warn('PocketLedger: GitHub sync error', err);
+      console.warn('PocketLedger: GitHub save error', err);
+    }
+    setGithubSyncing(false);
+  };
+
+  const githubLoadData = async () => {
+    if (!githubConnected) return;
+    setGithubSyncing(true); setGithubError('');
+    try {
+      const loadRes = await fetch(`https://api.github.com/repos/${githubRepoConfig.owner}/${githubRepoConfig.repo}/contents/${githubRepoConfig.filepath}`, {
+        headers: { Authorization: `token ${githubToken}`, Accept: 'application/vnd.github.raw+json' },
+      });
+      if (!loadRes.ok) { setGithubError('Could not load data — file not found in repo.'); setGithubSyncing(false); return; }
+      const backupText = await loadRes.text();
+      const backup = JSON.parse(backupText);
+      if (!backup.members || !backup.plans) throw new Error('Invalid backup format');
+      askConfirm(
+        'Load data from GitHub? This will replace all local data with what\'s in the repo.',
+        () => {
+          if (backup.users && backup.users.length) {
+            setUsers(backup.users);
+            const matched = backup.users.find((u) => u.id === currentUser.id) || backup.users.find((u) => u.email.toLowerCase() === currentUser.email.toLowerCase());
+            if (matched) setCurrentUser(matched);
+          }
+          setMembers(backup.members || []);
+          setPlans(backup.plans || []);
+          setContributions(backup.contributions || []);
+          setLoansGiven(backup.loansGiven || []);
+          setLoansReceived(backup.loansReceived || []);
+          setLoanContacts(backup.loanContacts || []);
+          setLoanTabs(backup.loanTabs || []);
+          setExpenses(backup.expenses || []);
+          setBudgets(backup.budgets || []);
+          setClients(backup.clients || []);
+          setInvoices(backup.invoices || []);
+          setReceipts(backup.receipts || []);
+          setCreditNotes(backup.creditNotes || []);
+          setTaxTransactions(backup.taxTransactions || []);
+          setTaxImports(backup.taxImports || []);
+          setTaxReturns(backup.taxReturns || []);
+          if (backup.settings) setSettings((s) => ({ ...s, ...backup.settings }));
+          githubSaveLastSync(new Date().toISOString());
+          flash('Data loaded from GitHub!');
+        },
+        { confirmLabel: 'Load from GitHub', danger: false }
+      );
+    } catch (err) {
+      setGithubError('Network error or invalid data — check your connection.');
+      console.warn('PocketLedger: GitHub load error', err);
     }
     setGithubSyncing(false);
   };
 
   const githubDisconnect = () => {
-    try { window.localStorage.removeItem('pl:github:token'); window.localStorage.removeItem('pl:github:gistId'); window.localStorage.removeItem('pl:github:lastSync'); } catch {}
-    setGithubToken(''); setGithubGistId(''); setGithubLastSync(''); setGithubError('');
-    flash('GitHub Gist sync disconnected.');
+    try { window.localStorage.removeItem('pl:github:token'); window.localStorage.removeItem('pl:github:repoConfig'); window.localStorage.removeItem('pl:github:lastSync'); } catch {}
+    setGithubToken(''); setGithubRepoConfig({ owner: '', repo: '', filepath: 'pocketledger-backup.json' }); setGithubLastSync(''); setGithubError('');
+    flash('GitHub repo sync disconnected.');
   };
 
   // Fetches the backup file currently stored in the connected Gist (not local state)
@@ -6145,26 +6243,6 @@ function App() {
     }
     setGithubDownloading(false);
   };
-
-  // Auto-sync on data save when connected
-  const githubAutoSyncRef = useRef(null);
-  useEffect(() => {
-    if (!githubConnected || isReadOnly) return;
-    if (githubAutoSyncRef.current) clearTimeout(githubAutoSyncRef.current);
-    githubAutoSyncRef.current = setTimeout(async () => {
-      try {
-        const payload = backupPayload();
-        const res = await fetch(`https://api.github.com/gists/${githubGistId}`, {
-          method: 'PATCH',
-          headers: { Authorization: `token ${githubToken}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
-          body: JSON.stringify({ files: { 'pocketledger-backup.json': { content: JSON.stringify(payload, null, 2) } } }),
-        });
-        if (res.ok) { const ts = new Date().toISOString(); githubSaveLastSync(ts); }
-      } catch {}
-    }, 4000);
-    return () => { if (githubAutoSyncRef.current) clearTimeout(githubAutoSyncRef.current); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [members, plans, contributions, loansGiven, loansReceived, expenses, budgets, clients, invoices]);
 
   const exportPlanCsv = (plan) => {
     const periods = periodsForPlan(plan);
@@ -8731,42 +8809,50 @@ function App() {
         <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--paper-line)' }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
-            Sync to GitHub Gist
+            Sync to GitHub Repository
           </label>
           <div className="panel-sub" style={{ marginBottom: 10 }}>
-            Your data is saved to a private GitHub Gist automatically whenever something changes. You need a GitHub account and a Personal Access Token with the <strong>gist</strong> scope.
+            Save your data to a JSON file in a GitHub repo. Click <strong>Save</strong> to push changes, and <strong>Load</strong> to pull data from GitHub anytime, from any device.
           </div>
           {githubConnected ? (
             <div>
               <div className="settings-actions" style={{ marginBottom: 8 }}>
                 <span className="panel-sub" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <CheckCircle2 size={14} style={{ color: 'var(--green)' }} />
-                  Connected — syncs automatically
+                  Connected to {githubRepoConfig.owner}/{githubRepoConfig.repo}
                   {githubLastSync && <span style={{ color: 'var(--ink-soft)' }}>· Last: {new Date(githubLastSync).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>}
                 </span>
               </div>
               <div className="settings-actions">
-                <button className="btn btn-outline btn-small" onClick={githubSyncNow} disabled={githubSyncing}>{githubSyncing ? 'Syncing…' : <><Download size={13} /> Sync now</>}</button>
-                <button className="btn btn-outline btn-small" onClick={githubDownloadBackup} disabled={githubDownloading}>{githubDownloading ? 'Downloading…' : <><Download size={13} /> Download backup</>}</button>
-                <a className="btn btn-ghost btn-small" href={`https://gist.github.com/${githubGistId}`} target="_blank" rel="noopener noreferrer">View Gist ↗</a>
+                <button className="btn btn-outline btn-small" onClick={githubSaveData} disabled={githubSyncing}>{githubSyncing ? 'Saving…' : <><Upload size={13} /> Save to GitHub</>}</button>
+                <button className="btn btn-outline btn-small" onClick={githubLoadData} disabled={githubSyncing}>{githubSyncing ? 'Loading…' : <><Download size={13} /> Load from GitHub</>}</button>
+                <a className="btn btn-ghost btn-small" href={`https://github.com/${githubRepoConfig.owner}/${githubRepoConfig.repo}/blob/main/${githubRepoConfig.filepath}`} target="_blank" rel="noopener noreferrer">View file ↗</a>
                 <button className="btn btn-ghost btn-small" onClick={githubDisconnect}>Disconnect</button>
               </div>
               {githubError && <div className="panel-sub" style={{ color: 'var(--brick)', marginTop: 8 }}>{githubError}</div>}
             </div>
           ) : (
             <div>
-              <div className="field-row" style={{ gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div className="field-row" style={{ gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 10 }}>
                 <div className="field" style={{ flex: '1 1 200px' }}>
                   <label>Personal Access Token</label>
-                  <input className="kb-input" type="password" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" value={githubTokenInput} onChange={(e) => setGithubTokenInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && githubConnect()} />
+                  <input className="kb-input" type="password" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" value={githubTokenInput} onChange={(e) => setGithubTokenInput(e.target.value)} />
                 </div>
-                <button className="btn btn-outline" onClick={githubConnect} disabled={githubSyncing || !githubTokenInput.trim()} style={{ flex: '0 0 auto', marginBottom: 0 }}>
+                <div className="field" style={{ flex: '1 1 140px' }}>
+                  <label>GitHub username</label>
+                  <input className="kb-input" placeholder="octocat" value={githubOwnerInput} onChange={(e) => setGithubOwnerInput(e.target.value)} />
+                </div>
+                <div className="field" style={{ flex: '1 1 140px' }}>
+                  <label>Repo name</label>
+                  <input className="kb-input" placeholder="my-ledger" value={githubRepoInput} onChange={(e) => setGithubRepoInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && githubConnect()} />
+                </div>
+                <button className="btn btn-outline" onClick={githubConnect} disabled={githubSyncing || !githubTokenInput.trim() || !githubOwnerInput.trim() || !githubRepoInput.trim()} style={{ flex: '0 0 auto', marginBottom: 0 }}>
                   {githubSyncing ? 'Connecting…' : 'Connect'}
                 </button>
               </div>
               {githubError && <div className="panel-sub" style={{ color: 'var(--brick)', marginTop: 6 }}>{githubError}</div>}
               <div className="field-hint" style={{ marginTop: 6 }}>
-                Generate a token at <a href="https://github.com/settings/tokens/new?scopes=gist&description=PocketLedger+sync" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>github.com/settings/tokens</a> — enable the <strong>gist</strong> scope, no others needed.
+                Generate a token at <a href="https://github.com/settings/tokens/new?scopes=repo&description=PocketLedger+sync" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>github.com/settings/tokens</a> — enable the <strong>repo</strong> scope to read and write files.
               </div>
             </div>
           )}
@@ -10861,7 +10947,7 @@ function App() {
                 >
                   {confirmDialog.danger ? <Trash2 size={15} /> : <CheckCircle2 size={15} />} {confirmDialog.confirmLabel}
                 </button>
-                <button className="btn btn-outline" onClick={() => { setConfirmDialog(null); setConfirmTypedText(''); }}>Cancel</button>
+                <button className="btn btn-outline" onClick={() => { const fn = confirmDialog.onCancel; setConfirmDialog(null); setConfirmTypedText(''); fn && fn(); }}>Cancel</button>
               </div>
             </div>
           </div>
