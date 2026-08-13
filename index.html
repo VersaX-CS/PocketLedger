@@ -1005,6 +1005,94 @@ function remapPeriodToNewStart(period, oldStart, newStart, frequency) {
   const dayOffset = Math.round((ns - os) / dayMs);
   return toISODateLocal(new Date(p.getTime() + dayOffset * dayMs));
 }
+// remapPeriodToNewStart (above) shifts every contribution by one fixed offset, which only
+// produces a correct result if every member's rounds were anchored to the plan's start date in
+// lockstep. That assumption breaks for plans where members joined at different times — a member
+// whose real first round was the plan's 4th round should stay on round 4 after a start-date
+// correction, not get shifted onto round 1. realignPlanContributions (below) is the
+// start-date-safe replacement: it re-derives each member's round placement from their own
+// contribution history instead of a single plan-wide offset.
+
+// The most reliable signal of which real-world round a contribution belongs to. Contributions
+// entered by tapping a grid cell carry the actual date staff recorded (which may be backdated
+// and differ from the bucket tapped); contributions backfilled from a spreadsheet import have no
+// separate "date paid" on record, so `date` was set equal to the imported bucket itself — either
+// way, `date` reflects when that round actually happened, even once `period` goes stale.
+function contributionAnchorDate(contribution) {
+  return contribution.date || contribution.period;
+}
+// Finds which of `periods` a contribution's anchor date most plausibly belongs to. Monthly
+// cadence compares by calendar-month distance (so a payment recorded anywhere inside a month
+// still lands on that month's round); daily/weekly compares by absolute day distance.
+function nearestPeriodForDate(periods, dateStr, frequency) {
+  if (!periods || !periods.length || !dateStr) return null;
+  const target = new Date(dateStr); target.setHours(0, 0, 0, 0);
+  let best = periods[0], bestDist = Infinity;
+  periods.forEach((p) => {
+    const pd = new Date(p); pd.setHours(0, 0, 0, 0);
+    const dist = frequency === 'monthly'
+      ? Math.abs((pd.getFullYear() - target.getFullYear()) * 12 + (pd.getMonth() - target.getMonth()))
+      : Math.abs(pd - target);
+    if (dist < bestDist) { bestDist = dist; best = p; }
+  });
+  return best;
+}
+// Re-aligns one plan's contributions onto its *current* generated periods (periodsForPlan uses
+// plan.startDate, so this is what needs re-running whenever that start date is corrected).
+// Works per member, not per plan: each member's contributions are sorted oldest-first by their
+// real anchor date and matched, one at a time, to whichever still-unclaimed round is closest to
+// that date. A contribution that's already correctly placed naturally reclaims that same round
+// (so nothing correct gets needlessly touched), while one left pointing at a stale or wrongly
+// forced bucket gets moved to the round its own payment history actually supports — preserving
+// each member's individual timeline (their own first and last recorded rounds) instead of
+// forcing everyone's earliest payment onto the plan's start date.
+function realignPlanContributions(plan, allContributions) {
+  const periods = periodsForPlan(plan);
+  const others = allContributions.filter((c) => c.planId !== plan.id);
+  const planContribs = allContributions.filter((c) => c.planId === plan.id);
+
+  const byMember = {};
+  planContribs.forEach((c) => { (byMember[c.memberId] = byMember[c.memberId] || []).push(c); });
+
+  const repaired = [];
+  let changedCount = 0;
+
+  Object.values(byMember).forEach((memberContribs) => {
+    // Deliberately re-derives every contribution's round from its own anchor date, not just the
+    // ones whose bucket no longer exists — a period can be a technically-valid bucket in the
+    // current schedule and *still* be the wrong one for this member (e.g. a past fix that forced
+    // a late joiner's first payment onto round 1, which "exists" but was never actually theirs).
+    // Processing oldest-payment-first and claiming the closest still-free round for each one
+    // structurally reconstructs the member's real first-round-to-last-round timeline, and — for
+    // contributions that were already correctly placed — naturally re-selects the same round
+    // they already had, so nothing already-correct gets needlessly touched.
+    const claimed = new Set();
+    memberContribs
+      .slice()
+      .sort((a, b) => new Date(contributionAnchorDate(a)) - new Date(contributionAnchorDate(b)))
+      .forEach((c) => {
+        const pool = periods.filter((p) => !claimed.has(p));
+        const target = nearestPeriodForDate(pool.length ? pool : periods, contributionAnchorDate(c), plan.frequency);
+        if (target) claimed.add(target);
+        if (target && target !== c.period) { repaired.push({ ...c, period: target }); changedCount++; }
+        else repaired.push(c);
+      });
+  });
+
+  return { contributions: [...others, ...repaired], changedCount };
+}
+// Runs realignPlanContributions across every plan — used once on data load to self-heal any
+// plan/member pairing left orphaned by a past start-date correction.
+function realignAllContributions(plans, contributions) {
+  let working = contributions;
+  let totalChanged = 0;
+  plans.forEach((plan) => {
+    const { contributions: next, changedCount } = realignPlanContributions(plan, working);
+    working = next;
+    totalChanged += changedCount;
+  });
+  return { contributions: working, changedCount: totalChanged };
+}
 function excelRowsForImport(workbook) {
   let autoResult = null;
   let rawRows = [];
@@ -1177,6 +1265,10 @@ function loadStoredData() {
 try { window.localStorage.removeItem(SESSION_KEY); } catch (err) {}
 // Read once at load, not on every render.
 const PERSISTED = loadStoredData();
+// Populated once by the contributions useState initializer if the startup self-heal (see
+// realignAllContributions) actually had to fix anything, then read and cleared by a one-time
+// mount effect so the user gets a heads-up instead of the fix happening silently.
+let thriftRealignSummary = null;
 
 /* ============================== small components ============================== */
 function Stamp({ status, label }) {
@@ -3830,7 +3922,22 @@ function App() {
 
   const [members, setMembersRaw] = useState(() => (PERSISTED && PERSISTED.members) || seedMembers());
   const [plans, setPlansRaw] = useState(() => (PERSISTED && PERSISTED.plans) || seedPlans());
-  const [contributions, setContributionsRaw] = useState(() => (PERSISTED && PERSISTED.contributions) || seedContributions(seedPlans()));
+  // Self-heal on load: a past start-date fix (e.g. the toISODateLocal timezone correction, or
+  // any manual correction to a plan's startDate) can leave already-recorded contributions
+  // pointing at round buckets that no longer exist in the regenerated schedule, which is what
+  // makes a plan that was genuinely filled in read back as "0 rounds filled". This re-derives
+  // each member's round placement from their own contribution history — see
+  // realignAllContributions / realignPlanContributions above — so it only touches contributions
+  // that are actually orphaned, and never moves a member's history onto a round they didn't
+  // occupy. Runs once, here, so it repairs data that's already sitting in localStorage, not just
+  // contributions recorded going forward.
+  const [contributions, setContributionsRaw] = useState(() => {
+    const initialPlans = (PERSISTED && PERSISTED.plans) || seedPlans();
+    const initialContributions = (PERSISTED && PERSISTED.contributions) || seedContributions(seedPlans());
+    const { contributions: healed, changedCount } = realignAllContributions(initialPlans, initialContributions);
+    thriftRealignSummary = { changedCount };
+    return healed;
+  });
   const [loansGiven, setLoansGivenRaw] = useState(() => (PERSISTED && PERSISTED.loansGiven) || seedLoansGiven());
   const [loansReceived, setLoansReceivedRaw] = useState(() => (PERSISTED && PERSISTED.loansReceived) || seedLoansReceived());
   const [loanContacts, setLoanContactsRaw] = useState(() => (PERSISTED && PERSISTED.loanContacts) || seedLoanContacts());
@@ -4161,6 +4268,16 @@ function App() {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     toastTimerRef.current = setTimeout(() => { setToast(''); setToastUndo(null); }, undoFn ? 6000 : 3200);
   };
+  // One-time notice if the startup self-heal (see thriftRealignSummary / realignAllContributions)
+  // actually had to re-link any rounds — e.g. after the toISODateLocal timezone fix left some
+  // contributions pointing at buckets that no longer exist.
+  useEffect(() => {
+    if (thriftRealignSummary && thriftRealignSummary.changedCount > 0) {
+      flash(`Fixed ${thriftRealignSummary.changedCount} thrift round${thriftRealignSummary.changedCount === 1 ? '' : 's'} that fell out of sync with a start date — contribution history is unchanged, just re-linked.`);
+    }
+    thriftRealignSummary = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // In-app replacement for window.confirm; onConfirm runs only if confirmed.
   // opts.requireText: if set, the person must type this exact text before the confirm button unlocks.
   const askConfirm = (message, onConfirm, opts) => {
@@ -4602,11 +4719,15 @@ function App() {
       const newStartDate = form.startDate || existing.startDate;
       const startDateChanged = newStartDate !== existing.startDate;
       if (startDateChanged) {
-        // Shift every already-recorded round for this plan onto the new cadence before the
-        // plan's own startDate changes, so history stays lined up instead of going orphaned.
-        setContributions((prev) => prev.map((c) => c.planId !== form.id ? c : {
-          ...c, period: remapPeriodToNewStart(c.period, existing.startDate, newStartDate, existing.frequency),
-        }), `Edited plan — ${form.name} (shifted contribution dates)`);
+        // Re-align every already-recorded round for this plan onto the corrected schedule before
+        // the plan's own startDate changes, so history stays lined up instead of going orphaned.
+        // Uses realignPlanContributions (structural, per member) rather than a single plan-wide
+        // date shift — a plan-wide shift assumes every member's rounds were anchored to the old
+        // start date in lockstep, which isn't true for members who joined the plan partway
+        // through. Each member's own contribution history is used to re-derive their round
+        // placement instead.
+        setContributions((prev) => realignPlanContributions({ ...existing, startDate: newStartDate }, prev).contributions,
+          `Edited plan — ${form.name} (realigned contribution rounds)`);
       }
       setPlans((prev) => prev.map((p) => p.id !== form.id ? p : {
         ...p, name: form.name, amount: Number(form.amount || 0),
@@ -4618,7 +4739,7 @@ function App() {
       }), `Edited plan — ${form.name}`);
       setSelectedPlanId(form.id);
       closeModalSilently();
-      flash(startDateChanged ? 'Plan updated — contribution dates shifted to match the new start date.' : 'Plan updated.');
+      flash(startDateChanged ? 'Plan updated — contribution rounds realigned to the new start date.' : 'Plan updated.');
       return;
     }
     const plan = {
