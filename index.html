@@ -1343,11 +1343,11 @@ function SectionHeader({ eyebrow, title, action, onTour }) {
     </div>
   );
 }
-function SearchBox({ value, onChange, placeholder, className = '' }) {
+function SearchBox({ value, onChange, placeholder, className = '', onKeyDown }) {
   return (
     <div className={`search-box ${className}`}>
       <Search size={14} />
-      <input placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} />
+      <input placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} />
       {value && (
         <button type="button" className="search-clear" onClick={() => onChange('')} title="Clear search" aria-label="Clear search">
           <X size={13} />
@@ -4047,6 +4047,18 @@ function App() {
   }, []);
   const [memberSearch, setMemberSearch] = useState('');
   const [planSearch, setPlanSearch] = useState('');
+  // Jump-to-contributor search inside a plan's dashboard grid: lets you type a name and scroll
+  // straight to that row, with the current round column brought into view and briefly
+  // highlighted, instead of hunting across a wide grid by eye.
+  const [memberJumpQuery, setMemberJumpQuery] = useState('');
+  const [jumpHighlightMemberId, setJumpHighlightMemberId] = useState(null);
+  const thriftGridScrollRef = useRef(null);
+  const jumpHighlightTimerRef = useRef(null);
+  useEffect(() => {
+    setMemberJumpQuery('');
+    setJumpHighlightMemberId(null);
+    clearTimeout(jumpHighlightTimerRef.current);
+  }, [selectedPlanId, planDashboardOpen]);
   const [loanGivenSearch, setLoanGivenSearch] = useState('');
   const [loanReceivedSearch, setLoanReceivedSearch] = useState('');
   const [loanTabSearch, setLoanTabSearch] = useState('');
@@ -6312,6 +6324,7 @@ function App() {
       let sha;
       const existingRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filepath}?ref=${encodeURIComponent(branch)}`, {
         headers: { Authorization: `token ${githubToken}`, Accept: 'application/vnd.github+json' },
+        cache: 'no-store',
       });
       if (existingRes.ok) { const existing = await existingRes.json(); sha = existing.sha; }
       else if (existingRes.status !== 404) {
@@ -6333,6 +6346,7 @@ function App() {
       if ((saveRes.status === 409 || saveRes.status === 422) && sha) {
         const retryRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filepath}?ref=${encodeURIComponent(branch)}`, {
           headers: { Authorization: `token ${githubToken}`, Accept: 'application/vnd.github+json' },
+          cache: 'no-store',
         });
         if (retryRes.ok) {
           const retryExisting = await retryRes.json();
@@ -6361,6 +6375,7 @@ function App() {
       const { owner, repo, branch, filepath } = githubRepoConfig;
       const loadRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filepath}?ref=${encodeURIComponent(branch)}`, {
         headers: { Authorization: `token ${githubToken}`, Accept: 'application/vnd.github.raw+json' },
+        cache: 'no-store',
       });
       if (!loadRes.ok) { setGithubError(await githubErrorFromResponse(loadRes, 'file not found on that branch.')); setGithubSyncing(false); return; }
       const backupText = await loadRes.text();
@@ -6820,6 +6835,31 @@ function App() {
     const periods = plan ? periodsForPlan(plan) : [];
     const unassigned = plan ? members.filter((m) => !plan.memberIds.includes(m.id)) : [];
     const visiblePlans = plans.filter((p) => p.name.toLowerCase().includes(planSearch.trim().toLowerCase()));
+    // Contributors on the open plan matching the jump-search query, for the typeahead dropdown.
+    const jumpMatches = plan && memberJumpQuery.trim()
+      ? plan.memberIds
+          .map((id) => memberById(id))
+          .filter(Boolean)
+          .filter((m) => m.name.toLowerCase().includes(memberJumpQuery.trim().toLowerCase()))
+          .slice(0, 6)
+      : [];
+    // Scrolls the grid to a contributor's row (vertically centred) and all the way right so the
+    // current round column — always the last one generated — is in view, then briefly highlights
+    // both the row and that member's current-round cell so it's easy to spot at a glance.
+    const jumpToMemberRow = (memberId) => {
+      const scrollEl = thriftGridScrollRef.current;
+      if (!scrollEl) return;
+      const rowEl = scrollEl.querySelector(`tr[data-member-row="${memberId}"]`);
+      if (!rowEl) return;
+      const headEl = scrollEl.querySelector('thead');
+      const headH = headEl ? headEl.offsetHeight : 0;
+      const targetTop = Math.max(0, rowEl.offsetTop - headH - (scrollEl.clientHeight - rowEl.clientHeight) / 2);
+      scrollEl.scrollTo({ top: targetTop, left: scrollEl.scrollWidth, behavior: 'smooth' });
+      setMemberJumpQuery('');
+      setJumpHighlightMemberId(memberId);
+      clearTimeout(jumpHighlightTimerRef.current);
+      jumpHighlightTimerRef.current = setTimeout(() => setJumpHighlightMemberId((cur) => (cur === memberId ? null : cur)), 2600);
+    };
     return (
       <>
         <SectionHeader eyebrow="Personalised strategies" title="Thrift plans"
@@ -7047,7 +7087,30 @@ function App() {
               </div>
             )}
 
-            <div className="grid-scroll contrib-grid-scroll" data-tour="plans-table">
+            {plan.memberIds.length > 1 && (
+              <div className="jump-search-wrap">
+                <SearchBox
+                  placeholder="Jump to contributor…"
+                  value={memberJumpQuery}
+                  onChange={setMemberJumpQuery}
+                  className="jump-search"
+                  onKeyDown={(e) => { if (e.key === 'Enter' && jumpMatches.length > 0) jumpToMemberRow(jumpMatches[0].id); }}
+                />
+                {jumpMatches.length > 0 && (
+                  <ul className="jump-search-dropdown">
+                    {jumpMatches.map((m) => (
+                      <li key={m.id}>
+                        <button type="button" onClick={() => jumpToMemberRow(m.id)}>
+                          {m.name}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            <div className="grid-scroll contrib-grid-scroll" data-tour="plans-table" ref={thriftGridScrollRef}>
               <table className="contrib-grid">
                 <thead>
                   <tr>
@@ -7067,7 +7130,7 @@ function App() {
                   {plan.memberIds.length === 0 ? (
                     <tr><td colSpan={periods.length + (plan.category !== 'Cycle' ? 2 : 1)}><EmptyState text="No contributors on this plan yet." /></td></tr>
                   ) : plan.memberIds.map((memberId) => (
-                    <tr key={memberId}>
+                    <tr key={memberId} data-member-row={memberId} className={jumpHighlightMemberId === memberId ? 'row-jump-highlight' : ''}>
                       <td className="member-col">
                         {memberById(memberId)?.name}
                       </td>
@@ -7081,6 +7144,7 @@ function App() {
                         const paidOn = paid ? new Date(contribution.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : null;
                         const cellKey = `${plan.id}:${memberId}:${period}`;
                         const armed = armedCell === cellKey;
+                        const jumpTarget = isToday && jumpHighlightMemberId === memberId;
                         const runCellAction = () => {
                           if (plan.closed) return;
                           if (paid) {
@@ -7096,7 +7160,7 @@ function App() {
                         return (
                           <td key={period}>
                             <button
-                              className={`cell-dot ${paid ? 'cell-paid' : 'cell-unpaid'} ${isToday ? 'cell-today' : ''} ${overdueUnpaid ? 'cell-overdue' : ''} ${armed ? 'cell-armed' : ''}`}
+                              className={`cell-dot ${paid ? 'cell-paid' : 'cell-unpaid'} ${isToday ? 'cell-today' : ''} ${overdueUnpaid ? 'cell-overdue' : ''} ${armed ? 'cell-armed' : ''} ${jumpTarget ? 'cell-jump-target' : ''}`}
                               disabled={plan.closed && !paid}
                               title={plan.closed ? (paid ? `Paid ${fmt(contribution.amount)} on ${paidOn}` : 'Plan is closed') : armed ? 'Tap again to confirm' : paid ? `Paid ${fmt(contribution.amount)} on ${paidOn} — tap twice to edit or unmark` : overdueUnpaid ? 'Overdue — tap twice to enter amount paid' : 'Tap twice to enter amount paid'}
                               onClick={() => handleCellTap(cellKey, runCellAction)}
@@ -9007,10 +9071,6 @@ function App() {
             </div>
           )}
         </div>
-        <div className="settings-actions" style={{ marginTop: 18 }}>
-          <button className="btn btn-outline" onClick={resetSampleData}><RotateCcw size={15} /> Restore sample data</button>
-          <button className="btn btn-danger" onClick={clearAllData}><Trash2 size={15} /> Clear all data</button>
-        </div>
         <div className="field-row" style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--paper-line)' }}>
           <div className="field">
             <label>Automatic backups</label>
@@ -9067,6 +9127,19 @@ function App() {
 
       <div className="panel" style={{ marginTop: 16, padding: 0, overflow: 'hidden' }} data-tour="settings-support">
         <ContactDeveloperCard />
+      </div>
+
+      <div className="panel" style={{ marginTop: 16, border: '1px solid var(--brick)' }}>
+        <div className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--brick)' }}>
+          <AlertTriangle size={15} /> Danger zone
+        </div>
+        <div className="panel-sub" style={{ marginBottom: 12 }}>
+          These actions can't be undone. Back up your data first if you're not sure.
+        </div>
+        <div className="settings-actions">
+          <button className="btn btn-outline" onClick={resetSampleData}><RotateCcw size={15} /> Restore sample data</button>
+          <button className="btn btn-danger" onClick={clearAllData}><Trash2 size={15} /> Clear all data</button>
+        </div>
       </div>
     </>
   );
@@ -9296,6 +9369,16 @@ function App() {
         .plan-dash-actions>select{flex:1 1 160px;max-width:none;}
         .plan-dash-actions>.btn{flex:1 1 auto;}
         .plan-dash-actions>*:last-child{flex:0 0 auto;margin-left:auto;}
+        .jump-search-wrap{position:relative;max-width:320px;}
+        .jump-search-wrap .jump-search{margin-bottom:10px;}
+        .jump-search-dropdown{position:absolute;top:calc(100% - 6px);left:0;right:0;z-index:8;background:var(--surface);border:1px solid var(--paper-line);border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,0.12);overflow:hidden;max-height:220px;overflow-y:auto;}
+        .jump-search-dropdown li{list-style:none;}
+        .jump-search-dropdown button{display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:none;cursor:pointer;font-size:13px;color:var(--ink);}
+        .jump-search-dropdown button:hover{background:var(--surface-2);}
+        .row-jump-highlight{animation:row-jump-flash 2.6s ease-out;}
+        .contrib-grid-scroll tr.row-jump-highlight>td.member-col{animation:row-jump-flash 2.6s ease-out;}
+        @keyframes row-jump-flash{0%{background:var(--gold-bg);}75%{background:var(--gold-bg);}100%{background:transparent;}}
+        .cell-jump-target{box-shadow:0 0 0 2px var(--gold-bg),0 0 0 3.5px var(--gold) !important;animation:cell-armed-pulse 1s ease-in-out 2;}
         .grid-scroll{overflow-x:auto;}
         .contrib-grid-scroll{overflow:auto;max-height:min(60vh, 520px);border-radius:8px;}
         .contrib-grid{border-collapse:separate;border-spacing:0;width:100%;font-size:12.5px;}
@@ -10941,7 +11024,7 @@ function App() {
               <input
                 className="kb-input" type={githubTokenVisible ? 'text' : 'password'} style={{ paddingRight: 36 }}
                 value={form.token || ''} onChange={(e) => setField('token', e.target.value)}
-                placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" onKeyDown={(e) => e.key === 'Enter' && submitGithubConfig()}
+                placeholder="github_pat_11AXXXXXXXXXXXXXXXXXXX_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" onKeyDown={(e) => e.key === 'Enter' && submitGithubConfig()}
               />
               <button type="button" className="field-eye" onClick={() => setGithubTokenVisible((v) => !v)} title={githubTokenVisible ? 'Hide token' : 'Show token'} aria-label={githubTokenVisible ? 'Hide token' : 'Show token'}>
                 {githubTokenVisible ? <EyeOff size={15} /> : <Eye size={15} />}
