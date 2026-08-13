@@ -4944,6 +4944,7 @@ function App() {
     setTaxTransactionsRaw(data.taxTransactions || []);
     setTaxImportsRaw(data.taxImports || []);
     setTaxReturnsRaw(data.taxReturns || []);
+    setDismissed(data.dismissedAlerts || []);
     if (data.settings) setSettingsRaw((s) => ({ ...s, ...data.settings }));
     setCurrentUser(matchedUser);
     setActiveModule('home'); setActiveTab('home');
@@ -6120,7 +6121,7 @@ function App() {
   /* ---------- import / export ---------- */
   const backupPayload = () => ({
     exportedAt: new Date().toISOString(), users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs,
-    expenses, budgets, clients, invoices, receipts, creditNotes, settings, taxTransactions, taxImports, taxReturns,
+    expenses, budgets, clients, invoices, receipts, creditNotes, settings, taxTransactions, taxImports, taxReturns, dismissedAlerts: dismissed,
   });
   const exportBackup = () => {
     const blob = new Blob([JSON.stringify(backupPayload(), null, 2)], { type: 'application/json' });
@@ -6405,6 +6406,7 @@ function App() {
           setTaxTransactions(backup.taxTransactions || []);
           setTaxImports(backup.taxImports || []);
           setTaxReturns(backup.taxReturns || []);
+          setDismissed(backup.dismissedAlerts || []);
           if (backup.settings) setSettings((s) => ({ ...s, ...backup.settings }));
           githubSaveLastSync(new Date().toISOString());
           flash('Data loaded from GitHub!');
@@ -6534,6 +6536,7 @@ function App() {
           setTaxTransactions(data.taxTransactions || []);
           setTaxImports(data.taxImports || []);
           setTaxReturns(data.taxReturns || []);
+          setDismissed(data.dismissedAlerts || []);
           if (data.settings) setSettings((s) => ({ ...s, ...data.settings }));
           flash('Backup imported successfully.');
         }, { confirmLabel: 'Import' });
@@ -9125,10 +9128,6 @@ function App() {
         </div>
       </div>
 
-      <div className="panel" style={{ marginTop: 16, padding: 0, overflow: 'hidden' }} data-tour="settings-support">
-        <ContactDeveloperCard />
-      </div>
-
       <div className="panel" style={{ marginTop: 16, border: '1px solid var(--brick)' }}>
         <div className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--brick)' }}>
           <AlertTriangle size={15} /> Danger zone
@@ -9140,6 +9139,10 @@ function App() {
           <button className="btn btn-outline" onClick={resetSampleData}><RotateCcw size={15} /> Restore sample data</button>
           <button className="btn btn-danger" onClick={clearAllData}><Trash2 size={15} /> Clear all data</button>
         </div>
+      </div>
+
+      <div className="panel" style={{ marginTop: 16, padding: 0, overflow: 'hidden' }} data-tour="settings-support">
+        <ContactDeveloperCard />
       </div>
     </>
   );
@@ -11266,6 +11269,18 @@ class AppErrorBoundary extends React.Component {
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<AppErrorBoundary><App /></AppErrorBoundary>);
+
+// Ask the browser to mark this site's storage as "persistent" so it's exempt from
+// automatic eviction policies some browsers apply to sites they consider low-engagement
+// (e.g. Edge/Chrome can otherwise silently clear localStorage for sites that aren't
+// visited often, or under tracking-prevention storage cleanup) — this is what was wiping
+// saved accounts/data on exit even without "Clear on exit" turned on. Best-effort: the
+// browser may still say no (it can ask the user, or just refuse), but it doesn't hurt to ask.
+if (navigator.storage && navigator.storage.persist) {
+  navigator.storage.persist().then((granted) => {
+    if (!granted) console.warn('PocketLedger: persistent storage was not granted by the browser — data may still be cleared automatically.');
+  }).catch(() => {});
+}
 </script>
 
 <script>
