@@ -1891,6 +1891,42 @@ function CalendarModal({ eventsByDate, onClose, onEventClick }) {
   );
 }
 
+// Free-text notes for a single tab (e.g. "Plans", "Loans Given"). Draft is kept local until
+// Save is pressed, so an accidental close/backdrop-click can't wipe out what's typed; Clear
+// asks for confirmation since it can't be undone the way most edits in the app can.
+function NotesModal({ tabLabel, note, onSave, onClear, onClose }) {
+  const [draft, setDraft] = useState((note && note.text) || '');
+  const dirty = draft !== ((note && note.text) || '');
+  return (
+    <Modal title={`Notes — ${tabLabel}`} onClose={onClose}>
+      <style>{`
+        .notes-textarea{width:100%;min-height:220px;line-height:1.5;resize:vertical;}
+        .notes-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;}
+        .notes-meta{font-size:11.5px;color:var(--ink-soft);}
+      `}</style>
+      <textarea
+        className="kb-input notes-textarea"
+        placeholder={`Jot down anything worth remembering for ${tabLabel}\u2026`}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+      />
+      <div className="notes-foot">
+        <span className="notes-meta">
+          {note && note.updatedAt
+            ? `Last saved ${new Date(note.updatedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`
+            : 'Not saved yet'}
+        </span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {!!(note && note.text) && (
+            <button type="button" className="btn btn-outline btn-small" onClick={onClear}><Trash2 size={14} /> Clear</button>
+          )}
+          <button type="button" className="btn btn-primary btn-small" disabled={!dirty} onClick={() => onSave(draft)}><Check size={14} /> Save</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // Shared header block for invoices/receipts — logo, business name, address, RC number, gold rule.
 // When `accentColor` is passed (the issuing thrift plan's colour), the business info renders
 // inside a coloured banner block instead of the plain gold-rule header, so a plan's documents
@@ -4093,6 +4129,9 @@ function App() {
   const [tourStep, setTourStep] = useState(null);
   const [calculatorOpen, setCalculatorOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
+  // Free-text notes per tab (e.g. one for "Plans", one for "Loans Given"), keyed by tab id.
+  const [tabNotes, setTabNotes] = useState(() => (PERSISTED && PERSISTED.tabNotes) || {});
+  const [notesModalOpen, setNotesModalOpen] = useState(false);
   const [tabStatementDoc, setTabStatementDoc] = useState(null);
   const [entryPreviewDoc, setEntryPreviewDoc] = useState(null);
   const [clientStatementDoc, setClientStatementDoc] = useState(null);
@@ -4147,14 +4186,14 @@ function App() {
     const payload = {
       savedAt: new Date().toISOString(),
       users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs, expenses, budgets,
-      clients, invoices, receipts, creditNotes, settings, taxTransactions, taxImports, taxReturns, dismissedAlerts: dismissed,
+      clients, invoices, receipts, creditNotes, settings, taxTransactions, taxImports, taxReturns, dismissedAlerts: dismissed, tabNotes,
     };
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch (err) {
       console.warn('PocketLedger: could not save data to this device.', err);
     }
-  }, [users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs, expenses, budgets, clients, invoices, receipts, creditNotes, settings, taxTransactions, taxImports, taxReturns, dismissed]);
+  }, [users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs, expenses, budgets, clients, invoices, receipts, creditNotes, settings, taxTransactions, taxImports, taxReturns, dismissed, tabNotes]);
 
   // ---------- auto-log recurring expenses for the current month ----------
   useEffect(() => {
@@ -4295,6 +4334,25 @@ function App() {
   const askConfirm = (message, onConfirm, opts) => {
     setConfirmDialog({ message, onConfirm, onCancel: (opts && opts.onCancel) || null, confirmLabel: (opts && opts.confirmLabel) || 'Delete', danger: !opts || opts.danger !== false, requireText: (opts && opts.requireText) || null });
   };
+  // Saves/clears the note for whichever tab is currently open (tabNotes is keyed by tab id,
+  // so each tab — Plans, Loans Given, Invoices, etc. — keeps its own note independently).
+  const saveTabNote = (tabId, text) => {
+    setTabNotes((prev) => {
+      const next = { ...prev };
+      if (text && text.trim()) next[tabId] = { text, updatedAt: new Date().toISOString() };
+      else delete next[tabId];
+      return next;
+    });
+    setNotesModalOpen(false);
+    flash('Note saved.');
+  };
+  const clearTabNote = (tabId) => {
+    askConfirm("Clear this note? This can't be undone.", () => {
+      setTabNotes((prev) => { const next = { ...prev }; delete next[tabId]; return next; });
+      setNotesModalOpen(false);
+      flash('Note cleared.');
+    }, { confirmLabel: 'Clear' });
+  };
   const digitsOnly = (s) => (s || '').replace(/\D/g, '');
   const waHref = (phone, text) => {
     const digits = digitsOnly(phone);
@@ -4366,7 +4424,7 @@ function App() {
     setContribPrompt(null); setPeriodTotalPrompt(null);
     setNewAccountKeyModal(null);
     setCalculatorOpen(false); setCalendarOpen(false);
-    setHistoryOpen(false);
+    setHistoryOpen(false); setNotesModalOpen(false);
     setConfirmDialog(null); setConfirmTypedText('');
     setTourStep(null);
   };
@@ -4402,7 +4460,7 @@ function App() {
         invoiceSummaryDoc || receiptSummaryDoc || biodataDoc || taxReturnDoc ||
         planDashboardOpen || memberDashboardOpen || homeOverlay || moduleSwitcherOpen ||
         contribPrompt || periodTotalPrompt || newAccountKeyModal ||
-        calculatorOpen || calendarOpen || historyOpen || confirmDialog || tourStep !== null
+        calculatorOpen || calendarOpen || historyOpen || notesModalOpen || confirmDialog || tourStep !== null
       );
       if (overlayOpen) {
         // Back closes whatever's open first, without leaving the page.
@@ -4438,7 +4496,7 @@ function App() {
     invoiceSummaryDoc, receiptSummaryDoc, biodataDoc, taxReturnDoc,
     planDashboardOpen, memberDashboardOpen, homeOverlay, moduleSwitcherOpen,
     contribPrompt, periodTotalPrompt, newAccountKeyModal,
-    calculatorOpen, calendarOpen, historyOpen, confirmDialog, tourStep,
+    calculatorOpen, calendarOpen, historyOpen, notesModalOpen, confirmDialog, tourStep,
     activeModule, activeTab, selectedPlanId,
   ]);
 
@@ -4945,6 +5003,7 @@ function App() {
     setTaxImportsRaw(data.taxImports || []);
     setTaxReturnsRaw(data.taxReturns || []);
     setDismissed(data.dismissedAlerts || []);
+    setTabNotes(data.tabNotes || {});
     if (data.settings) setSettingsRaw((s) => ({ ...s, ...data.settings }));
     setCurrentUser(matchedUser);
     setActiveModule('home'); setActiveTab('home');
@@ -6121,7 +6180,7 @@ function App() {
   /* ---------- import / export ---------- */
   const backupPayload = () => ({
     exportedAt: new Date().toISOString(), users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs,
-    expenses, budgets, clients, invoices, receipts, creditNotes, settings, taxTransactions, taxImports, taxReturns, dismissedAlerts: dismissed,
+    expenses, budgets, clients, invoices, receipts, creditNotes, settings, taxTransactions, taxImports, taxReturns, dismissedAlerts: dismissed, tabNotes,
   });
   const exportBackup = () => {
     const blob = new Blob([JSON.stringify(backupPayload(), null, 2)], { type: 'application/json' });
@@ -6407,6 +6466,7 @@ function App() {
           setTaxImports(backup.taxImports || []);
           setTaxReturns(backup.taxReturns || []);
           setDismissed(backup.dismissedAlerts || []);
+          setTabNotes(backup.tabNotes || {});
           if (backup.settings) setSettings((s) => ({ ...s, ...backup.settings }));
           githubSaveLastSync(new Date().toISOString());
           flash('Data loaded from GitHub!');
@@ -6537,6 +6597,7 @@ function App() {
           setTaxImports(data.taxImports || []);
           setTaxReturns(data.taxReturns || []);
           setDismissed(data.dismissedAlerts || []);
+          setTabNotes(data.tabNotes || {});
           if (data.settings) setSettings((s) => ({ ...s, ...data.settings }));
           flash('Backup imported successfully.');
         }, { confirmLabel: 'Import' });
@@ -9185,6 +9246,9 @@ function App() {
       { id: 'taxReturns', label: 'Returns', icon: Receipt },
     ],
   };
+  // The current tab's own nav entry (undefined for shared screens like Alerts/Settings) —
+  // used to label the Notes button/modal and to decide whether that tab even gets one.
+  const currentTabMeta = (MODULE_NAV[activeModule] || []).find((t) => t.id === activeTab);
   const openModule = (mod) => { setActiveModule(mod); setActiveTab(MODULE_NAV[mod][0].id); setModuleSwitcherOpen(false); };
   const goHome = () => { setActiveModule('home'); setActiveTab('home'); };
   // Jumps from a notification to the screen it's about (its module/tab, and the
@@ -9275,6 +9339,7 @@ function App() {
         .logo-text .kb-title{font-size:17px;font-weight:600;line-height:1.1;}
         .logo-text .kb-tag{font-size:10.5px;color:#B9C0D4;letter-spacing:.04em;}
         .bell-dot{position:absolute;top:-4px;right:-4px;background:var(--brick);color:#fff;font-size:10px;font-weight:700;border-radius:9px;min-width:16px;height:16px;display:flex;align-items:center;justify-content:center;padding:0 4px;}
+        .notes-dot{position:absolute;top:2px;right:2px;width:7px;height:7px;border-radius:50%;background:var(--gold);border:1.5px solid var(--surface);}
         .content{flex:1;padding:28px 36px 60px;background-image:repeating-linear-gradient(to bottom,transparent,transparent 37px,var(--paper-line) 38px);}
         .eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-soft);font-weight:600;margin-bottom:2px;}
         .section-header{display:flex;flex-direction:column;margin-bottom:20px;}
@@ -9931,6 +9996,12 @@ function App() {
                 <RotateCcw size={16} />
                 {undoStack.length > 0 && <span className="bell-dot">{undoStack.length}</span>}
               </button>
+              {currentTabMeta && (
+                <button className="icon-btn" onClick={() => setNotesModalOpen(true)} title={`Notes — ${currentTabMeta.label}`}>
+                  <PenLine size={16} />
+                  {!!tabNotes[activeTab] && <span className="notes-dot" />}
+                </button>
+              )}
               <button className="icon-btn" onClick={() => setCalculatorOpen(true)} title="Calculator"><Calculator size={16} /></button>
               <button className="icon-btn" onClick={() => setCalendarOpen(true)} title="Calendar"><CalendarDays size={16} /></button>
               <button className="icon-btn" onClick={startTour} title="Take a quick tour"><Compass size={16} /></button>
@@ -9987,6 +10058,15 @@ function App() {
       )}
       {calendarOpen && (
         <CalendarModal eventsByDate={calendarEventsByDate} onClose={() => setCalendarOpen(false)} onEventClick={(e) => { goToAlert(e); setCalendarOpen(false); }} />
+      )}
+      {notesModalOpen && currentTabMeta && (
+        <NotesModal
+          tabLabel={currentTabMeta.label}
+          note={tabNotes[activeTab]}
+          onSave={(text) => saveTabNote(activeTab, text)}
+          onClear={() => clearTabNote(activeTab)}
+          onClose={() => setNotesModalOpen(false)}
+        />
       )}
 
       {modal === 'newPlan' && (
