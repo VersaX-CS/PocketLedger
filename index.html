@@ -3248,6 +3248,18 @@ const TOUR_STEPS = [
   { module: 'spending', tab: 'budgets', target: 'nav-budgets', title: 'Budgets', body: 'Set a monthly limit per category and see at a glance whether you\u2019re over or under it.' },
   { module: 'spending', tab: 'budgets', target: 'budgets-new', title: 'Set a budget', body: 'Set a monthly spending limit for any category to start tracking against it.' },
 
+  // ---- Tax ----
+  { target: 'home-card-tax', title: 'Tax', body: 'Consolidate every bank account and your logged expenses into one ledger, then calculate and file personal or company tax returns. Let\u2019s look inside.' },
+  { module: 'tax', tab: 'taxOverview', target: 'nav-taxOverview', title: 'Tax \u2014 Overview', body: 'Consolidated income, deductions and net taxable for the year, plus how many returns you\u2019ve filed.' },
+  { module: 'tax', tab: 'taxOverview', target: 'tax-how-it-works', title: 'How it works', body: 'The four-step flow: import statements, pull in expenses, tag each line in the ledger, then calculate a return.' },
+  { module: 'tax', tab: 'taxImport', target: 'nav-taxImport', title: 'Import', body: 'Bring in bank statements \u2014 CSV, Excel or PDF \u2014 from any bank, with columns auto-detected.' },
+  { module: 'tax', tab: 'taxImport', target: 'tax-import-panel', title: 'Add a statement', body: 'Set a default bank for the batch, then add your file. Scanned PDFs fall back to OCR automatically.' },
+  { module: 'tax', tab: 'taxImport', target: 'tax-import-expenses', title: 'Bring in your expenses', body: 'Pull everything already logged in Expense & Budgeting straight into the tax ledger \u2014 no re-typing, safe to press again later.' },
+  { module: 'tax', tab: 'taxTransactions', target: 'nav-taxTransactions', title: 'Ledger', body: 'Every transaction from every source, consolidated in one place and filterable by year and source.' },
+  { module: 'tax', tab: 'taxTransactions', target: 'tax-add-entry', title: 'Add an entry manually', body: 'For anything that didn\u2019t come from an import \u2014 add it here and tag it as income, deductible, or non-taxable.' },
+  { module: 'tax', tab: 'taxReturns', target: 'nav-taxReturns', title: 'Returns', body: 'Every tax return you\u2019ve calculated, personal or company, draft or filed.' },
+  { module: 'tax', tab: 'taxReturns', target: 'tax-returns-new', title: 'Calculate a return', body: 'Generate a new personal or company tax return straight from your consolidated ledger.' },
+
   // ---- Settings ----
   { target: 'topbar-settings', title: 'Settings', body: 'Your business profile, theme colour, dark mode, backups, fingerprint sign-in and login details all live here. Let\u2019s look inside.' },
   { tab: 'settings', target: 'settings-login', title: 'Login & security', body: 'Update your sign-in email or password, or turn on fingerprint sign-in for this device.' },
@@ -8407,7 +8419,7 @@ function App() {
             <select className="kb-input" style={{ width: 120 }} value={year} onChange={(e) => setTaxYearFilter(Number(e.target.value))}>
               {taxYearsAvailable.map((y) => <option key={y} value={y}>{y}</option>)}
             </select>
-          } onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
+          } onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         <div className="stat-grid">
           <StatCard label="Consolidated income" value={fmt(income)} icon={TrendingUp} tone="green" sub={`${year} · from ledger`} />
           <StatCard label="Deductible / reliefs" value={fmt(deductible)} icon={CreditCard} tone="steel" sub={`${year} · from ledger`} />
@@ -8416,7 +8428,7 @@ function App() {
           <StatCard label="Net taxable" value={fmt(netTaxable)} icon={Landmark} tone="steel" sub={`${year} · income less reliefs`} />
           <StatCard label="Filed returns" value={filedReturnsCount} icon={CheckCircle2} tone="green" sub={`${taxReturns.length - filedReturnsCount} draft(s)`} />
         </div>
-        <div className="panel">
+        <div className="panel" data-tour="tax-how-it-works">
           <div className="panel-title">How this works</div>
           <div className="panel-sub" style={{ lineHeight: 1.6 }}>
             1. Import bank statements in <strong>Import</strong> — CSV, Excel or PDF.<br />
@@ -8452,8 +8464,8 @@ function App() {
 
   const renderTaxImport = () => (
     <>
-      <SectionHeader eyebrow="Bring in every account" title="Import a bank statement" onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
-      <div className="panel">
+      <SectionHeader eyebrow="Bring in every account" title="Import a bank statement" onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
+      <div className="panel" data-tour="tax-import-panel">
         <div className="panel-title">Add a statement</div>
         <div className="panel-sub" style={{ marginBottom: 12 }}>
           Works with CSV, Excel or PDF exports from any bank. Columns are auto-detected; scanned PDFs can use OCR instead.
@@ -8644,7 +8656,7 @@ function App() {
         )}
       </div>
 
-      <div className="panel" style={{ marginTop: 16 }}>
+      <div className="panel" style={{ marginTop: 16 }} data-tour="tax-import-expenses">
         <div className="panel-title">Bring in your Expense &amp; Budgeting entries</div>
         <div className="panel-sub" style={{ marginBottom: 12 }}>
           Every expense already logged in <strong>Expense &amp; Budgeting</strong> can be pulled straight into the tax ledger — no re-typing.
@@ -8688,7 +8700,7 @@ function App() {
     return (
       <>
         <SectionHeader eyebrow="Every bank, one ledger" title="Consolidated ledger"
-          action={<button className="btn btn-primary" onClick={() => openModal('newTaxTxn', { date: todayISO(), direction: 'in', source: 'Manual entry' })}><Plus size={16} /> Add entry</button>} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
+          action={<button className="btn btn-primary" data-tour="tax-add-entry" onClick={() => openModal('newTaxTxn', { date: todayISO(), direction: 'in', source: 'Manual entry' })}><Plus size={16} /> Add entry</button>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         <div className="field-row" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
           <select className="kb-input" value={taxYearFilter} onChange={(e) => { setTaxYearFilter(Number(e.target.value)); setTaxTxnShowCount(30); }}>
             {taxYearsAvailable.map((y) => <option key={y} value={y}>{y}</option>)}
@@ -8761,7 +8773,7 @@ function App() {
   const renderTaxReturns = () => (
     <>
       <SectionHeader eyebrow="Calculate & file" title="Tax returns"
-        action={<button className="btn btn-primary" onClick={openNewTaxReturnModal}><Plus size={16} /> New tax return</button>} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
+        action={<button className="btn btn-primary" data-tour="tax-returns-new" onClick={openNewTaxReturnModal}><Plus size={16} /> New tax return</button>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
       {taxReturns.length === 0 ? <EmptyState text="No tax returns yet — calculate one from your consolidated ledger." /> : (
         <div className="plan-card-grid">
           {taxReturns.map((r) => (
@@ -9373,7 +9385,7 @@ function App() {
         .section-header-notes-btn{flex:0 0 auto !important;white-space:nowrap;margin-left:auto;border:1.5px dashed var(--paper-line);color:var(--ink-soft);position:relative;}
         .section-header-tour-btn{flex:0 0 auto !important;white-space:nowrap;border:1.5px dashed var(--paper-line);color:var(--ink-soft);}
         .section-header-tour-btn:only-child{margin-left:auto;}
-        .sh-action-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;}
+        .sh-action-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;flex:1 1 100%;}
         .sh-action-secondary{display:flex;flex-wrap:wrap;gap:8px;flex:1 1 auto;}
         .sh-action-secondary>.btn{flex:1 1 auto;}
         .sh-action-primary{flex:1 1 100%;justify-content:center;}
