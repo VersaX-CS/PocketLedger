@@ -1323,16 +1323,22 @@ function StatCard({ label, value, icon: Icon, tone, sub }) {
 function EmptyState({ text }) {
   return <div className="empty-state">{text}</div>;
 }
-function SectionHeader({ eyebrow, title, action, onTour }) {
+function SectionHeader({ eyebrow, title, action, onTour, onNotes, hasNotes }) {
   return (
     <div className="section-header">
       <div className="section-header-top">
         <div className="eyebrow">{eyebrow}</div>
         <h2 className="kb-display">{title}</h2>
       </div>
-      {(action || onTour) && (
+      {(action || onTour || onNotes) && (
         <div className="section-header-actions">
           {action}
+          {onNotes && (
+            <button className="btn btn-ghost btn-small section-header-notes-btn" onClick={onNotes} title="Notes for this screen">
+              <PenLine size={14} /> Notes
+              {hasNotes && <span className="notes-dot" />}
+            </button>
+          )}
           {onTour && (
             <button className="btn btn-ghost btn-small section-header-tour-btn" onClick={onTour} title="Quick tour of this screen">
               <Compass size={14} /> Quick tour
@@ -3251,8 +3257,8 @@ const TOUR_STEPS = [
   { tab: 'settings', target: 'settings-support', title: 'Need a hand?', body: 'Reach the developer directly by WhatsApp, call or email right from here.' },
 ];
 
-function TourOverlay({ step, onNext, onBack, onClose }) {
-  const info = TOUR_STEPS[step];
+function TourOverlay({ steps, step, onNext, onBack, onClose }) {
+  const info = steps[step];
   const [rect, setRect] = useState(null);
   const lastRef = useRef(null);
   const scrolledRef = useRef(false);
@@ -3303,14 +3309,14 @@ function TourOverlay({ step, onNext, onBack, onClose }) {
       {box && <div className="tour-highlight" style={{ top: box.top, left: box.left, width: box.width, height: box.height }} />}
       <div className="tour-card" style={{ top: cardTop, left: cardLeft }} onClick={(e) => e.stopPropagation()}>
         <div className="tour-card-head">
-          <span className="tour-step-count">{step + 1} / {TOUR_STEPS.length}</span>
+          <span className="tour-step-count">{step + 1} / {steps.length}</span>
           <button className="icon-btn" onClick={onClose} title="Close" aria-label="Close"><X size={16} /></button>
         </div>
         <div className="tour-card-title kb-display">{info.title}</div>
         <div className="tour-card-body">{info.body}</div>
         <div className="tour-card-actions">
           {step > 0 && <button className="btn btn-outline btn-small" onClick={onBack}>Back</button>}
-          <button className="btn btn-primary btn-small" onClick={onNext}>{step === TOUR_STEPS.length - 1 ? 'Done' : 'Next'}</button>
+          <button className="btn btn-primary btn-small" onClick={onNext}>{step === steps.length - 1 ? 'Done' : 'Next'}</button>
         </div>
       </div>
     </div>
@@ -4127,6 +4133,9 @@ function App() {
   const [showAccountKey, setShowAccountKey] = useState(false);
   const [bankOtherMode, setBankOtherMode] = useState(() => !!settings.bankName && !NIGERIA_BANK_NAMES.includes(settings.bankName));
   const [tourStep, setTourStep] = useState(null);
+  // Steps for the tour currently in progress: the full TOUR_STEPS for the app-wide tour
+  // (started from Home), or just one module's own steps for an in-module tour.
+  const [tourSteps, setTourSteps] = useState(TOUR_STEPS);
   const [calculatorOpen, setCalculatorOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
   // Free-text notes per tab (e.g. one for "Plans", one for "Loans Given"), keyed by tab id.
@@ -4979,6 +4988,7 @@ function App() {
     setCurrentUser(user);
     setActiveModule('home'); setActiveTab('home');
     flash('Account created — your workspace has been reset with fresh, empty data.');
+    setTourSteps(TOUR_STEPS);
     setTourStep(0);
     if (user.accountKey) setNewAccountKeyModal(user.accountKey);
   };
@@ -5021,9 +5031,20 @@ function App() {
   const [githubTokenVisible, setGithubTokenVisible] = useState(false);
   const githubConnected = !!(githubToken && githubRepoConfig?.owner && githubRepoConfig?.repo);
 
-  const startTour = () => { setActiveModule('home'); setActiveTab('home'); setTourStep(0); };
+  const startTour = () => { setTourSteps(TOUR_STEPS); setActiveModule('home'); setActiveTab('home'); setTourStep(0); };
+  // In-module tour: only walks through the current vertical's own steps, without
+  // jumping back to Home or through any other vertical. targetId picks which step of
+  // that vertical to start on (e.g. a screen's own "Quick tour" button jumps straight
+  // to its step rather than always starting from the vertical's Overview).
+  const startModuleTourAt = (mod, targetId) => {
+    const steps = TOUR_STEPS.filter((s) => s.module === mod);
+    if (!steps.length) return;
+    const idx = steps.findIndex((s) => s.target === targetId);
+    setTourSteps(steps);
+    setTourStep(idx >= 0 ? idx : 0);
+  };
   const tourNext = () => setTourStep((s) => {
-    if (s >= TOUR_STEPS.length - 1) { goHome(); return null; }
+    if (s >= tourSteps.length - 1) { if (tourSteps === TOUR_STEPS) goHome(); return null; }
     return s + 1;
   });
   const tourBack = () => setTourStep((s) => Math.max(0, s - 1));
@@ -6725,7 +6746,7 @@ function App() {
   /* ============================== tab renders ============================== */
   const renderThriftOverview = () => (
     <>
-      <SectionHeader eyebrow="Thrift" title="Today's thrift position" onTour={() => setTourStep(1)} />
+      <SectionHeader eyebrow="Thrift" title="Today's thrift position" onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
       <div className="stat-grid">
         <StatCard label="Total thrift collected" value={fmt(totalCollected)} icon={PiggyBank} tone="green" sub={`${activePlansCount} plan(s) running`} />
         <StatCard label="Running savings balance" value={fmt(runningThriftBalance)} icon={Wallet} tone="steel" sub={totalWithdrawnFromThrift > 0 ? `${fmt(totalWithdrawnFromThrift)} taken out` : 'Nothing taken out yet'} />
@@ -6795,7 +6816,7 @@ function App() {
 
   const renderLoansOverview = () => (
     <>
-      <SectionHeader eyebrow="Loan tracking" title="Today's loan position" onTour={() => setTourStep(10)} />
+      <SectionHeader eyebrow="Loan tracking" title="Today's loan position" onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
       <div className="stat-grid">
         <StatCard label="Owed to you (loans given)" value={fmt(totalOwedToMe)} icon={ArrowDownRight} tone="steel" sub={`${loansGiven.length} loan(s) recorded`} />
         <StatCard label="You owe (loans received)" value={fmt(totalIOwe)} icon={ArrowUpRight} tone="brick" sub={`${loansReceived.length} loan(s) recorded`} />
@@ -6845,7 +6866,7 @@ function App() {
 
   const renderPaymentsOverview = () => (
     <>
-      <SectionHeader eyebrow="Payment portal" title="Today's business payments" onTour={() => setTourStep(18)} />
+      <SectionHeader eyebrow="Payment portal" title="Today's business payments" onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
       <div className="stat-grid">
         <StatCard label="Total invoiced" value={fmt(totalInvoiced)} icon={FileText} tone="steel" sub={`${invoices.length} invoice(s)`} />
         <StatCard label="Total received" value={fmt(totalReceived)} icon={Receipt} tone="green" sub={`${receipts.length} receipt(s)`} />
@@ -6930,7 +6951,7 @@ function App() {
           action={<div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-outline" onClick={triggerThriftImport}><Upload size={16} /> Import plan</button>
             <button className="btn btn-primary" data-tour="plans-new" onClick={() => openModal('newPlan', { memberIds: [], startDate: todayISO(), color: PLAN_COLORS[plans.length % PLAN_COLORS.length] })}><Plus size={16} /> New thrift plan</button>
-          </div>} onTour={() => setTourStep(3)} />
+          </div>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         <input ref={thriftFileInputRef} type="file" accept=".csv,.txt,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.pdf,application/pdf" style={{ display: 'none' }} onChange={handleThriftFileSelected} />
         {plans.length > 4 && <SearchBox placeholder="Search plans…" value={planSearch} onChange={setPlanSearch} className="loan-search" />}
 
@@ -7310,7 +7331,7 @@ function App() {
               <button className="btn btn-danger" onClick={() => deleteMembersBatch(checkedMemberIds)}><Trash2 size={16} /> Delete selected ({checkedMemberIds.length})</button>
             )}
             <button className="btn btn-primary" data-tour="contributors-new" onClick={() => openModal('newMember')}><Plus size={16} /> Add contributor</button>
-          </div>} onTour={() => setTourStep(7)} />
+          </div>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         <div className="contributors-shell">
           <div className="panel master-list contributors-list-panel">
             <div className="panel-kicker"><span className="panel-kicker-dot" />Contributor list</div>
@@ -7608,7 +7629,7 @@ function App() {
   const renderLoansGiven = () => (
     <>
       <SectionHeader eyebrow="Money out" title="Loans given to individuals"
-        action={<button className="btn btn-primary" data-tour="loans-given-new" onClick={() => openModal('newLoanGiven')}><Plus size={16} /> New loan</button>} onTour={() => setTourStep(11)} />
+        action={<button className="btn btn-primary" data-tour="loans-given-new" onClick={() => openModal('newLoanGiven')}><Plus size={16} /> New loan</button>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
       {renderLoanGroups(loansGiven, 'repayments', 'borrower', addRepayment, 'Record payment', 'No loans given out yet.', loanGivenSearch, setLoanGivenSearch, deleteLoanGiven)}
     </>
   );
@@ -7616,7 +7637,7 @@ function App() {
   const renderLoansReceived = () => (
     <>
       <SectionHeader eyebrow="Money in" title="Personal loans received"
-        action={<button className="btn btn-primary" data-tour="loans-received-new" onClick={() => openModal('newLoanReceived')}><Plus size={16} /> New loan</button>} onTour={() => setTourStep(13)} />
+        action={<button className="btn btn-primary" data-tour="loans-received-new" onClick={() => openModal('newLoanReceived')}><Plus size={16} /> New loan</button>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
       {renderLoanGroups(loansReceived, 'refunds', 'lender', addRefund, 'Record refund', 'No personal loans received yet.', loanReceivedSearch, setLoanReceivedSearch, deleteLoanReceived)}
     </>
   );
@@ -7629,7 +7650,7 @@ function App() {
     return (
       <>
         <SectionHeader eyebrow="IOUs" title="Running IOUs"
-          action={<button className="btn btn-primary" data-tour="loans-tabs-new" onClick={() => openModal('newLoanTab', { contactMode: loanContacts.length ? 'existing' : 'new' })}><Plus size={16} /> New IOU</button>} onTour={() => setTourStep(15)} />
+          action={<button className="btn btn-primary" data-tour="loans-tabs-new" onClick={() => openModal('newLoanTab', { contactMode: loanContacts.length ? 'existing' : 'new' })}><Plus size={16} /> New IOU</button>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         <div className="field-hint" style={{ marginBottom: 14 }}>
           Informal back-and-forth borrowing with one person — balance is just the running sum.
         </div>
@@ -7765,7 +7786,7 @@ function App() {
             )}
             <button className="btn btn-outline" onClick={() => exportClientsCsv(filtered)}><Download size={16} /> Export CSV</button>
             <button className="btn btn-primary" data-tour="clients-new" onClick={() => openModal('newClient')}><Plus size={16} /> Add client</button>
-          </div>} onTour={() => setTourStep(19)} />
+          </div>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         <SearchBox className="loan-search" placeholder="Search clients…" value={clientSearch} onChange={setClientSearch} />
         {filtered.length > 0 && (
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, fontSize: 13, color: 'var(--ink-soft)' }}>
@@ -7903,7 +7924,7 @@ function App() {
               }}><FileText size={16} /> PDF summary</button>
             </div>
             <button className="btn btn-primary sh-action-primary" data-tour="invoices-new" onClick={() => openModal('newInvoice', { items: [{ id: uid(), desc: '', qty: 1, price: '' }], issueDate: todayISO() })}><Plus size={16} /> New invoice</button>
-          </div>} onTour={() => setTourStep(21)} />
+          </div>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         {overdueInvoices.length > 0 && (
           <div className="field-hint" style={{ marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <span>{overdueInvoices.length} invoice{overdueInvoices.length === 1 ? '' : 's'} overdue, totaling {fmt(overdueTotal)}.</span>
@@ -8037,7 +8058,7 @@ function App() {
               }}><FileText size={16} /> PDF summary</button>
             </div>
             <button className="btn btn-primary sh-action-primary" data-tour="receipts-new" onClick={() => openModal('newReceipt', { date: todayISO() })}><Plus size={16} /> Issue receipt</button>
-          </div>} onTour={() => setTourStep(23)} />
+          </div>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         <SearchBox className="loan-search" placeholder="Search by payer or receipt number…" value={receiptSearch} onChange={setReceiptSearch} />
         <div className="field-row" style={{ marginBottom: 14 }}>
           <select className="kb-input" value={`${receiptSort.key}:${receiptSort.dir}`} onChange={(e) => { const [key, dir] = e.target.value.split(':'); setReceiptSort({ key, dir }); }}>
@@ -8107,7 +8128,7 @@ function App() {
     const topCategory = spendByCategory[0];
     return (
       <>
-        <SectionHeader eyebrow="Expense & budgeting" title="Where your money is going" onTour={() => setTourStep(26)} />
+        <SectionHeader eyebrow="Expense & budgeting" title="Where your money is going" onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         <div className="stat-grid">
           <StatCard label="Spent this month" value={fmt(spentThisMonth)} icon={CreditCard} tone="brick" sub={`${expenses.filter((e) => e.date.slice(0, 7) === todayISO().slice(0, 7)).length} expense(s)`} />
           <StatCard label="Total logged" value={fmt(totalSpent)} icon={Wallet} tone="steel" sub={`${expenses.length} expense(s) all-time`} />
@@ -8172,7 +8193,7 @@ function App() {
           action={<div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-outline" onClick={() => exportExpensesCsv(filtered)}><Download size={16} /> Export CSV</button>
             <button className="btn btn-primary" data-tour="expenses-new" onClick={() => openModal('newExpense', { date: todayISO() })}><Plus size={16} /> Log expense</button>
-          </div>} onTour={() => setTourStep(27)} />
+          </div>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         <SearchBox className="loan-search" placeholder="Search by note or category…" value={expenseSearch} onChange={(v) => { setExpenseSearch(v); setExpenseShowCount(20); }} />
         <div className="field-row" style={{ marginBottom: 14 }}>
           <select className="kb-input" value={expenseCategoryFilter} onChange={(e) => { setExpenseCategoryFilter(e.target.value); setExpenseShowCount(20); }}>
@@ -8222,7 +8243,7 @@ function App() {
     return (
       <>
         <SectionHeader eyebrow="Stay within limits" title="Monthly budgets"
-          action={<button className="btn btn-primary" data-tour="budgets-new" onClick={() => openModal('setBudget', {})}><Plus size={16} /> Set a budget</button>} onTour={() => setTourStep(29)} />
+          action={<button className="btn btn-primary" data-tour="budgets-new" onClick={() => openModal('setBudget', {})}><Plus size={16} /> Set a budget</button>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         {budgets.length === 0 ? <EmptyState text="No budgets set yet — set a monthly limit for a category to start tracking against it." /> : (
           <div className="loan-list">
             {budgets.map((b) => {
@@ -8288,7 +8309,7 @@ function App() {
 
     return (
       <>
-        <SectionHeader eyebrow="Spending over time" title="Budget trends" />
+        <SectionHeader eyebrow="Spending over time" title="Budget trends" onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         {budgets.length === 0 ? (
           <EmptyState text="Set at least one budget to see spending trends." />
         ) : (
@@ -8386,7 +8407,7 @@ function App() {
             <select className="kb-input" style={{ width: 120 }} value={year} onChange={(e) => setTaxYearFilter(Number(e.target.value))}>
               {taxYearsAvailable.map((y) => <option key={y} value={y}>{y}</option>)}
             </select>
-          } />
+          } onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         <div className="stat-grid">
           <StatCard label="Consolidated income" value={fmt(income)} icon={TrendingUp} tone="green" sub={`${year} · from ledger`} />
           <StatCard label="Deductible / reliefs" value={fmt(deductible)} icon={CreditCard} tone="steel" sub={`${year} · from ledger`} />
@@ -8431,7 +8452,7 @@ function App() {
 
   const renderTaxImport = () => (
     <>
-      <SectionHeader eyebrow="Bring in every account" title="Import a bank statement" />
+      <SectionHeader eyebrow="Bring in every account" title="Import a bank statement" onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
       <div className="panel">
         <div className="panel-title">Add a statement</div>
         <div className="panel-sub" style={{ marginBottom: 12 }}>
@@ -8667,7 +8688,7 @@ function App() {
     return (
       <>
         <SectionHeader eyebrow="Every bank, one ledger" title="Consolidated ledger"
-          action={<button className="btn btn-primary" onClick={() => openModal('newTaxTxn', { date: todayISO(), direction: 'in', source: 'Manual entry' })}><Plus size={16} /> Add entry</button>} />
+          action={<button className="btn btn-primary" onClick={() => openModal('newTaxTxn', { date: todayISO(), direction: 'in', source: 'Manual entry' })}><Plus size={16} /> Add entry</button>} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         <div className="field-row" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
           <select className="kb-input" value={taxYearFilter} onChange={(e) => { setTaxYearFilter(Number(e.target.value)); setTaxTxnShowCount(30); }}>
             {taxYearsAvailable.map((y) => <option key={y} value={y}>{y}</option>)}
@@ -8740,7 +8761,7 @@ function App() {
   const renderTaxReturns = () => (
     <>
       <SectionHeader eyebrow="Calculate & file" title="Tax returns"
-        action={<button className="btn btn-primary" onClick={openNewTaxReturnModal}><Plus size={16} /> New tax return</button>} />
+        action={<button className="btn btn-primary" onClick={openNewTaxReturnModal}><Plus size={16} /> New tax return</button>} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
       {taxReturns.length === 0 ? <EmptyState text="No tax returns yet — calculate one from your consolidated ledger." /> : (
         <div className="plan-card-grid">
           {taxReturns.map((r) => (
@@ -9268,12 +9289,12 @@ function App() {
   // Jumps to each tour step's module/tab first, so its target is on screen.
   useEffect(() => {
     if (tourStep === null) return;
-    const info = TOUR_STEPS[tourStep];
+    const info = tourSteps[tourStep];
     const mod = info.module || 'home';
     setActiveModule(mod);
     setActiveTab(info.tab || (mod === 'home' ? 'home' : MODULE_NAV[mod][0].id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tourStep]);
+  }, [tourStep, tourSteps]);
 
   if (showSplash) {
     return <SplashScreen onFinish={() => setShowSplash(false)} />;
@@ -9349,7 +9370,9 @@ function App() {
         .section-header-actions>*{flex:1 1 auto;}
         .section-header-actions>div{flex:1 1 auto;display:flex;flex-wrap:wrap;gap:8px;}
         .section-header-actions>div>*{flex:1 1 auto;}
-        .section-header-tour-btn{flex:0 0 auto !important;white-space:nowrap;margin-left:auto;border:1.5px dashed var(--paper-line);color:var(--ink-soft);}
+        .section-header-notes-btn{flex:0 0 auto !important;white-space:nowrap;margin-left:auto;border:1.5px dashed var(--paper-line);color:var(--ink-soft);position:relative;}
+        .section-header-tour-btn{flex:0 0 auto !important;white-space:nowrap;border:1.5px dashed var(--paper-line);color:var(--ink-soft);}
+        .section-header-tour-btn:only-child{margin-left:auto;}
         .sh-action-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;}
         .sh-action-secondary{display:flex;flex-wrap:wrap;gap:8px;flex:1 1 auto;}
         .sh-action-secondary>.btn{flex:1 1 auto;}
@@ -9996,15 +10019,8 @@ function App() {
                 <RotateCcw size={16} />
                 {undoStack.length > 0 && <span className="bell-dot">{undoStack.length}</span>}
               </button>
-              {currentTabMeta && (
-                <button className="icon-btn" onClick={() => setNotesModalOpen(true)} title={`Notes — ${currentTabMeta.label}`}>
-                  <PenLine size={16} />
-                  {!!tabNotes[activeTab] && <span className="notes-dot" />}
-                </button>
-              )}
               <button className="icon-btn" onClick={() => setCalculatorOpen(true)} title="Calculator"><Calculator size={16} /></button>
               <button className="icon-btn" onClick={() => setCalendarOpen(true)} title="Calendar"><CalendarDays size={16} /></button>
-              <button className="icon-btn" onClick={startTour} title="Take a quick tour"><Compass size={16} /></button>
               <button className="icon-btn" onClick={() => setActiveTab('settings')} title="Settings"><SettingsIcon size={16} /></button>
               <button className="icon-btn" onClick={handleLogout} title="Log out"><LogOut size={16} /></button>
             </div>
@@ -10051,7 +10067,7 @@ function App() {
           </div>
         )}
       {tourStep !== null && (
-        <TourOverlay step={tourStep} onNext={tourNext} onBack={tourBack} onClose={() => { setTourStep(null); goHome(); }} />
+        <TourOverlay steps={tourSteps} step={tourStep} onNext={tourNext} onBack={tourBack} onClose={() => { setTourStep(null); if (tourSteps === TOUR_STEPS) goHome(); }} />
       )}
       {calculatorOpen && (
         <CalculatorModal onClose={() => setCalculatorOpen(false)} />
