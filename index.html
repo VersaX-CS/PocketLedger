@@ -6962,7 +6962,7 @@ function App() {
         <SectionHeader eyebrow="Personalised strategies" title="Thrift plans"
           action={<div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-outline" onClick={triggerThriftImport}><Upload size={16} /> Import plan</button>
-            <button className="btn btn-primary" data-tour="plans-new" onClick={() => openModal('newPlan', { memberIds: [], startDate: todayISO(), color: PLAN_COLORS[plans.length % PLAN_COLORS.length] })}><Plus size={16} /> New thrift plan</button>
+            <button className="btn btn-primary" data-tour="plans-new" onClick={() => openModal('newPlan', { memberIds: [], startDate: todayISO(), color: PLAN_COLORS[plans.length % PLAN_COLORS.length] })}><Plus size={16} /> <span className="btn-label-full">New thrift plan</span><span className="btn-label-short">New</span></button>
           </div>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         <input ref={thriftFileInputRef} type="file" accept=".csv,.txt,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.pdf,application/pdf" style={{ display: 'none' }} onChange={handleThriftFileSelected} />
         {plans.length > 4 && <SearchBox placeholder="Search plans…" value={planSearch} onChange={setPlanSearch} className="loan-search" />}
@@ -7342,7 +7342,7 @@ function App() {
             {checkedMemberIds.length > 0 && (
               <button className="btn btn-danger" onClick={() => deleteMembersBatch(checkedMemberIds)}><Trash2 size={16} /> Delete selected ({checkedMemberIds.length})</button>
             )}
-            <button className="btn btn-primary" data-tour="contributors-new" onClick={() => openModal('newMember')}><Plus size={16} /> Add contributor</button>
+            <button className="btn btn-primary" data-tour="contributors-new" onClick={() => openModal('newMember')}><Plus size={16} /> <span className="btn-label-full">Add contributor</span><span className="btn-label-short">Add</span></button>
           </div>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         <div className="contributors-shell">
           <div className="panel master-list contributors-list-panel">
@@ -7641,7 +7641,7 @@ function App() {
   const renderLoansGiven = () => (
     <>
       <SectionHeader eyebrow="Money out" title="Loans given to individuals"
-        action={<button className="btn btn-primary" data-tour="loans-given-new" onClick={() => openModal('newLoanGiven')}><Plus size={16} /> New loan</button>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
+        action={<button className="btn btn-primary" data-tour="loans-given-new" onClick={() => openModal('newLoanGiven')}><Plus size={16} /> <span className="btn-label-full">New loan</span><span className="btn-label-short">New</span></button>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
       {renderLoanGroups(loansGiven, 'repayments', 'borrower', addRepayment, 'Record payment', 'No loans given out yet.', loanGivenSearch, setLoanGivenSearch, deleteLoanGiven)}
     </>
   );
@@ -7649,7 +7649,7 @@ function App() {
   const renderLoansReceived = () => (
     <>
       <SectionHeader eyebrow="Money in" title="Personal loans received"
-        action={<button className="btn btn-primary" data-tour="loans-received-new" onClick={() => openModal('newLoanReceived')}><Plus size={16} /> New loan</button>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
+        action={<button className="btn btn-primary" data-tour="loans-received-new" onClick={() => openModal('newLoanReceived')}><Plus size={16} /> <span className="btn-label-full">New loan</span><span className="btn-label-short">New</span></button>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
       {renderLoanGroups(loansReceived, 'refunds', 'lender', addRefund, 'Record refund', 'No personal loans received yet.', loanReceivedSearch, setLoanReceivedSearch, deleteLoanReceived)}
     </>
   );
@@ -7662,7 +7662,7 @@ function App() {
     return (
       <>
         <SectionHeader eyebrow="IOUs" title="Running IOUs"
-          action={<button className="btn btn-primary" data-tour="loans-tabs-new" onClick={() => openModal('newLoanTab', { contactMode: loanContacts.length ? 'existing' : 'new' })}><Plus size={16} /> New IOU</button>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
+          action={<button className="btn btn-primary" data-tour="loans-tabs-new" onClick={() => openModal('newLoanTab', { contactMode: loanContacts.length ? 'existing' : 'new' })}><Plus size={16} /> <span className="btn-label-full">New IOU</span><span className="btn-label-short">New</span></button>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         <div className="field-hint" style={{ marginBottom: 14 }}>
           Informal back-and-forth borrowing with one person — balance is just the running sum.
         </div>
@@ -7797,7 +7797,7 @@ function App() {
               <button className="btn btn-danger" onClick={() => deleteClientsBatch(checkedClientIds)}><Trash2 size={16} /> Delete selected ({checkedClientIds.length})</button>
             )}
             <button className="btn btn-outline" onClick={() => exportClientsCsv(filtered)}><Download size={16} /> Export CSV</button>
-            <button className="btn btn-primary" data-tour="clients-new" onClick={() => openModal('newClient')}><Plus size={16} /> Add client</button>
+            <button className="btn btn-primary" data-tour="clients-new" onClick={() => openModal('newClient')}><Plus size={16} /> <span className="btn-label-full">Add client</span><span className="btn-label-short">Add</span></button>
           </div>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         <SearchBox className="loan-search" placeholder="Search clients…" value={clientSearch} onChange={setClientSearch} />
         {filtered.length > 0 && (
@@ -7935,7 +7935,7 @@ function App() {
                 });
               }}><FileText size={16} /> PDF summary</button>
             </div>
-            <button className="btn btn-primary sh-action-primary" data-tour="invoices-new" onClick={() => openModal('newInvoice', { items: [{ id: uid(), desc: '', qty: 1, price: '' }], issueDate: todayISO() })}><Plus size={16} /> New invoice</button>
+            <button className="btn btn-primary sh-action-primary" data-tour="invoices-new" onClick={() => openModal('newInvoice', { items: [{ id: uid(), desc: '', qty: 1, price: '' }], issueDate: todayISO() })}><Plus size={16} /> <span className="btn-label-full">New invoice</span><span className="btn-label-short">New</span></button>
           </div>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         {overdueInvoices.length > 0 && (
           <div className="field-hint" style={{ marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
@@ -8069,7 +8069,7 @@ function App() {
                 });
               }}><FileText size={16} /> PDF summary</button>
             </div>
-            <button className="btn btn-primary sh-action-primary" data-tour="receipts-new" onClick={() => openModal('newReceipt', { date: todayISO() })}><Plus size={16} /> Issue receipt</button>
+            <button className="btn btn-primary sh-action-primary" data-tour="receipts-new" onClick={() => openModal('newReceipt', { date: todayISO() })}><Plus size={16} /> <span className="btn-label-full">Issue receipt</span><span className="btn-label-short">Issue</span></button>
           </div>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         <SearchBox className="loan-search" placeholder="Search by payer or receipt number…" value={receiptSearch} onChange={setReceiptSearch} />
         <div className="field-row" style={{ marginBottom: 14 }}>
@@ -8204,7 +8204,7 @@ function App() {
         <SectionHeader eyebrow="Every expense" title="Expenses"
           action={<div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-outline" onClick={() => exportExpensesCsv(filtered)}><Download size={16} /> Export CSV</button>
-            <button className="btn btn-primary" data-tour="expenses-new" onClick={() => openModal('newExpense', { date: todayISO() })}><Plus size={16} /> Log expense</button>
+            <button className="btn btn-primary" data-tour="expenses-new" onClick={() => openModal('newExpense', { date: todayISO() })}><Plus size={16} /> <span className="btn-label-full">Log expense</span><span className="btn-label-short">Log</span></button>
           </div>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         <SearchBox className="loan-search" placeholder="Search by note or category…" value={expenseSearch} onChange={(v) => { setExpenseSearch(v); setExpenseShowCount(20); }} />
         <div className="field-row" style={{ marginBottom: 14 }}>
@@ -8255,7 +8255,7 @@ function App() {
     return (
       <>
         <SectionHeader eyebrow="Stay within limits" title="Monthly budgets"
-          action={<button className="btn btn-primary" data-tour="budgets-new" onClick={() => openModal('setBudget', {})}><Plus size={16} /> Set a budget</button>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
+          action={<button className="btn btn-primary" data-tour="budgets-new" onClick={() => openModal('setBudget', {})}><Plus size={16} /> <span className="btn-label-full">Set a budget</span><span className="btn-label-short">Set</span></button>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         {budgets.length === 0 ? <EmptyState text="No budgets set yet — set a monthly limit for a category to start tracking against it." /> : (
           <div className="loan-list">
             {budgets.map((b) => {
@@ -8700,7 +8700,7 @@ function App() {
     return (
       <>
         <SectionHeader eyebrow="Every bank, one ledger" title="Consolidated ledger"
-          action={<button className="btn btn-primary" data-tour="tax-add-entry" onClick={() => openModal('newTaxTxn', { date: todayISO(), direction: 'in', source: 'Manual entry' })}><Plus size={16} /> Add entry</button>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
+          action={<button className="btn btn-primary" data-tour="tax-add-entry" onClick={() => openModal('newTaxTxn', { date: todayISO(), direction: 'in', source: 'Manual entry' })}><Plus size={16} /> <span className="btn-label-full">Add entry</span><span className="btn-label-short">Add</span></button>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
         <div className="field-row" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
           <select className="kb-input" value={taxYearFilter} onChange={(e) => { setTaxYearFilter(Number(e.target.value)); setTaxTxnShowCount(30); }}>
             {taxYearsAvailable.map((y) => <option key={y} value={y}>{y}</option>)}
@@ -8773,7 +8773,7 @@ function App() {
   const renderTaxReturns = () => (
     <>
       <SectionHeader eyebrow="Calculate & file" title="Tax returns"
-        action={<button className="btn btn-primary" data-tour="tax-returns-new" onClick={openNewTaxReturnModal}><Plus size={16} /> New tax return</button>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
+        action={<button className="btn btn-primary" data-tour="tax-returns-new" onClick={openNewTaxReturnModal}><Plus size={16} /> <span className="btn-label-full">New tax return</span><span className="btn-label-short">New</span></button>} onTour={() => startModuleTourAt(activeModule, `nav-${activeTab}`)} onNotes={() => setNotesModalOpen(true)} hasNotes={!!tabNotes[activeTab]} />
       {taxReturns.length === 0 ? <EmptyState text="No tax returns yet — calculate one from your consolidated ledger." /> : (
         <div className="plan-card-grid">
           {taxReturns.map((r) => (
@@ -9389,6 +9389,11 @@ function App() {
         .sh-action-secondary{display:flex;flex-wrap:wrap;gap:8px;flex:1 1 auto;}
         .sh-action-secondary>.btn{flex:1 1 auto;}
         .sh-action-primary{justify-content:center;}
+        .btn-label-short{display:none;}
+        @media (max-width:520px){
+          .section-header-actions .btn-label-full{display:none;}
+          .section-header-actions .btn-label-short{display:inline;}
+        }
         .stat-grid{display:flex;flex-wrap:wrap;gap:16px;margin-bottom:22px;}
         .stat-card{background:var(--surface);border:1px solid var(--paper-line);border-radius:12px;padding:16px 18px;position:relative;flex:1 1 200px;min-width:200px;}
         .stat-icon{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;margin-bottom:10px;}
