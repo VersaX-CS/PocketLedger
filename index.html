@@ -1609,13 +1609,19 @@ function ContactDeveloperCard() {
 
 // Self-contained calculator pad: standard four-function logic plus memory and a
 // reusable history, so it feels at home whether it's docked in a modal or a panel.
-function CalculatorPad() {
+// History is grouped per calendar day ({ '2026-08-17': [{expr,result}, ...] , ... }, newest
+// entry first within each day). It's normally handed down as controlled props from the app's
+// top-level (persisted) state so it survives the modal closing and app restarts; falls back to
+// local-only state if used standalone without those props.
+function CalculatorPad({ history: historyProp, setHistory: setHistoryProp }) {
   const [display, setDisplay] = useState('0');
   const [prevValue, setPrevValue] = useState(null);
   const [operator, setOperator] = useState(null);
   const [waiting, setWaiting] = useState(false);
   const [memory, setMemory] = useState(0);
-  const [history, setHistory] = useState([]);
+  const [localHistory, setLocalHistory] = useState({});
+  const history = historyProp || localHistory;
+  const setHistory = setHistoryProp || setLocalHistory;
   const [historyOpen, setHistoryOpen] = useState(false);
   const [flash, setFlash] = useState(false);
   const wrapRef = useRef(null);
@@ -1691,7 +1697,13 @@ function CalculatorPad() {
     const inputValue = parseFloat(display);
     const result = calc(prevValue, inputValue, operator);
     const expr = `${withCommas(fmt(prevValue))} ${operator} ${withCommas(fmt(inputValue))}`;
-    setHistory((h) => [{ expr, result: fmt(result) }, ...h].slice(0, 30));
+    const day = todayISO();
+    setHistory((h) => {
+      const dayList = (h && h[day]) || [];
+      // Cap each day's list so a heavy calculator session doesn't grow the saved data forever;
+      // days themselves are never auto-deleted, so the full day-by-day history sticks around.
+      return { ...h, [day]: [{ expr, result: fmt(result) }, ...dayList].slice(0, 50) };
+    });
     setDisplay(fmt(result));
     setPrevValue(null);
     setOperator(null);
@@ -1703,6 +1715,16 @@ function CalculatorPad() {
   const memAdd = () => { const v = parseFloat(display); if (!isNaN(v)) setMemory((m) => m + v); flashMem(); };
   const memSub = () => { const v = parseFloat(display); if (!isNaN(v)) setMemory((m) => m - v); flashMem(); };
   const useHistoryEntry = (h) => { setDisplay(h.result); setWaiting(true); setPrevValue(null); setOperator(null); };
+  // Day headings for the history list: real dates, but "Today"/"Yesterday" for the two most
+  // recent so it reads naturally at a glance.
+  const historyDayLabel = (dayISO) => {
+    const today = todayISO();
+    const yesterday = toISODateLocal(new Date(Date.now() - dayMs));
+    if (dayISO === today) return 'Today';
+    if (dayISO === yesterday) return 'Yesterday';
+    return new Date(dayISO + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+  const historyDays = Object.keys(history || {}).sort().reverse();
 
   const handleKey = (e) => {
     const k = e.key;
@@ -1735,9 +1757,11 @@ function CalculatorPad() {
         .calc-mem-btn:hover{background:var(--paper-line);}
         .calc-mem-btn-active{color:var(--ink);background:var(--paper-line);}
         .calc-mem-flash{color:var(--green);border-color:var(--green);}
-        .calc-history{background:var(--surface-2);border:1px solid var(--paper-line);border-radius:10px;padding:8px;margin-bottom:10px;max-height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;}
+        .calc-history{background:var(--surface-2);border:1px solid var(--paper-line);border-radius:10px;padding:8px;margin-bottom:10px;max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;}
         .calc-history-empty{font-size:12px;color:var(--ink-soft);padding:8px;text-align:center;}
-        .calc-history-row{display:flex;flex-direction:column;align-items:flex-end;background:none;border:none;border-radius:7px;padding:6px 8px;cursor:pointer;text-align:right;font-family:inherit;}
+        .calc-history-day+.calc-history-day{margin-top:8px;padding-top:8px;border-top:1px solid var(--paper-line);}
+        .calc-history-day-label{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-soft);padding:4px 8px 2px;}
+        .calc-history-row{display:flex;flex-direction:column;align-items:flex-end;background:none;border:none;border-radius:7px;padding:6px 8px;cursor:pointer;text-align:right;font-family:inherit;width:100%;}
         .calc-history-row:hover{background:var(--paper-line);}
         .calc-history-expr{font-size:11px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;}
         .calc-history-result{font-size:14.5px;font-weight:700;color:var(--ink);font-family:'IBM Plex Mono',monospace;}
@@ -1765,14 +1789,19 @@ function CalculatorPad() {
       </div>
       {historyOpen && (
         <div className="calc-history">
-          {history.length === 0 && <div className="calc-history-empty">No calculations yet.</div>}
-          {history.map((h, i) => (
-            <button type="button" key={i} className="calc-history-row" onClick={() => useHistoryEntry(h)} title="Reuse this result">
-              <span className="calc-history-expr">{h.expr} =</span>
-              <span className="calc-history-result">{withCommas(h.result)}</span>
-            </button>
+          {historyDays.length === 0 && <div className="calc-history-empty">No calculations yet.</div>}
+          {historyDays.map((day) => (
+            <div key={day} className="calc-history-day">
+              <div className="calc-history-day-label">{historyDayLabel(day)}</div>
+              {history[day].map((h, i) => (
+                <button type="button" key={i} className="calc-history-row" onClick={() => useHistoryEntry(h)} title="Reuse this result">
+                  <span className="calc-history-expr">{h.expr} =</span>
+                  <span className="calc-history-result">{withCommas(h.result)}</span>
+                </button>
+              ))}
+            </div>
           ))}
-          {history.length > 0 && <button type="button" className="calc-history-clear" onClick={() => setHistory([])}>Clear history</button>}
+          {historyDays.length > 0 && <button type="button" className="calc-history-clear" onClick={() => setHistory({})}>Clear history</button>}
         </div>
       )}
       <div className="calc-grid">
@@ -1802,10 +1831,10 @@ function CalculatorPad() {
 }
 
 // Wraps CalculatorPad in the shared Modal chrome — used from every module's topbar.
-function CalculatorModal({ onClose }) {
+function CalculatorModal({ onClose, history, setHistory }) {
   return (
     <Modal title="Calculator" onClose={onClose}>
-      <CalculatorPad />
+      <CalculatorPad history={history} setHistory={setHistory} />
     </Modal>
   );
 }
@@ -4157,6 +4186,10 @@ function App() {
   const [calendarOpen, setCalendarOpen] = useState(false);
   // Free-text notes per tab (e.g. one for "Plans", one for "Loans Given"), keyed by tab id.
   const [tabNotes, setTabNotes] = useState(() => (PERSISTED && PERSISTED.tabNotes) || {});
+  // Calculator history, grouped by day (ISO date -> newest-first list of {expr, result}).
+  // Lives up here (not inside CalculatorPad) and rides along in the same auto-save payload
+  // as everything else, so it survives the modal closing and app restarts/refreshes.
+  const [calcHistory, setCalcHistory] = useState(() => (PERSISTED && PERSISTED.calcHistory) || {});
   const [notesModalOpen, setNotesModalOpen] = useState(false);
   const [tabStatementDoc, setTabStatementDoc] = useState(null);
   const [entryPreviewDoc, setEntryPreviewDoc] = useState(null);
@@ -4213,13 +4246,14 @@ function App() {
       savedAt: new Date().toISOString(),
       users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs, expenses, budgets,
       clients, invoices, receipts, creditNotes, settings, taxTransactions, taxImports, taxReturns, dismissedAlerts: dismissed, tabNotes,
+      calcHistory,
     };
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch (err) {
       console.warn('PocketLedger: could not save data to this device.', err);
     }
-  }, [users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs, expenses, budgets, clients, invoices, receipts, creditNotes, settings, taxTransactions, taxImports, taxReturns, dismissed, tabNotes]);
+  }, [users, members, plans, contributions, loansGiven, loansReceived, loanContacts, loanTabs, expenses, budgets, clients, invoices, receipts, creditNotes, settings, taxTransactions, taxImports, taxReturns, dismissed, tabNotes, calcHistory]);
 
   // ---------- auto-log recurring expenses for the current month ----------
   useEffect(() => {
@@ -9399,12 +9433,18 @@ function App() {
         .section-header-actions>.section-header-controls>*{flex:0 0 auto;}
         .section-header-notes-btn{white-space:nowrap;border:1.5px dashed var(--paper-line);color:var(--ink-soft);position:relative;}
         .section-header-tour-btn{white-space:nowrap;border:1.5px dashed var(--paper-line);color:var(--ink-soft);}
-        .sh-action-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;flex:1 1 auto;}
+        /* flex-grow:0 here (vs the default 1 1 auto from .section-header-actions>div) stops the
+           whole CTA row from stretching to fill leftover width on its line — so once the secondary
+           (CSV/Excel/PDF) buttons wrap away, "New invoice"/"Issue receipt" doesn't stretch out
+           alone across the full row; it stays content-sized and leaves room for Notes/Quick tour
+           to sit on the same line instead. */
+        .sh-action-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;flex:0 1 auto;}
         .sh-action-secondary{display:flex;flex-wrap:wrap;gap:8px;flex:1 1 auto;}
         .sh-action-secondary>.btn{flex:1 1 auto;min-width:0;}
-        /* Primary CTA (New invoice / Issue receipt) never shrinks below its own content width —
-           this is the button that was losing width to make room for Notes + Quick tour. */
-        .sh-action-primary{justify-content:center;flex-shrink:0;}
+        /* Primary CTA (New invoice / Issue receipt): content-sized, not stretched, and never
+           shrinks below its own content width either — reduced only in the sense of no longer
+           ballooning to fill a whole row by itself. */
+        .sh-action-primary{flex:0 0 auto;justify-content:center;}
         .btn-label-short{display:none;}
         @media (max-width:640px){
           .section-header-actions .btn-label-full{display:none;}
@@ -10103,7 +10143,7 @@ function App() {
         <TourOverlay steps={tourSteps} step={tourStep} onNext={tourNext} onBack={tourBack} onClose={() => { setTourStep(null); if (tourSteps === TOUR_STEPS) goHome(); }} />
       )}
       {calculatorOpen && (
-        <CalculatorModal onClose={() => setCalculatorOpen(false)} />
+        <CalculatorModal onClose={() => setCalculatorOpen(false)} history={calcHistory} setHistory={setCalcHistory} />
       )}
       {calendarOpen && (
         <CalendarModal eventsByDate={calendarEventsByDate} onClose={() => setCalendarOpen(false)} onEventClick={(e) => { goToAlert(e); setCalendarOpen(false); }} />
