@@ -9437,14 +9437,20 @@ function App() {
            whole CTA row from stretching to fill leftover width on its line — so once the secondary
            (CSV/Excel/PDF) buttons wrap away, "New invoice"/"Issue receipt" doesn't stretch out
            alone across the full row; it stays content-sized and leaves room for Notes/Quick tour
-           to sit on the same line instead. */
-        .sh-action-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;flex:0 1 auto;}
+           to sit on the same line instead.
+           These are written as .section-header-actions>.sh-action-row / >.sh-action-primary
+           (not bare .sh-action-row / .sh-action-primary) because the generic rules above —
+           .section-header-actions>div and .section-header-actions>div>* — are compound selectors
+           (class+type) with higher specificity than a single class selector. A bare .sh-action-row
+           rule was being silently outranked and ignored; qualifying with the parent class here
+           gives these the specificity they need to actually take effect. */
+        .section-header-actions>.sh-action-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;flex:0 1 auto;}
         .sh-action-secondary{display:flex;flex-wrap:wrap;gap:8px;flex:1 1 auto;}
         .sh-action-secondary>.btn{flex:1 1 auto;min-width:0;}
         /* Primary CTA (New invoice / Issue receipt): content-sized, not stretched, and never
            shrinks below its own content width either — reduced only in the sense of no longer
            ballooning to fill a whole row by itself. */
-        .sh-action-primary{flex:0 0 auto;justify-content:center;}
+        .section-header-actions>.sh-action-row>.sh-action-primary{flex:0 0 auto;justify-content:center;}
         .btn-label-short{display:none;}
         @media (max-width:640px){
           .section-header-actions .btn-label-full{display:none;}
